@@ -1,0 +1,19 @@
+[include]
+  path = ~/.config/.gitconfig.local
+[user]
+  name = Sunil Srivatsa
+  email = sunilsrivatsa@gmail.com
+  signingkey = 235DE76E36B33C14
+[core]
+  pager = diff-so-fancy | less --tabs=4 -RFX
+[alias]
+  l = "!. ~/.githelpers && pretty_git_log"
+  r = !GIT_NO_PAGER=1 git l -30
+  patch = !git --no-pager diff --no-color
+[branch]
+  autosetuprebase = always
+[push]
+  default = current
+  followTags = true
+[rerere]
+  enabled = true
