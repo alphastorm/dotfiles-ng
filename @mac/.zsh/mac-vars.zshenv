@@ -1,1 +1,2 @@
-PATH="/usr/local/opt/coreutils/libexec/gnubin:$PATH"
+export PATH="/usr/local/opt/coreutils/libexec/gnubin:$PATH"
+export HOMEBREW_NO_ANALYTICS=1
