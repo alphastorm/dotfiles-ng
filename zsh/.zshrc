@@ -2,7 +2,7 @@ source ~/.zplug/init.zsh
 source ~/.promptline.sh
 
 # color
-export TERM="xterm-256color"
+export TERM='xterm-256color'
 
 # languages
 export LANG='en_US.UTF-8'
@@ -13,8 +13,8 @@ export LC_ALL='en_US.UTF-8'
 zplug 'zplug/zplug', hook-build:'zplug --self-manage'
 
 # essential plugins
-zplug "rupa/z", use:z.sh
-zplug "so-fancy/diff-so-fancy", as:command, use:diff-so-fancy
+zplug 'rupa/z', use:z.sh
+zplug 'so-fancy/diff-so-fancy', as:command, use:diff-so-fancy
 zplug 'seebi/dircolors-solarized'
 
 # prezto modules
@@ -42,13 +42,7 @@ zstyle ':prezto:module:terminal' auto-title 'yes'
 zstyle ':prezto:module:ssh:load' identities 'id_rsa' 'alpha_id_rsa' 'phab_id_rsa'
 
 # go settings
-export GOPATH="$HOME/gocode"
-
-# history settings
-alias history="history 0"
-export HISTSIZE=100000
-export HISTFILE="$HOME/.history"
-export SAVEHIST=$HISTSIZE
+export GOPATH='$HOME/gocode'
 
 # fzf settings and integration with z
 export FZF_DEFAULT_COMMAND='rg -i --files --hidden --follow --glob "!.git/*" --glob "!.DS_Store/*" --glob "!node_modules/*" --glob "!env/*"'
@@ -58,14 +52,9 @@ z() {
   cd "$(_z -l 2>&1 | fzf --height 40% --reverse --inline-info +s --tac --query "$*" | sed 's/^[0-9,.]* *//')"
 }
 
-# aliases
-alias buu='brew update && brew upgrade'
-alias v='vim'
-alias vu='vim +PlugUpgrade +PlugUpdate +qa!'
-
 # install plugins if there are plugins that have not been installed
 if ! zplug check; then
-    printf "Install? [y/N]: "
+    printf 'Install? [y/N]: '
     if read -q; then
         echo; zplug install
     fi
@@ -98,6 +87,11 @@ setopt nohistverify
 # fixes adding files to git with wildcards (e.g. via gaa)
 unsetopt NOMATCH
 
+# aliases
+alias buu='brew update && brew upgrade'
+alias v='vim'
+alias vu='vim +PlugUpgrade +PlugUpdate +qa!'
+
 # git aliases
 alias gaa='git add --all'
 alias gc='git commit --verbose'
@@ -111,3 +105,9 @@ alias gr='git r'
 alias grm='git branch --merged master | grep -v "\* master" | xargs -n 1 git branch -d'
 alias gs='git status'
 alias gum="echo 'Resetting master to the latest origin/master...' && git fetch && git update-ref refs/heads/master origin/master"
+
+# history settings
+alias history='fc -il -200'
+export HISTSIZE=100000
+export HISTFILE="$HOME/.history"
+export SAVEHIST=$HISTSIZE
