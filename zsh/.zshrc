@@ -42,7 +42,7 @@ zstyle ':prezto:module:terminal' auto-title 'yes'
 zstyle ':prezto:module:ssh:load' identities 'id_rsa' 'alpha_id_rsa' 'phab_id_rsa'
 
 # go settings
-export GOPATH='$HOME/gocode'
+export GOPATH="$HOME/gocode"
 
 # fzf settings and integration with z
 export FZF_DEFAULT_COMMAND='rg -i --files --hidden --follow --glob "!.git/*" --glob "!.DS_Store/*" --glob "!node_modules/*" --glob "!env/*"'

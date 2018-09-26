@@ -10,7 +10,7 @@
 uses:
 
 * [zplug](https://github.com/zplug/zplug) (plugin manager)
-* [prezto](https://github.com/sorin-ionescu/prezto) (configration framework)
+* [prezto](https://github.com/sorin-ionescu/prezto) (configuration framework)
 
 ### customization
 
