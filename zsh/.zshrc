@@ -52,6 +52,9 @@ z() {
   cd "$(_z -l 2>&1 | fzf --height 40% --reverse --inline-info +s --tac --query "$*" | sed 's/^[0-9,.]* *//')"
 }
 
+# bat settings
+export BAT_THEME='Solarized (dark)'
+
 # install plugins if there are plugins that have not been installed
 if ! zplug check; then
     printf 'Install? [y/N]: '

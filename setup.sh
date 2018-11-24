@@ -47,7 +47,8 @@ function install_brew_packages() {
     pinentry-mac \
     shellcheck \
     wget \
-    zsh
+    zsh \
+    bat
 
   brew cask install keybase
 
@@ -88,6 +89,17 @@ function install_apt_packages() {
   curl -sL https://deb.nodesource.com/setup_10.x | sudo -E bash -
   sudo apt -y install nodejs
 
+  # install bat if not present
+  if ! [ -x "$(command -v bat)" ]; then
+    BAT_REPO="https://github.com/sharkdp/bat/releases/download"
+    BAT_LATEST=$(curl -sSL "https://api.github.com/repos/sharkdp/bat/releases/latest" | jq --raw-output .tag_name)
+    BAT_RELEASE="bat_${BAT_LATEST//v}_amd64.deb"
+
+    curl -LO "${BAT_REPO}/${BAT_LATEST}/${BAT_RELEASE}"
+    sudo dpkg -i "${BAT_RELEASE}" && rm "${BAT_RELEASE}"
+  fi
+
+  # install rg if not present
   if ! [ -x "$(command -v rg)" ]; then
     RG_REPO="https://github.com/BurntSushi/ripgrep/releases/download"
     RG_LATEST=$(curl -sSL "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest" | jq --raw-output .tag_name)
@@ -108,6 +120,14 @@ function install_common_settings() {
   echo "installing common settings..."
   stow -R -t ~ stow
   sudo pip install virtualenv
+
+  # install the solarized dark theme for bat
+  BAT_CONFIG_DIR="$(bat cache --config-dir)"
+  mkdir -p "${BAT_CONFIG_DIR}/themes" &&
+    cd "${BAT_CONFIG_DIR}/themes" &&
+    { curl -L "https://raw.githubusercontent.com/braver/Solarized/87e01090cf5fb821a234265b3138426ae84900e7/Solarized%20(dark).tmTheme" \
+      -o "Solarized (dark).tmTheme"; cd - || return; }
+  bat cache --init
 }
 
 function install_osx_settings() {
@@ -118,7 +138,8 @@ function install_osx_settings() {
 
   mkdir -p ~/Library/Fonts &&
     cd ~/Library/Fonts &&
-    { curl -LO "https://raw.githubusercontent.com/powerline/fonts/master/Inconsolata-g/Inconsolata-g%20for%20Powerline.otf"; cd - || return; }
+    { curl -L "https://raw.githubusercontent.com/powerline/fonts/master/Inconsolata-g/Inconsolata-g%20for%20Powerline.otf" \
+      -o "Inconsolata-g for Powerline.otf"; cd - || return; }
 }
 
 function install_linux_settings() {
