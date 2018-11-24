@@ -16,7 +16,7 @@ Plug 'airblade/vim-gitgutter'
 Plug 'altercation/vim-colors-solarized'
 Plug 'bling/vim-airline'
 Plug 'edkolev/promptline.vim'
-Plug 'fatih/vim-go', { 'tag': '*', 'do': ':GoInstallBinaries' }
+Plug 'fatih/vim-go', { 'tag': '*', 'do': ':GoUpdateBinaries' }
 Plug 'junegunn/fzf', { 'dir': '~/.fzf', 'do': './install --all' }
 Plug 'mileszs/ack.vim'
 Plug 'raimondi/delimitmate'
