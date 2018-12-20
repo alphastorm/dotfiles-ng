@@ -9,19 +9,16 @@ echo "os: $OS"
 
 if [ "$OS" == "Darwin" ]; then
   PLATFORM=osx
-  if [ "$(command -v brew)" ]; then
-    PACKAGE_MANAGER=brew
-  else
-    echo 'no package manager found.  install aptitude or yum to continue.' && exit 1
+  PACKAGE_MANAGER=brew
+  if ! [ -x "$(command -v brew)" ]; then
+    /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
   fi
 elif [ "$OS" == "Linux" ]; then
   PLATFORM=linux
   if [ "$(command -v apt-get)" ]; then
     PACKAGE_MANAGER=apt
-  elif [ "$(command -v yum)" ]; then
-    PACKAGE_MANAGER=yum
   else
-    echo 'no package manager found.  install aptitude or yum to continue.' && exit 1
+    echo 'no package manager found.  install aptitude to continue.' && exit 1
   fi
 else
   echo "unrecognized os: $OS" && exit 1
@@ -30,8 +27,8 @@ echo "platform: $PLATFORM"
 echo "package manager: $PACKAGE_MANAGER"
 
 function install_brew_packages() {
-  echo "installing homebrew and packages..."
-  /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+  echo "installing homebrew packages..."
+  brew update
 
   brew install \
     stow \
@@ -110,12 +107,6 @@ function install_apt_packages() {
     curl -LO "${RG_REPO}/${RG_LATEST}/${RG_RELEASE}"
     sudo dpkg -i "${RG_RELEASE}" && rm "${RG_RELEASE}"
   fi
-}
-
-function install_yum_packages() {
-  echo "installing yum packages..."
-  # TODO: update
-  # sudo yum -y install
 }
 
 function install_common_settings() {
