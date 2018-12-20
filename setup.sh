@@ -30,7 +30,9 @@ echo "platform: $PLATFORM"
 echo "package manager: $PACKAGE_MANAGER"
 
 function install_brew_packages() {
-  echo "installing homebrew packages..."
+  echo "installing homebrew and packages..."
+  /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+
   brew install \
     stow \
     cmake \
@@ -42,13 +44,13 @@ function install_brew_packages() {
     httpie \
     jq \
     tree \
-    macvim --with-override-system-vim \
     pinentry \
     pinentry-mac \
     shellcheck \
     wget \
     zsh \
     bat
+  brew install macvim --with-override-system-vim
 
   brew cask install keybase
 
