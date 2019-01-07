@@ -126,8 +126,16 @@ function install_common_settings() {
 function install_osx_settings() {
   echo "installing osx settings..."
   stow -R -t ~ @mac
+  defaults write com.apple.Dock autohide -bool TRUE
   defaults write com.apple.Finder AppleShowAllFiles -bool TRUE
-  defaults write NSGlobalDomain com.apple.swipescrolldirection -bool FALSE
+  # disable natural scrolling
+  defaults write -g com.apple.swipescrolldirection -bool FALSE
+  # fastest key repeat rates
+  defaults write -g InitialKeyRepeat -int 15 # 225 ms
+  defaults write -g KeyRepeat -int 2 # 30 ms
+  defaults write -g com.apple.trackpad.scaling 1
+  # disable mouse acceleration
+  defaults write .GlobalPreferences com.apple.mouse.scaling -1
 
   mkdir -p ~/Library/Fonts &&
     cd ~/Library/Fonts &&
