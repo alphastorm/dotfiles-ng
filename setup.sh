@@ -136,6 +136,8 @@ function install_osx_settings() {
   defaults write -g com.apple.trackpad.scaling 1
   # disable mouse acceleration
   defaults write .GlobalPreferences com.apple.mouse.scaling -1
+  # enable dark mode
+  osascript -e 'tell application "System Events" to tell appearance preferences to set dark mode to true'
 
   mkdir -p ~/Library/Fonts &&
     cd ~/Library/Fonts &&
@@ -170,6 +172,10 @@ install_${PACKAGE_MANAGER}_packages
 
 # set shell
 sudo chsh -s "$(command -v zsh)" "$(whoami)"
+
+# export gopath explicitly so go is installed in the proper location since
+# .zshrc isn't sourced until after setup is complete
+export GOPATH="$HOME/gocode"
 
 install_common_settings
 install_${PLATFORM}_settings
