@@ -17,9 +17,10 @@ Plug 'altercation/vim-colors-solarized'
 Plug 'bling/vim-airline'
 Plug 'edkolev/promptline.vim'
 Plug 'fatih/vim-go', { 'tag': '*', 'do': ':GoUpdateBinaries' }
+Plug 'jiangmiao/auto-pairs'
 Plug 'junegunn/fzf', { 'dir': '~/.fzf', 'do': './install --all' }
 Plug 'mileszs/ack.vim'
-Plug 'raimondi/delimitmate'
+Plug 'ntpeters/vim-better-whitespace'
 Plug 'scrooloose/nerdcommenter'
 Plug 'scrooloose/nerdtree', { 'on': 'NERDTreeToggle' }
 Plug 'sheerun/vim-polyglot'
@@ -99,10 +100,6 @@ set visualbell        " flash the screen instead of beeping
 set background=dark
 colorscheme solarized
 
-" highlight trailing whitespace
-highlight ExtraWhitespace ctermbg=red guibg=red
-match ExtraWhitespace /\s\+$/
-
 " change the 81st col to be gray
 highlight ColorColumn ctermbg=gray
 
@@ -118,6 +115,9 @@ nnoremap <leader>h :noh<CR>
 nnoremap <leader>r :QuickRun<CR>
 nnoremap <leader>t :NERDTreeToggle<CR>
 nnoremap <leader>w <C-w>v<C-w>l:Files<CR>
+
+" f5 to strip whitespace
+nnoremap <silent> <F5> :StripWhitespace<CR>
 
 " disable arrow keys
 nnoremap <up> <nop>
@@ -237,19 +237,3 @@ augroup vimrcEx
   " prefer 2 space indent for python over pep8: disabled for uber
   " autocmd FileType python setl tabstop=2 shiftwidth=2 softtabstop=2
 augroup END
-
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-" STRIP TRAILING WHITESPACE
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-function! <SID>StripTrailingWhitespaces()
-  " preparation: save last search, and cursor position
-  let _s=@/
-  let l = line(".")
-  let c = col(".")
-  " do the business
-  %s/\s\+$//e
-  " clean up: restore previous search history, and cursor position
-  let @/=_s
-  call cursor(l, c)
-endfunction
-nnoremap <silent> <F5> :call <SID>StripTrailingWhitespaces()<CR>
