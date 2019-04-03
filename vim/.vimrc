@@ -188,6 +188,9 @@ let g:promptline_preset = {
   \'z'    : [ promptline#slices#host() ],
   \'warn' : [ promptline#slices#last_exit_code() ]}
 
+" disable folding in latex
+let g:tex_conceal = ""
+
 " disable concealing of double quotes
 let g:vim_json_syntax_conceal = 0
 
