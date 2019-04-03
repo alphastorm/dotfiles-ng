@@ -178,6 +178,7 @@ let g:gitgutter_sign_removed = '∙'
 let g:gitgutter_sign_modified_removed = '∙'
 
 let g:indentLine_char = '¦'
+let g:indentLine_fileTypeExclude = ['tex', 'markdown']
 
 let g:promptline_theme = 'airline'
 let g:promptline_preset = {
