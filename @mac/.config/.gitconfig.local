@@ -1,2 +1,4 @@
 [commit]
   gpgsign = true
+[include]
+  path = ~/.config/.gitconfig.sec.local
