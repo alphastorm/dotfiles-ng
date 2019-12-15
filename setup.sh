@@ -46,8 +46,9 @@ function install_brew_packages() {
     shellcheck \
     wget \
     zsh \
-    bat
-  brew install macvim --with-override-system-vim
+    bat \
+    mysql
+  brew install macvim
 
   brew cask install keybase
 
@@ -112,15 +113,16 @@ function install_apt_packages() {
 function install_common_settings() {
   echo "installing common settings..."
   stow -R -t ~ stow
+  sudo easy_install pip
   sudo pip install virtualenv
 
   # install the solarized dark theme for bat
-  BAT_CONFIG_DIR="$(bat cache --config-dir)"
+  BAT_CONFIG_DIR="$(bat --config-dir)"
   mkdir -p "${BAT_CONFIG_DIR}/themes" &&
     cd "${BAT_CONFIG_DIR}/themes" &&
     { curl -L "https://raw.githubusercontent.com/braver/Solarized/87e01090cf5fb821a234265b3138426ae84900e7/Solarized%20(dark).tmTheme" \
       -o "Solarized (dark).tmTheme"; cd - || return; }
-  bat cache --init
+  bat cache --build
 }
 
 function install_osx_settings() {
