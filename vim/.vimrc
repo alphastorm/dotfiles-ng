@@ -19,7 +19,6 @@ Plug 'edkolev/promptline.vim'
 Plug 'fatih/vim-go', { 'tag': '*', 'do': ':GoUpdateBinaries' }
 Plug 'jiangmiao/auto-pairs'
 Plug 'junegunn/fzf', { 'dir': '~/.fzf', 'do': './install --all' }
-Plug 'mileszs/ack.vim'
 Plug 'ntpeters/vim-better-whitespace'
 Plug 'scrooloose/nerdcommenter'
 Plug 'scrooloose/nerdtree', { 'on': 'NERDTreeToggle' }
@@ -108,7 +107,7 @@ highlight ColorColumn ctermbg=gray
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 let mapleader = "\<Space>"
 nnoremap <leader><leader> <C-^>
-nnoremap <leader>a :Ack<CR>
+nnoremap <Leader>a :Rg <C-R><C-W><CR>
 nnoremap <leader>b :Gblame<CR>
 nnoremap <leader>e :lnext<CR>
 nnoremap <leader>h :noh<CR>
@@ -157,9 +156,6 @@ command! -bang -nargs=? -complete=dir Files
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 " PLUGIN SETTINGS
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-" enable background search execution with vim-dispatch for ack.vim
-let g:ack_use_dispatch = 1
-
 let g:airline_powerline_fonts = 1
 let g:airline_skip_empty_sections = 1
 
@@ -207,9 +203,6 @@ let g:ycm_autoclose_preview_window_after_completion = 1
 if executable('rg')
   " use rg over grep
   set grepprg=rg\ --vimgrep
-
-  " for using rg with ack.vim
-  let g:ackprg = 'rg --vimgrep'
 endif
 
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
