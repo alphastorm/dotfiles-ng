@@ -142,9 +142,13 @@ function install_osx_settings() {
   osascript -e 'tell application "System Events" to tell appearance preferences to set dark mode to true'
 
   mkdir -p ~/Library/Fonts &&
-    cd ~/Library/Fonts &&
-    { curl -L "https://raw.githubusercontent.com/powerline/fonts/master/Inconsolata-g/Inconsolata-g%20for%20Powerline.otf" \
-      -o "Inconsolata-g for Powerline.otf"; cd - || return; }
+    cd ~/Library/Fonts && {
+      curl -fsLO "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Regular.ttf"
+      curl -fsLO "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold.ttf"
+      curl -fsLO "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Italic.ttf"
+      curl -fsLO "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold%20Italic.ttf"
+      cd - > /dev/null || return;
+  }
 }
 
 function install_linux_settings() {
