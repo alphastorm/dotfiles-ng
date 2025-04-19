@@ -16,7 +16,6 @@ Plug 'airblade/vim-gitgutter'
 Plug 'altercation/vim-colors-solarized'
 Plug 'bling/vim-airline'
 Plug 'edkolev/promptline.vim'
-Plug 'fatih/vim-go', { 'tag': '*', 'do': ':GoUpdateBinaries' }
 Plug 'jiangmiao/auto-pairs'
 Plug 'junegunn/fzf', { 'dir': '~/.fzf', 'do': './install --all' }
 Plug 'ntpeters/vim-better-whitespace'
@@ -229,7 +228,4 @@ augroup vimrcEx
 
   " close the quickfix / location list if it is the last window open
   autocmd WinEnter * if &buftype ==# 'quickfix' && winnr('$') == 1 | quit | endif
-
-  " prefer 2 space indent for python over pep8: disabled for uber
-  " autocmd FileType python setl tabstop=2 shiftwidth=2 softtabstop=2
 augroup END
