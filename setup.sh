@@ -47,6 +47,7 @@ function install_brew_packages() {
     pinentry-mac \
     pngquant \
     pnpm \
+    ripgrep \
     semgrep \
     shellcheck \
     stow \
@@ -56,12 +57,6 @@ function install_brew_packages() {
   brew install macvim
 
   brew cask install keybase
-
-  # homebrew-core's version is compiled with rust stable and no SIMD. install
-  # a binary compiled with rust nightly (including SIMD and all optimizations)
-  # by utilizing a custom tap:
-  brew tap burntsushi/ripgrep https://github.com/BurntSushi/ripgrep.git
-  brew install burntsushi/ripgrep/ripgrep-bin
 }
 
 function install_apt_packages() {
