@@ -12,3 +12,6 @@ then
     source $file
   done
 fi
+
+export PATH="$PATH:/Users/srs/.foundry/bin"
+. "$HOME/.cargo/env"

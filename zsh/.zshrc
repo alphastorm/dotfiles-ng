@@ -1,5 +1,11 @@
+# Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
+# Initialization code that may require console input (password prompts, [y/n]
+# confirmations, etc.) must go above this block; everything else may go below.
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
 source ~/.zplug/init.zsh
-source ~/.promptline.sh
 
 # color
 export TERM='xterm-256color'
@@ -13,36 +19,14 @@ export LC_ALL='en_US.UTF-8'
 zplug 'zplug/zplug', hook-build:'zplug --self-manage'
 
 # essential plugins
-zplug 'rupa/z', use:z.sh
-zplug 'so-fancy/diff-so-fancy', as:command, use:diff-so-fancy
+zplug 'agkozak/zsh-z'
+zplug 'mroth/evalcache'
+zplug 'romkatv/powerlevel10k', as:theme, depth:1
 zplug 'seebi/dircolors-solarized'
+zplug 'so-fancy/diff-so-fancy', as:command, use:diff-so-fancy
 
 # prezto modules
-zplug 'modules/environment', from:prezto
-zplug 'modules/terminal', from:prezto
-zplug 'modules/editor', from:prezto
-zplug 'modules/history', from:prezto
-zplug 'modules/directory', from:prezto
-zplug 'modules/spectrum', from:prezto
-zplug 'modules/gnu-utility', from:prezto
-zplug 'modules/utility', from:prezto
 zplug 'modules/ssh', from:prezto
-zplug 'modules/completion', from:prezto
-zplug 'modules/screen', from:prezto
-zplug 'modules/homebrew', from:prezto, if:"[[ $OSTYPE == *darwin* ]]"
-zplug 'modules/python', from:prezto
-zplug 'modules/git', from:prezto
-zplug 'modules/syntax-highlighting', from:prezto
-zplug 'modules/history-substring-search', from:prezto
-
-# prezto settings
-zstyle ':prezto:*:*' color 'yes'
-zstyle ':prezto:module:editor' key-bindings 'vi'
-zstyle ':prezto:module:terminal' auto-title 'yes'
-zstyle ':prezto:module:ssh:load' identities 'id_rsa' 'alpha_id_rsa' 'phab_id_rsa'
-
-# go settings
-export GOPATH="$HOME/gocode"
 
 # fzf settings and integration with z
 export FZF_DEFAULT_COMMAND='rg -i --files --hidden --follow --glob "!.git/*" --glob "!.DS_Store/*" --glob "!node_modules/*" --glob "!env/*"'
@@ -73,7 +57,7 @@ do
   source $file
 done
 
-eval `dircolors ~/.zplug/repos/seebi/dircolors-solarized/dircolors.256dark`
+_evalcache dircolors ~/.zplug/repos/seebi/dircolors-solarized/dircolors.256dark
 
 # load after zplug to override
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
@@ -92,8 +76,10 @@ unsetopt NOMATCH
 
 # aliases
 alias buu='brew update && brew upgrade'
+alias ls='lsd'
 alias v='vim'
 alias vu='vim +PlugUpgrade +PlugUpdate +qa!'
+alias ..='cd ..'
 
 # git aliases
 alias gaa='git add --all'
@@ -114,3 +100,22 @@ alias history='fc -il -200'
 export HISTSIZE=100000
 export HISTFILE="$HOME/.history"
 export SAVEHIST=$HISTSIZE
+
+# load pyenv
+export PYENV_ROOT="$HOME/.pyenv"
+command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
+_evalcache pyenv init -
+
+# load pyenv-virtualenv
+_evalcache pyenv virtualenv-init - | sed s/precmd/precwd/g
+
+# pnpm
+export PNPM_HOME="/Users/srs/Library/pnpm"
+case ":$PATH:" in
+  *":$PNPM_HOME:"*) ;;
+  *) export PATH="$PNPM_HOME:$PATH" ;;
+esac
+# pnpm end
+
+# To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
+[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
