@@ -31,23 +31,28 @@ function install_brew_packages() {
   brew update
 
   brew install \
-    stow \
+    bat \
     cmake \
     coreutils \
     csshx \
-    go \
-    node \
+    eza \
     gpg \
+    htop \
     httpie \
+    hugo \
     jq \
-    tree \
+    lsd \
+    node \
     pinentry \
     pinentry-mac \
+    pngquant \
+    pnpm \
+    semgrep \
     shellcheck \
+    stow \
+    tree \
     wget \
-    zsh \
-    bat \
-    mysql
+    zsh
   brew install macvim
 
   brew cask install keybase
