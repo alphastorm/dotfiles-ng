@@ -39,14 +39,6 @@ z() {
 # bat settings
 export BAT_THEME='Solarized (dark)'
 
-# install plugins if there are plugins that have not been installed
-if ! zplug check; then
-    printf 'Install? [y/N]: '
-    if read -q; then
-        echo; zplug install
-    fi
-fi
-
 # then, source plugins and add commands to $path
 zplug load
 
