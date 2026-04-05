@@ -49,7 +49,7 @@ do
   source $file
 done
 
-_evalcache dircolors ~/.zplug/repos/seebi/dircolors-solarized/dircolors.256dark
+_evalcache gdircolors ~/.zplug/repos/seebi/dircolors-solarized/dircolors.256dark
 
 # load after zplug to override
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
@@ -108,6 +108,9 @@ case ":$PATH:" in
   *) export PATH="$PNPM_HOME:$PATH" ;;
 esac
 # pnpm end
+
+# homebrew vim
+export PATH="/opt/homebrew/bin:$PATH"
 
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
