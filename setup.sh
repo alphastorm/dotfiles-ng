@@ -47,14 +47,15 @@ function install_brew_packages() {
     pinentry-mac \
     pngquant \
     pnpm \
+    python-setuptools \
     ripgrep \
     semgrep \
     shellcheck \
     stow \
     tree \
+    vim \
     wget \
     zsh
-  brew install macvim
 
   brew cask install keybase
 }
