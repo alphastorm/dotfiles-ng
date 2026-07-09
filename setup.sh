@@ -57,7 +57,9 @@ function install_brew_packages() {
     wget \
     zsh
 
-  brew cask install keybase
+  brew install --cask \
+    font-meslo-lg-nerd-font \
+    keybase
 }
 
 function install_apt_packages() {
@@ -141,15 +143,6 @@ function install_osx_settings() {
   defaults write .GlobalPreferences com.apple.mouse.scaling -1
   # enable dark mode
   osascript -e 'tell application "System Events" to tell appearance preferences to set dark mode to true'
-
-  mkdir -p ~/Library/Fonts &&
-    cd ~/Library/Fonts && {
-      curl -fsLO "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Regular.ttf"
-      curl -fsLO "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold.ttf"
-      curl -fsLO "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Italic.ttf"
-      curl -fsLO "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold%20Italic.ttf"
-      cd - > /dev/null || return;
-  }
 }
 
 function install_linux_settings() {
