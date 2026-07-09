@@ -112,5 +112,8 @@ esac
 # homebrew vim
 export PATH="/opt/homebrew/bin:$PATH"
 
+# oh-my-pi
+eval "$(omp completions zsh)"
+
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
