@@ -10,6 +10,9 @@ if [[ -r /opt/homebrew/share/zsh/site-functions/_omp ]]; then
   fpath=(/opt/homebrew/share/zsh/site-functions $fpath)
 fi
 
+fpath=("$HOME/.zplug/misc/completions" $fpath)
+autoload -Uz _zplug
+
 source ~/.zplug/init.zsh
 
 
