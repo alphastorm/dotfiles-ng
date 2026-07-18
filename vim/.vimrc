@@ -13,7 +13,6 @@ call plug#begin('~/.vim/plugged')
 
 Plug 'airblade/vim-gitgutter'
 Plug 'altercation/vim-colors-solarized'
-Plug 'edkolev/promptline.vim'
 Plug 'jiangmiao/auto-pairs'
 Plug 'junegunn/fzf', { 'dir': '~/.fzf', 'do': './install --all' }
 Plug 'junegunn/fzf.vim'
@@ -170,14 +169,6 @@ let g:gitgutter_sign_modified_removed = '∙'
 let g:indentLine_char = '¦'
 let g:indentLine_fileTypeExclude = ['tex', 'markdown']
 
-let g:promptline_theme = 'airline'
-let g:promptline_preset = {
-  \'a'    : [ promptline#slices#cwd({ 'dir_limit': 2 }) ],
-  \'b'    : [ promptline#slices#vcs_branch(), '$(git rev-parse --short HEAD 2>/dev/null)', promptline#slices#git_status() ],
-  \'c'    : [ promptline#slices#python_virtualenv() ],
-  \'x'    : [ '$(date +"%H:%M:%S")' ],
-  \'z'    : [ promptline#slices#host() ],
-  \'warn' : [ promptline#slices#last_exit_code() ]}
 
 " disable folding in latex
 let g:tex_conceal = ""

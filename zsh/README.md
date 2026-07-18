@@ -1,7 +1,6 @@
 **config files for `zsh`<<http://www.zsh.org/>>, a shell designed for interactive use**
 
     └── zsh
-        ├── .promptline.sh
         ├── .zlogin
         ├── .zprofile
         ├── .zshenv
