@@ -95,55 +95,46 @@ function install_brew_packages() {
 }
 
 function install_apt_packages() {
-  echo "installing aptitude packages..."
-  sudo apt update
+  echo "installing APT packages..."
+  sudo apt-get update
 
-  sudo apt -y install \
-    bsdmainutils \
+  sudo apt-get install -y \
+    bat \
+    bsdextrautils \
     build-essential \
     cmake \
     curl \
     gawk \
     git \
-    golang \
+    gnupg \
+    golang-go \
     jq \
+    lsd \
     nodejs \
-    python-dev \
-    python-pip \
+    npm \
+    openssh-client \
     python3-dev \
+    python3-pip \
+    ripgrep \
     screen \
     shellcheck \
-    ssh \
     stow \
     tree \
     unzip \
     vim \
     zsh
 
-  # add nodesource node.js binary distributions
-  curl -sL https://deb.nodesource.com/setup_10.x | sudo -E bash -
-  sudo apt -y install nodejs
-
-  # install bat if not present
-  if ! [ -x "$(command -v bat)" ]; then
-    BAT_REPO="https://github.com/sharkdp/bat/releases/download"
-    BAT_LATEST=$(curl -sSL "https://api.github.com/repos/sharkdp/bat/releases/latest" | jq --raw-output .tag_name)
-    BAT_RELEASE="bat_${BAT_LATEST//v}_amd64.deb"
-
-    curl -LO "${BAT_REPO}/${BAT_LATEST}/${BAT_RELEASE}"
-    sudo dpkg -i "${BAT_RELEASE}"
-    rm "${BAT_RELEASE}"
+  # Debian installs bat as batcat to avoid a package-name collision.
+  if ! command -v bat >/dev/null 2>&1 &&
+     command -v batcat >/dev/null 2>&1; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sfn "$(command -v batcat)" "$HOME/.local/bin/bat"
+    export PATH="$HOME/.local/bin:$PATH"
   fi
 
-  # install rg if not present
-  if ! [ -x "$(command -v rg)" ]; then
-    RG_REPO="https://github.com/BurntSushi/ripgrep/releases/download"
-    RG_LATEST=$(curl -sSL "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest" | jq --raw-output .tag_name)
-    RG_RELEASE="ripgrep_${RG_LATEST}_amd64.deb"
-
-    curl -LO "${RG_REPO}/${RG_LATEST}/${RG_RELEASE}"
-    sudo dpkg -i "${RG_RELEASE}"
-    rm "${RG_RELEASE}"
+  if ! command -v bat >/dev/null 2>&1; then
+    echo "error: the bat package did not provide bat or batcat." >&2
+    return 1
   fi
 }
 
