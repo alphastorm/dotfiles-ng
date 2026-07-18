@@ -4,14 +4,45 @@ SCRIPTDIR=$(dirname "$0")
 cd "$SCRIPTDIR" || exit
 
 # detect platform-dependent options
-OS=$(uname -a | cut -d" " -f 1)
+OS=$(uname -s)
 echo "os: $OS"
 
 if [ "$OS" == "Darwin" ]; then
   PLATFORM=osx
   PACKAGE_MANAGER=brew
-  if ! [ -x "$(command -v brew)" ]; then
-    /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+
+  function load_brew() {
+    local brew_executable
+
+    brew_executable=$(command -v brew 2>/dev/null)
+    if ! [ -x "$brew_executable" ]; then
+      if [ -x /opt/homebrew/bin/brew ]; then
+        brew_executable=/opt/homebrew/bin/brew
+      elif [ -x /usr/local/bin/brew ]; then
+        brew_executable=/usr/local/bin/brew
+      else
+        return 1
+      fi
+    fi
+
+    eval "$("$brew_executable" shellenv)"
+  }
+
+  if ! load_brew; then
+    HOMEBREW_INSTALLER=$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh) || {
+      echo "error: failed to download the Homebrew installer." >&2
+      exit 1
+    }
+    /bin/bash -c "$HOMEBREW_INSTALLER" || {
+      echo "error: the Homebrew installer failed." >&2
+      exit 1
+    }
+    unset HOMEBREW_INSTALLER
+
+    if ! load_brew; then
+      echo "error: Homebrew is unavailable after installation." >&2
+      exit 1
+    fi
   fi
 elif [ "$OS" == "Linux" ]; then
   PLATFORM=linux
@@ -116,8 +147,7 @@ function install_apt_packages() {
 function install_common_settings() {
   echo "installing common settings..."
   stow -R -t ~ stow
-  sudo easy_install pip
-  sudo pip install virtualenv
+
 
   # install the solarized dark theme for bat
   BAT_CONFIG_DIR="$(bat --config-dir)"
