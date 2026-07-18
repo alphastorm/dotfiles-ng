@@ -210,8 +210,54 @@ function install_linux_settings() {
   stow -R -t "$HOME" @linux
 }
 
+function _verify_sha256() {
+  local expected file
+  expected=$1
+  file=$2
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s  %s\n' "$expected" "$file" |
+      sha256sum --check --status
+  elif command -v shasum >/dev/null 2>&1; then
+    printf '%s  %s\n' "$expected" "$file" |
+      shasum -a 256 --check >/dev/null 2>&1
+  else
+    echo "error: sha256sum or shasum is required to verify vim-plug." >&2
+    return 1
+  fi
+}
+
 function install_vim_plug() {
-  vim +PlugInstall --sync +qa!
+  local commit destination expected_sha256 url
+  commit=88e31471818e9a29a8a20a0ee61360cfd7bdc1cd
+  expected_sha256=7e2b20cd909da9c456498684c98f03c63829170f01e34595dd8e1818a217d37c
+  destination="$HOME/.vim/autoload/plug.vim"
+  url="https://raw.githubusercontent.com/junegunn/vim-plug/$commit/plug.vim"
+
+  if ! _verify_sha256 "$expected_sha256" "$destination"; then
+    echo "installing pinned vim-plug..."
+    mkdir -p "$HOME/.vim/autoload"
+    (
+      local cleanup_command temporary_file
+      temporary_file=$(mktemp "$destination.tmp.XXXXXX")
+      printf -v cleanup_command 'rm -f %q' "$temporary_file"
+      # Capture the path before local scope exits.
+      # shellcheck disable=SC2064
+      trap "$cleanup_command" EXIT
+      curl -fsSL --proto '=https' --proto-redir '=https' \
+        "$url" -o "$temporary_file"
+      if ! _verify_sha256 "$expected_sha256" "$temporary_file"; then
+        echo "error: vim-plug checksum verification failed." >&2
+        exit 1
+      fi
+      chmod 0644 "$temporary_file"
+      mv -f "$temporary_file" "$destination"
+      trap - EXIT
+    )
+  fi
+
+  echo "installing missing Vim plugins..."
+  vim '+PlugInstall --sync' +qa!
 }
 
 function install_zplug() {

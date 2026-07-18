@@ -3,10 +3,9 @@
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 " VIM-PLUG (https://github.com/junegunn/vim-plug)
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-if empty(glob('~/.vim/autoload/plug.vim'))
-  silent !curl -fLo ~/.vim/autoload/plug.vim --create-dirs
-    \ https://raw.githubusercontent.com/junegunn/vim-plug/master/plug.vim
-  autocmd VimEnter * PlugInstall --sync | source $MYVIMRC
+if !filereadable(expand('~/.vim/autoload/plug.vim'))
+  echoerr 'vim-plug is missing; run ~/.dotfiles/setup.sh'
+  finish
 endif
 
 call plug#begin('~/.vim/plugged')

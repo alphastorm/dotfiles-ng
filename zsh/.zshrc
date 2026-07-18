@@ -239,7 +239,7 @@ unsetopt NOMATCH
 alias buu='brew update && brew upgrade'
 alias ls='lsd'
 alias v='vim'
-alias vu='vim +PlugUpgrade +PlugUpdate +qa!'
+alias vu='vim +PlugUpdate +qa!'
 alias ..='cd ..'
 
 # git aliases
