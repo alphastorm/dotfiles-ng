@@ -186,13 +186,22 @@ unset _dircolors_file _dircolors_cache_id
 unset _gdircolors_command_key _gdircolors_data_key
 
 # Load after zplug to override its widget bindings.
-# fzf restores options with eval; ZLE cannot be re-enabled without a TTY.
-[[ -t 0 ]] || unsetopt zle
-if [[ -r "$HOME/.fzf/shell/key-bindings.zsh" &&
-      -r "$HOME/.fzf/shell/completion.zsh" ]]; then
-  path+=("$HOME/.fzf/bin")
-  source "$HOME/.fzf/shell/key-bindings.zsh"
-  source "$HOME/.fzf/shell/completion.zsh"
+# P10k instant prompt temporarily redirects stdin, so use zsh's terminal
+# parameter instead of fd 0 to decide whether line editing is available.
+if [[ -n $TTY ]]; then
+  setopt zle
+  if [[ -r "$HOME/.fzf/shell/key-bindings.zsh" &&
+        -r "$HOME/.fzf/shell/completion.zsh" ]]; then
+    path+=("$HOME/.fzf/bin")
+    source "$HOME/.fzf/shell/key-bindings.zsh"
+    source "$HOME/.fzf/shell/completion.zsh"
+  fi
+
+  # Accept both terminal Backspace encodings in either insert keymap.
+  bindkey -M emacs '^?' backward-delete-char
+  bindkey -M emacs '^H' backward-delete-char
+  bindkey -M viins '^?' vi-backward-delete-char
+  bindkey -M viins '^H' vi-backward-delete-char
 fi
 
 unalias z 2>/dev/null

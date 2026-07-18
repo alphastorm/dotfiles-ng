@@ -109,16 +109,32 @@ compinit_calls=$(awk '$NF == "compinit" && $2 ~ /^[0-9]+$/ { print $2; exit }' "
 }
 print -- 'smoke compinit_calls=1'
 
-completion_probe='(( $+functions[_zplug] && $+functions[_omp] && $+functions[_zshz] )) || exit 81
-[[ $(bindkey "^T") == *fzf-file-widget* ]] || exit 82
-[[ $(bindkey "^R") == *fzf-history-widget* ]] || exit 83'
+shell_probe='[[ -n $TTY ]] || exit 80
+[[ -o zle ]] || exit 81
+(( $+functions[_zplug] && $+functions[_omp] && $+functions[_zshz] )) || exit 82
+[[ $(bindkey "^T") == *fzf-file-widget* ]] || exit 83
+[[ $(bindkey "^R") == *fzf-history-widget* ]] || exit 84
+[[ $(bindkey -M emacs "^?") == *backward-delete-char* ]] || exit 85
+[[ $(bindkey -M emacs "^H") == *backward-delete-char* ]] || exit 86
+[[ $(bindkey -M viins "^?") == *vi-backward-delete-char* ]] || exit 87
+[[ $(bindkey -M viins "^H") == *vi-backward-delete-char* ]] || exit 88
+print -r -- DOTFILES_SHELL_SMOKE=ok'
+# Isolate zpty because pseudo-terminal shutdown sends HUP to its parent.
 for shell_path in $shells; do
-  if ! "$shell_path" -l -i -c "$completion_probe" >/dev/null 2>&1; then
-    print -u2 -- "error: completion smoke failed for $shell_path"
+  if ! (
+    trap - EXIT INT TERM
+    trap '' HUP
+    zmodload zsh/zpty
+    zpty dotfiles-smoke ${(q)shell_path} -l -i -c ${(q)shell_probe} ||
+      exit 1
+    probe_output=
+    zpty -rm dotfiles-smoke probe_output '*DOTFILES_SHELL_SMOKE=ok*'
+  ); then
+    print -u2 -- "error: shell smoke failed for $shell_path"
     exit 1
   fi
 done
-print -- "smoke completions=ok shells=${#shells}"
+print -- "smoke completions=ok zle=ok backspace=ok shells=${#shells}"
 
 cache_dir="$work_dir/evalcache"
 probe_command="$work_dir/evalcache-probe"
