@@ -5,7 +5,7 @@ if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]
   source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
 fi
 
-# Homebrew-generated OMP completion; zplug runs compinit below.
+# Homebrew-generated OMP completion; compinit runs after plugin paths are added.
 if [[ -r /opt/homebrew/share/zsh/site-functions/_omp ]]; then
   fpath=(/opt/homebrew/share/zsh/site-functions $fpath)
 fi
@@ -13,25 +13,6 @@ fi
 fpath=("$HOME/.zplug/misc/completions" $fpath)
 autoload -Uz _zplug
 
-source ~/.zplug/init.zsh
-
-
-# languages
-export LANG='en_US.UTF-8'
-export LANGUAGE='en_US:en'
-export LC_ALL='en_US.UTF-8'
-
-# let zplug manage zplug
-zplug 'zplug/zplug', hook-build:'zplug --self-manage'
-
-# essential plugins
-zplug 'agkozak/zsh-z'
-zplug 'romkatv/powerlevel10k', as:theme, depth:1, use:'powerlevel10k.zsh-theme'
-zplug 'seebi/dircolors-solarized'
-zplug 'so-fancy/diff-so-fancy', as:command, use:diff-so-fancy
-
-# prezto modules
-zplug 'modules/ssh', from:prezto
 
 # fzf settings and integration with z
 export FZF_DEFAULT_COMMAND='rg -i --files --hidden --follow --glob "!.git/*" --glob "!.DS_Store/*" --glob "!node_modules/*" --glob "!env/*"'
@@ -39,8 +20,35 @@ export FZF_DEFAULT_COMMAND='rg -i --files --hidden --follow --glob "!.git/*" --g
 # bat settings
 export BAT_THEME='Solarized (dark)'
 
-# then, source plugins and add commands to $path
-zplug load
+# Load plugins directly; zplug itself is loaded only for explicit management.
+_zsh_plugin_root="$HOME/.zplug/repos"
+fpath=("$_zsh_plugin_root/agkozak/zsh-z" $fpath)
+path=("$_zsh_plugin_root/so-fancy/diff-so-fancy" $path)
+
+_zsh_source_plugin() {
+  if [[ ! -r $1 ]]; then
+    print -u2 -r -- "missing Zsh plugin: $1; run setup.sh"
+    return 1
+  fi
+  source "$1"
+}
+
+_zsh_source_plugin "$_zsh_plugin_root/agkozak/zsh-z/zsh-z.plugin.zsh"
+_zsh_source_plugin "$_zsh_plugin_root/sorin-ionescu/prezto/modules/ssh/init.zsh"
+_zsh_source_plugin \
+  "$_zsh_plugin_root/romkatv/powerlevel10k/powerlevel10k.zsh-theme"
+unfunction _zsh_source_plugin
+unset _zsh_plugin_root
+
+autoload -Uz compinit
+compinit -d "$HOME/.zplug/zcompdump"
+
+zplug() {
+  unfunction zplug
+  export ZPLUG_LOADFILE="$HOME/.zplugrc"
+  source "$HOME/.zplug/init.zsh" || return
+  zplug "$@"
+}
 
 export ZSH_EVALCACHE_DIR=${ZSH_EVALCACHE_DIR:-"$HOME/.zsh-evalcache"}
 

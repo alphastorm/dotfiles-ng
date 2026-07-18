@@ -1,0 +1,5 @@
+zplug 'agkozak/zsh-z'
+zplug 'romkatv/powerlevel10k', as:theme, depth:1, use:'powerlevel10k.zsh-theme'
+zplug 'seebi/dircolors-solarized'
+zplug 'so-fancy/diff-so-fancy', as:command, use:diff-so-fancy
+zplug 'modules/ssh', from:prezto

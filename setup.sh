@@ -205,6 +205,19 @@ function install_zplug() {
     https://raw.githubusercontent.com/zplug/installer/master/installer.zsh | zsh
 }
 
+function install_zplug_plugins() {
+  if ! [ -r "$HOME/.zplugrc" ]; then
+    echo "error: $HOME/.zplugrc is unavailable after stowing dotfiles." >&2
+    return 1
+  fi
+
+  echo "installing missing Zsh plugins..."
+  ZPLUG_LOADFILE="$HOME/.zplugrc" zsh -c '
+    source "$HOME/.zplug/init.zsh"
+    zplug check || zplug install
+  '
+}
+
 function stow_dotfiles() {
   echo "stowing dotfiles from $SCRIPTDIR to $HOME..."
   stow -R -t "$HOME" git
@@ -228,6 +241,7 @@ install_common_settings
 "install_${PLATFORM}_settings"
 stow_dotfiles
 install_zplug
+install_zplug_plugins
 install_vim_plug
 
 echo "done!"
