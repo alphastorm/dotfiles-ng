@@ -185,7 +185,17 @@ function install_vim_plug() {
 }
 
 function install_zplug() {
-  curl -sL --proto-redir -all,https https://raw.githubusercontent.com/zplug/installer/master/installer.zsh | zsh
+  if [ -r "$HOME/.zplug/init.zsh" ]; then
+    return 0
+  fi
+
+  if [ -e "$HOME/.zplug" ]; then
+    echo "error: $HOME/.zplug exists but is incomplete; remove or repair it before rerunning setup." >&2
+    return 1
+  fi
+
+  curl -fsSL --proto '=https' --proto-redir '=https' \
+    https://raw.githubusercontent.com/zplug/installer/master/installer.zsh | zsh
 }
 
 function stow_dotfiles() {
