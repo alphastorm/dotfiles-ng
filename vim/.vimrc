@@ -1,4 +1,5 @@
 " this is sunil srivatsa's .vimrc file
+scriptencoding utf-8
 
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 " VIM-PLUG (https://github.com/junegunn/vim-plug)
@@ -45,30 +46,33 @@ call plug#end()
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 " BASIC EDITING CONFIGURATION
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
-set nocompatible
-
 " 2 space tabs
 set tabstop=2
 set shiftwidth=2
 set softtabstop=2
 
-" toggle paste for pasting unmodified text
-" http://vim.wikia.com/wiki/Toggle_auto-indenting_for_code_paste
-set pastetoggle=<F6>
+" Keep editor state out of working directories.
+let s:vim_state_home = exists('$XDG_STATE_HOME') && !empty($XDG_STATE_HOME)
+  \ ? $XDG_STATE_HOME : expand('~/.local/state')
+let s:vim_state_dir = s:vim_state_home . '/vim'
+for s:directory in ['backup', 'swap', 'undo']
+  let s:path = s:vim_state_dir . '/' . s:directory
+  if !isdirectory(s:path) && !mkdir(s:path, 'p', 0700)
+    throw 'unable to create Vim state directory: ' . s:path
+  endif
+endfor
+let &backupdir = s:vim_state_dir . '/backup//'
+let &directory = s:vim_state_dir . '/swap//'
+let &undodir = s:vim_state_dir . '/undo//'
+unlet s:directory s:path s:vim_state_dir s:vim_state_home
 
-" delete comment character when joining commented lines
-" https://github.com/tpope/vim-sensible/blob/master/plugin/sensible.vim
-if v:version > 703 || v:version == 703 && has("patch541")
-  set formatoptions+=j
-endif
-
+set backup            " retain backups outside the working tree
+set undofile          " persist undo history across sessions
 set autoindent        " copy the indent from the previous line
 set autoread          " reload files when changed on disk, i.e. via git checkout
 set cc=81             " highlight the 81st column
-set clipboard=unnamed " add support for the Mac OS X clipboard
-set directory-=.      " don't store swapfiles in the current directory
-set encoding=utf-8    " utf-8 encoding
 set expandtab         " insert spaces instead of tabs
+set formatoptions+=j  " delete comment leaders when joining lines
 set gdefault          " applies substitutions globally on lines
 set hidden            " hides buffers instead of closing them
 set hlsearch          " highlight all search matches
@@ -79,13 +83,20 @@ set lazyredraw        " enable lazy redrawing
 set nowrap            " disable wrapping
 set number            " line numbers
 set ruler             " displays the current cursor position
-set scrolloff=3       " 2 lines at top/bottom of screen when scrolling
+set scrolloff=3       " keep context above and below the cursor
 set showcmd           " show the input of an incomplete command
 set showmatch         " jump the cursor on matching braces/parens/brackets
 set smartcase         " case-sensitive search if any caps
-set ttyfast           " improves redrawing
+set splitbelow        " open horizontal splits below
+set splitright        " open vertical splits to the right
 set virtualedit=all   " allow the cursor to roam beyond defined text
 set visualbell        " flash the screen instead of beeping
+
+if has('unnamedplus')
+  set clipboard=unnamedplus
+elseif has('clipboard')
+  set clipboard=unnamed
+endif
 
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 " COLOR
