@@ -151,7 +151,7 @@ function install_apt_packages() {
 
 function install_common_settings() {
   echo "installing common settings..."
-  stow -R -t ~ stow
+  stow -R -t "$HOME" stow
 
 
   # install the solarized dark theme for bat
@@ -167,7 +167,7 @@ function install_common_settings() {
 
 function install_osx_settings() {
   echo "installing osx settings..."
-  stow -R -t ~ @mac
+  stow -R -t "$HOME" @mac
   defaults write com.apple.Dock autohide -bool TRUE
   defaults write com.apple.Finder AppleShowAllFiles -bool TRUE
   # disable natural scrolling
@@ -184,7 +184,7 @@ function install_osx_settings() {
 
 function install_linux_settings() {
   echo "installing linux settings..."
-  stow -R -t ~ @linux
+  stow -R -t "$HOME" @linux
 }
 
 function install_vim_plug() {
@@ -207,9 +207,9 @@ function install_zplug() {
 
 function stow_dotfiles() {
   echo "stowing dotfiles from $SCRIPTDIR to $HOME..."
-  stow -R git
-  stow -R vim
-  stow -R zsh
+  stow -R -t "$HOME" git
+  stow -R -t "$HOME" vim
+  stow -R -t "$HOME" zsh
 }
 
 # run main installation
