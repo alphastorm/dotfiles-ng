@@ -53,6 +53,19 @@ zplug() {
 export ZSH_EVALCACHE_DIR=${ZSH_EVALCACHE_DIR:-"$HOME/.zsh-evalcache"}
 
 _evalcache() {
+  if (( $# == 0 )); then
+    print -u2 -r -- 'evalcache: cache identifier is required'
+    return 64
+  fi
+
+  local cache_id=$1
+  shift
+  if [[ -z $cache_id ||
+        $cache_id != ${cache_id//[^A-Za-z0-9._-]/} ]]; then
+    print -u2 -r -- "evalcache: invalid cache identifier: $cache_id"
+    return 64
+  fi
+
   local name argument
   for argument in "$@"; do
     if [[ $argument == ${argument#[A-Za-z_][A-Za-z0-9_]*=} ]]; then
@@ -81,21 +94,15 @@ _evalcache() {
     data+=$'\n'"$function_definition"
   fi
 
-  local command_hash
-  if (( $+commands[md5] )); then
-    command_hash=$(print -rn -- "$data" | command md5) || return
-  elif (( $+commands[md5sum] )); then
-    command_hash=$(print -rn -- "$data" | command md5sum) || return
-    command_hash=${command_hash%% *}
-  else
-    print -u2 -r -- 'evalcache: md5 or md5sum is required'
-    return 69
-  fi
-
-  local cache_file="$ZSH_EVALCACHE_DIR/init-${name##*/}-${command_hash}.sh"
+  local metadata="# evalcache-key: ${(qqqq)data}"
+  local cache_file="$ZSH_EVALCACHE_DIR/init-${cache_id}.sh"
+  local cached_metadata=
   if [[ -s $cache_file ]]; then
-    source "$cache_file"
-    return $?
+    IFS= read -r cached_metadata < "$cache_file"
+    if [[ $cached_metadata == "$metadata" ]]; then
+      source "$cache_file"
+      return $?
+    fi
   fi
 
   if ! type "$name" >/dev/null 2>&1; then
@@ -109,10 +116,11 @@ _evalcache() {
   local temporary_file initializer_status publish_status
   temporary_file=$(
     command mktemp \
-      "$ZSH_EVALCACHE_DIR/.evalcache-tmp-${name##*/}-${command_hash}.XXXXXX"
+      "$ZSH_EVALCACHE_DIR/.evalcache-tmp-${cache_id}.XXXXXX"
   ) || return
 
-  eval ${(q)@} >| "$temporary_file"
+  print -r -- "$metadata" >| "$temporary_file"
+  eval ${(q)@} >> "$temporary_file"
   initializer_status=$?
   if (( initializer_status != 0 )); then
     command rm -f "$temporary_file"
@@ -156,20 +164,26 @@ done
 _dircolors_file="$HOME/.zplug/repos/seebi/dircolors-solarized/dircolors.256dark"
 _gdircolors_command_key=
 _gdircolors_data_key=
+_dircolors_cache_id=${TERM:-unknown}
+_dircolors_cache_id=${_dircolors_cache_id//[^A-Za-z0-9._-]/_}
+_dircolors_cache_id="gdircolors-$_dircolors_cache_id"
 if (( $+commands[gdircolors] )) && [[ -r $_dircolors_file ]]; then
   _shell_cache_key "$commands[gdircolors]" && _gdircolors_command_key=$REPLY
   _shell_cache_key "$_dircolors_file" && _gdircolors_data_key=$REPLY
   if [[ -n $_gdircolors_command_key && -n $_gdircolors_data_key ]]; then
     _evalcache \
+      "$_dircolors_cache_id" \
       "TERM=${TERM:-}" \
       "GDIRCOLORS_COMMAND_KEY=$_gdircolors_command_key" \
       "GDIRCOLORS_DATA_KEY=$_gdircolors_data_key" \
       gdircolors "$_dircolors_file"
   else
-    _evalcache "TERM=${TERM:-}" gdircolors "$_dircolors_file"
+    _evalcache "$_dircolors_cache_id" \
+      "TERM=${TERM:-}" gdircolors "$_dircolors_file"
   fi
 fi
-unset _dircolors_file _gdircolors_command_key _gdircolors_data_key
+unset _dircolors_file _dircolors_cache_id
+unset _gdircolors_command_key _gdircolors_data_key
 
 # Load after zplug to override its widget bindings.
 # fzf restores options with eval; ZLE cannot be re-enabled without a TTY.
@@ -255,20 +269,21 @@ _pyenv_command_key=
 if (( $+commands[pyenv] )); then
   if _shell_cache_key "$commands[pyenv]"; then
     _pyenv_command_key=$REPLY
-    _evalcache "PYENV_INIT_KEY=$_pyenv_command_key" \
+    _evalcache pyenv-init "PYENV_INIT_KEY=$_pyenv_command_key" \
       pyenv init --no-push-path --no-rehash - zsh
   else
-    _evalcache pyenv init --no-push-path --no-rehash - zsh
+    _evalcache pyenv-init pyenv init --no-push-path --no-rehash - zsh
   fi
 
   if (( $+commands[pyenv-virtualenv-init] )); then
     if [[ -n $_pyenv_command_key ]] &&
        _shell_cache_key "$commands[pyenv-virtualenv-init]"; then
       _evalcache \
+        pyenv-virtualenv-init \
         "PYENV_VIRTUALENV_INIT_KEY=${_pyenv_command_key}:$REPLY" \
         pyenv virtualenv-init -
     else
-      _evalcache pyenv virtualenv-init -
+      _evalcache pyenv-virtualenv-init pyenv virtualenv-init -
     fi
   fi
 fi
