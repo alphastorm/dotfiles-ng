@@ -290,6 +290,7 @@ function install_vim_plug() {
 }
 
 function install_zplug() {
+  local cleanup_command commit expected_sha256 installer url
   if [ -r "$HOME/.zplug/init.zsh" ]; then
     return 0
   fi
@@ -299,8 +300,26 @@ function install_zplug() {
     return 1
   fi
 
-  curl -fsSL --proto '=https' --proto-redir '=https' \
-    https://raw.githubusercontent.com/zplug/installer/master/installer.zsh | zsh
+  commit=408816a046d034f168efdf452acf2a4b544ad1bb
+  expected_sha256=5217cccd6ff5e7d085aa266e69ae9ca61ae54f582ca0f0d8a6069c63ecbf3592
+  url="https://raw.githubusercontent.com/zplug/installer/$commit/installer.zsh"
+  (
+    installer=$(mktemp "${TMPDIR:-/tmp}/zplug-installer.XXXXXX")
+    printf -v cleanup_command 'rm -f %q' "$installer"
+    # Capture the path before local scope exits.
+    # shellcheck disable=SC2064
+    trap "$cleanup_command" EXIT
+
+    curl -fsSL --proto '=https' --proto-redir '=https' \
+      "$url" -o "$installer"
+    if ! _verify_sha256 "$expected_sha256" "$installer"; then
+      echo "error: zplug installer checksum verification failed." >&2
+      exit 1
+    fi
+    zsh "$installer"
+    trap - EXIT
+    rm -f "$installer"
+  )
 }
 
 function install_zplug_plugins() {
