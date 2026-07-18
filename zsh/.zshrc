@@ -291,15 +291,16 @@ unset _pyenv_command_key
 unfunction _shell_cache_key
 
 # pnpm
-export PNPM_HOME="$HOME/Library/pnpm"
-case ":$PATH:" in
-  *":$PNPM_HOME:"*) ;;
-  *) export PATH="$PNPM_HOME:$PATH" ;;
-esac
+if [[ -z ${PNPM_HOME:-} ]]; then
+  if [[ $OSTYPE == darwin* ]]; then
+    export PNPM_HOME="$HOME/Library/pnpm"
+  else
+    export PNPM_HOME="$HOME/.local/share/pnpm"
+  fi
+fi
+path=("$PNPM_HOME" $path)
 # pnpm end
 
-# homebrew vim
-path=(/opt/homebrew/{bin,sbin} $path)
 
 # oh-my-pi
 export PI_BASH_NO_LOGIN=1
