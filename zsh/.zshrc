@@ -26,7 +26,6 @@ zplug 'zplug/zplug', hook-build:'zplug --self-manage'
 
 # essential plugins
 zplug 'agkozak/zsh-z'
-zplug 'mroth/evalcache'
 zplug 'romkatv/powerlevel10k', as:theme, depth:1, use:'powerlevel10k.zsh-theme'
 zplug 'seebi/dircolors-solarized'
 zplug 'so-fancy/diff-so-fancy', as:command, use:diff-so-fancy
@@ -42,6 +41,92 @@ export BAT_THEME='Solarized (dark)'
 
 # then, source plugins and add commands to $path
 zplug load
+
+export ZSH_EVALCACHE_DIR=${ZSH_EVALCACHE_DIR:-"$HOME/.zsh-evalcache"}
+
+_evalcache() {
+  local name argument
+  for argument in "$@"; do
+    if [[ $argument == ${argument#[A-Za-z_][A-Za-z0-9_]*=} ]]; then
+      name=$argument
+      break
+    fi
+  done
+
+  if [[ -z $name ]]; then
+    print -u2 -r -- 'evalcache: initializer command is required'
+    return 64
+  fi
+
+  if [[ $ZSH_EVALCACHE_DISABLE == true ]]; then
+    local live_output initializer_status
+    live_output=$(eval ${(q)@})
+    initializer_status=$?
+    (( initializer_status == 0 )) || return $initializer_status
+    eval "$live_output"
+    return $?
+  fi
+
+  local data="${(qqq)@}"
+  local function_definition=
+  if function_definition=$(typeset -f "$name" 2>/dev/null); then
+    data+=$'\n'"$function_definition"
+  fi
+
+  local command_hash
+  if (( $+commands[md5] )); then
+    command_hash=$(print -rn -- "$data" | command md5) || return
+  elif (( $+commands[md5sum] )); then
+    command_hash=$(print -rn -- "$data" | command md5sum) || return
+    command_hash=${command_hash%% *}
+  else
+    print -u2 -r -- 'evalcache: md5 or md5sum is required'
+    return 69
+  fi
+
+  local cache_file="$ZSH_EVALCACHE_DIR/init-${name##*/}-${command_hash}.sh"
+  if [[ -s $cache_file ]]; then
+    source "$cache_file"
+    return $?
+  fi
+
+  if ! type "$name" >/dev/null 2>&1; then
+    print -u2 -r -- "evalcache: $name is not installed or in PATH"
+    return 127
+  fi
+
+  print -u2 -r -- "evalcache: caching output of ${(qqq)@}"
+  command mkdir -p "$ZSH_EVALCACHE_DIR" || return
+
+  local temporary_file initializer_status publish_status
+  temporary_file=$(
+    command mktemp \
+      "$ZSH_EVALCACHE_DIR/.evalcache-tmp-${name##*/}-${command_hash}.XXXXXX"
+  ) || return
+
+  eval ${(q)@} >| "$temporary_file"
+  initializer_status=$?
+  if (( initializer_status != 0 )); then
+    command rm -f "$temporary_file"
+    return $initializer_status
+  fi
+
+  command mv -f "$temporary_file" "$cache_file"
+  publish_status=$?
+  if (( publish_status != 0 )); then
+    command rm -f "$temporary_file"
+    return $publish_status
+  fi
+
+  source "$cache_file"
+}
+
+_evalcache_clear() {
+  command rm -f \
+    "$ZSH_EVALCACHE_DIR"/init-*.sh(N) \
+    "$ZSH_EVALCACHE_DIR"/init-*.zwc(N) \
+    "$ZSH_EVALCACHE_DIR"/.evalcache-tmp-*(N)
+}
 
 if zmodload zsh/stat 2>/dev/null; then
   _shell_cache_key() {
