@@ -193,8 +193,6 @@ if [[ -r "$HOME/.fzf/shell/key-bindings.zsh" &&
   path+=("$HOME/.fzf/bin")
   source "$HOME/.fzf/shell/key-bindings.zsh"
   source "$HOME/.fzf/shell/completion.zsh"
-elif [[ -x "$HOME/.fzf/bin/fzf" && -r "$HOME/.fzf.zsh" ]]; then
-  source "$HOME/.fzf.zsh"
 fi
 
 unalias z 2>/dev/null
