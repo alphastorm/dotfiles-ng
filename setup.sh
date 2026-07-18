@@ -149,6 +149,36 @@ function install_apt_packages() {
   fi
 }
 
+function install_login_shell() {
+  local user zsh_path current_shell passwd_entry
+
+  user=$(whoami)
+  zsh_path=$(command -v zsh)
+  if [ -z "$zsh_path" ] || ! [ -x "$zsh_path" ]; then
+    echo "error: zsh is unavailable after package installation." >&2
+    return 1
+  fi
+
+  if ! grep -Fxq "$zsh_path" /etc/shells; then
+    printf '%s\n' "$zsh_path" | sudo tee -a /etc/shells >/dev/null
+  fi
+
+  if [ "$PLATFORM" == osx ]; then
+    current_shell=$(dscl . -read "/Users/$user" UserShell)
+    current_shell=${current_shell#UserShell: }
+  else
+    passwd_entry=$(getent passwd "$user") || {
+      echo "error: unable to read the login shell for $user." >&2
+      return 1
+    }
+    IFS=: read -r _ _ _ _ _ _ current_shell <<< "$passwd_entry"
+  fi
+
+  if [ "$current_shell" != "$zsh_path" ]; then
+    sudo chsh -s "$zsh_path" "$user"
+  fi
+}
+
 function install_common_settings() {
   echo "installing common settings..."
   stow -R -t "$HOME" stow
@@ -230,8 +260,7 @@ echo "dotfiles path: $SCRIPTDIR"
 
 "install_${PACKAGE_MANAGER}_packages"
 
-# set shell
-sudo chsh -s "$(command -v zsh)" "$(whoami)"
+install_login_shell
 
 # export gopath explicitly so go is installed in the proper location since
 # .zshrc isn't sourced until after setup is complete
