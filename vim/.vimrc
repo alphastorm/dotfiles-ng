@@ -38,7 +38,7 @@ function! BuildYCM(info)
   " - status: 'installed', 'updated', or 'unchanged'
   " - force:  set on PlugInstall! or PlugUpdate!
   if a:info.status == 'installed' || a:info.force
-    !./install.py --go-completer --js-completer
+    !./install.py --js-completer
   endif
 endfunction
 
@@ -217,8 +217,6 @@ augroup vimrcEx
     \   exe "normal g`\"" |
     \ endif
 
-  " disable colorcolumn for golang
-  autocmd BufRead *.go setl cc=0
 
   " .hql files are sql
   autocmd BufRead,BufNewFile *.hql set filetype=sql

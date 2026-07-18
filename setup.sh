@@ -107,7 +107,6 @@ function install_apt_packages() {
     gawk \
     git \
     gnupg \
-    golang-go \
     jq \
     lsd \
     nodejs \
@@ -256,9 +255,6 @@ echo "dotfiles path: $SCRIPTDIR"
 
 install_login_shell
 
-# export gopath explicitly so go is installed in the proper location since
-# .zshrc isn't sourced until after setup is complete
-export GOPATH="$HOME/gocode"
 
 install_common_settings
 "install_${PLATFORM}_settings"
