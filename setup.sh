@@ -62,9 +62,7 @@ echo "package manager: $PACKAGE_MANAGER"
 
 function install_brew_packages() {
   echo "installing homebrew packages..."
-  brew update
-
-  brew install \
+  HOMEBREW_NO_AUTO_UPDATE=1 brew install \
     bat \
     cmake \
     coreutils \
@@ -91,7 +89,7 @@ function install_brew_packages() {
     wget \
     zsh
 
-  brew install --cask \
+  HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask \
     font-meslo-lg-nerd-font \
     keybase
 }
@@ -184,15 +182,20 @@ function install_common_settings() {
   stow -R -t "$HOME" stow
 
 
-  # install the solarized dark theme for bat
-  BAT_CONFIG_DIR="$(bat --config-dir)"
-  (
-    mkdir -p "${BAT_CONFIG_DIR}/themes"
-    cd "${BAT_CONFIG_DIR}/themes"
-    curl -L "https://raw.githubusercontent.com/braver/Solarized/87e01090cf5fb821a234265b3138426ae84900e7/Solarized%20(dark).tmTheme" \
-      -o "Solarized (dark).tmTheme"
-    bat cache --build
-  )
+  # install the solarized dark theme for bat once
+  local bat_config_dir theme_file
+  bat_config_dir=$(bat --config-dir)
+  theme_file="${bat_config_dir}/themes/Solarized (dark).tmTheme"
+  if ! [ -r "$theme_file" ]; then
+    (
+      mkdir -p "${bat_config_dir}/themes"
+      cd "${bat_config_dir}/themes"
+      curl -fL --proto '=https' --proto-redir '=https' \
+        "https://raw.githubusercontent.com/braver/Solarized/87e01090cf5fb821a234265b3138426ae84900e7/Solarized%20(dark).tmTheme" \
+        -o "Solarized (dark).tmTheme"
+      bat cache --build
+    )
+  fi
 }
 
 function install_osx_settings() {
@@ -218,7 +221,7 @@ function install_linux_settings() {
 }
 
 function install_vim_plug() {
-  vim +PlugUpgrade +PlugUpdate +qa!
+  vim +PlugInstall --sync +qa!
 }
 
 function install_zplug() {
