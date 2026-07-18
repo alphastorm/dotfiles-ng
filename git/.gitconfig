@@ -4,14 +4,21 @@
   signingKey = 235DE76E36B33C14
 [core]
   pager = diff-so-fancy | less --tabs=4 -RFX
+  fsmonitor = true
+  untrackedCache = true
 [alias]
   l = "!. ~/.githelpers && pretty_git_log"
   r = !GIT_NO_PAGER=1 git l -30
   patch = !git --no-pager diff --no-color
-[branch]
-  autoSetupRebase = always
+[fetch]
+  prune = true
+[init]
+  defaultBranch = main
+[pull]
+  rebase = true
 [push]
   default = current
+  autoSetupRemote = true
   followTags = true
 [rerere]
   enabled = true

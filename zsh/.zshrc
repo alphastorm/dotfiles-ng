@@ -250,11 +250,44 @@ alias gco='git checkout'
 alias gd='git diff'
 alias gl='git l'
 alias gp='git pull'
-alias gpr='git pull --rebase origin master'
+alias gpr='git pull --rebase --autostash'
 alias gr='git r'
-alias grm='git branch --merged master | grep -v "\* master" | xargs -n 1 git branch -d'
 alias gs='git status'
-alias gum="echo 'Resetting master to the latest origin/master...' && git fetch && git update-ref refs/heads/master origin/master"
+
+grm() {
+  local current_branch default_branch branch
+  current_branch=$(git branch --show-current) || return
+  default_branch=$(
+    git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null
+  )
+  default_branch=${default_branch#origin/}
+  if [[ -z $default_branch ]] ||
+     ! git show-ref --verify --quiet "refs/heads/$default_branch"; then
+    default_branch=$current_branch
+  fi
+
+  while IFS= read -r branch; do
+    [[ $branch == "$current_branch" ||
+       $branch == "$default_branch" ]] && continue
+    git branch -d -- "$branch" || return
+  done < <(
+    git for-each-ref --format='%(refname:short)' \
+      --merged "$default_branch" refs/heads
+  )
+}
+
+gum() {
+  local current_branch upstream remote
+  current_branch=$(git branch --show-current) || return
+  upstream=$(
+    git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}'
+  ) || return
+  remote=${upstream%%/*}
+
+  print -r -- "Resetting ${current_branch:-HEAD} to $upstream..."
+  git fetch --prune "$remote" || return
+  git reset --hard "$upstream"
+}
 
 # history settings
 alias history='fc -il -200'
