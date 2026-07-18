@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 SCRIPTDIR=$(dirname "$0")
 cd "$SCRIPTDIR" || exit
@@ -49,10 +50,12 @@ elif [ "$OS" == "Linux" ]; then
   if [ "$(command -v apt-get)" ]; then
     PACKAGE_MANAGER=apt
   else
-    echo 'no package manager found.  install aptitude to continue.' && exit 1
+    echo 'no package manager found.  install aptitude to continue.'
+    exit 1
   fi
 else
-  echo "unrecognized os: $OS" && exit 1
+  echo "unrecognized os: $OS"
+  exit 1
 fi
 echo "platform: $PLATFORM"
 echo "package manager: $PACKAGE_MANAGER"
@@ -130,7 +133,8 @@ function install_apt_packages() {
     BAT_RELEASE="bat_${BAT_LATEST//v}_amd64.deb"
 
     curl -LO "${BAT_REPO}/${BAT_LATEST}/${BAT_RELEASE}"
-    sudo dpkg -i "${BAT_RELEASE}" && rm "${BAT_RELEASE}"
+    sudo dpkg -i "${BAT_RELEASE}"
+    rm "${BAT_RELEASE}"
   fi
 
   # install rg if not present
@@ -140,7 +144,8 @@ function install_apt_packages() {
     RG_RELEASE="ripgrep_${RG_LATEST}_amd64.deb"
 
     curl -LO "${RG_REPO}/${RG_LATEST}/${RG_RELEASE}"
-    sudo dpkg -i "${RG_RELEASE}" && rm "${RG_RELEASE}"
+    sudo dpkg -i "${RG_RELEASE}"
+    rm "${RG_RELEASE}"
   fi
 }
 
@@ -151,11 +156,13 @@ function install_common_settings() {
 
   # install the solarized dark theme for bat
   BAT_CONFIG_DIR="$(bat --config-dir)"
-  mkdir -p "${BAT_CONFIG_DIR}/themes" &&
-    cd "${BAT_CONFIG_DIR}/themes" &&
-    { curl -L "https://raw.githubusercontent.com/braver/Solarized/87e01090cf5fb821a234265b3138426ae84900e7/Solarized%20(dark).tmTheme" \
-      -o "Solarized (dark).tmTheme"; cd - || return; }
-  bat cache --build
+  (
+    mkdir -p "${BAT_CONFIG_DIR}/themes"
+    cd "${BAT_CONFIG_DIR}/themes"
+    curl -L "https://raw.githubusercontent.com/braver/Solarized/87e01090cf5fb821a234265b3138426ae84900e7/Solarized%20(dark).tmTheme" \
+      -o "Solarized (dark).tmTheme"
+    bat cache --build
+  )
 }
 
 function install_osx_settings() {
@@ -208,7 +215,7 @@ function stow_dotfiles() {
 # run main installation
 echo "dotfiles path: $SCRIPTDIR"
 
-install_${PACKAGE_MANAGER}_packages
+"install_${PACKAGE_MANAGER}_packages"
 
 # set shell
 sudo chsh -s "$(command -v zsh)" "$(whoami)"
@@ -218,7 +225,7 @@ sudo chsh -s "$(command -v zsh)" "$(whoami)"
 export GOPATH="$HOME/gocode"
 
 install_common_settings
-install_${PLATFORM}_settings
+"install_${PLATFORM}_settings"
 stow_dotfiles
 install_zplug
 install_vim_plug
