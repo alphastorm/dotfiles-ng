@@ -1,3 +1,7 @@
+# The following lines were added by Docker Desktop to add commands to your PATH.
+export PATH="$PATH:/Users/srs/.docker/bin"
+# End of Docker Desktop section.
+
 # browser
 if [[ "$OSTYPE" == darwin* ]]; then
   export BROWSER='open'
@@ -9,14 +13,14 @@ export VISUAL='vim'
 export PAGER='less'
 
 # gpg
-GPG_TTY=$(tty)
-export GPG_TTY
+[[ -n $TTY ]] && export GPG_TTY=$TTY
 
 # ensure path arrays do not contain duplicates.
-typeset -gU cdpath fpath mailpath path
+typeset -gU cdpath mailpath
 
 # set the list of directories that zsh searches for programs.
 path=(
+  /opt/homebrew/{bin,sbin}
   /usr/local/{bin,sbin}
   $path
 )

@@ -1,3 +1,5 @@
+typeset -gU fpath path
+
 # ensure that a non-login, non-interactive shell has a defined environment.
 if [[ ( "$SHLVL" -eq 1 && ! -o LOGIN ) && -s "${ZDOTDIR:-$HOME}/.zprofile" ]]; then
   source "${ZDOTDIR:-$HOME}/.zprofile"
@@ -13,5 +15,4 @@ then
   done
 fi
 
-export PATH="$PATH:/Users/srs/.foundry/bin"
-. "$HOME/.cargo/env"
+path=("$HOME/.local/bin" "$HOME/.cargo/bin" $path "$HOME/.foundry/bin")
