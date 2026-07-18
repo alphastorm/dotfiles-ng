@@ -153,11 +153,12 @@ if (( $+commands[gdircolors] )) && [[ -r $_dircolors_file ]]; then
   _shell_cache_key "$_dircolors_file" && _gdircolors_data_key=$REPLY
   if [[ -n $_gdircolors_command_key && -n $_gdircolors_data_key ]]; then
     _evalcache \
+      "TERM=${TERM:-}" \
       "GDIRCOLORS_COMMAND_KEY=$_gdircolors_command_key" \
       "GDIRCOLORS_DATA_KEY=$_gdircolors_data_key" \
       gdircolors "$_dircolors_file"
   else
-    _evalcache gdircolors "$_dircolors_file"
+    _evalcache "TERM=${TERM:-}" gdircolors "$_dircolors_file"
   fi
 fi
 unset _dircolors_file _gdircolors_command_key _gdircolors_data_key
