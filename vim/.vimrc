@@ -16,17 +16,17 @@ Plug 'jiangmiao/auto-pairs'
 Plug 'junegunn/fzf', { 'dir': '~/.fzf', 'do': './install --all' }
 Plug 'junegunn/fzf.vim'
 Plug 'ntpeters/vim-better-whitespace'
-Plug 'scrooloose/nerdcommenter'
-Plug 'scrooloose/nerdtree', { 'on': 'NERDTreeToggle' }
+Plug 'preservim/nerdcommenter'
+Plug 'preservim/nerdtree', { 'on': 'NERDTreeToggle' }
 Plug 'sheerun/vim-polyglot'
 Plug 'thinca/vim-quickrun', { 'on': 'QuickRun' }
 Plug 'tpope/vim-endwise'
 Plug 'tpope/vim-fugitive'
 Plug 'tpope/vim-repeat'
 Plug 'tpope/vim-surround'
-Plug 'w0rp/ale'
+Plug 'dense-analysis/ale'
 Plug 'xuyuanp/nerdtree-git-plugin', { 'on': 'NERDTreeToggle' }
-Plug 'yggdroot/indentline'
+Plug 'preservim/vim-indentline', { 'dir': '~/.vim/plugged/indentline' }
 
 function! BuildYCM(info)
   " info is a dictionary with 3 fields
@@ -38,7 +38,7 @@ function! BuildYCM(info)
   endif
 endfunction
 
-Plug 'valloric/youcompleteme', { 'do': function('BuildYCM') }
+Plug 'ycm-core/YouCompleteMe', { 'dir': '~/.vim/plugged/youcompleteme', 'do': function('BuildYCM') }
 
 call plug#end()
 

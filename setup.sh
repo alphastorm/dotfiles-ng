@@ -215,17 +215,35 @@ function _verify_sha256() {
   expected=$1
   file=$2
 
-  if command -v sha256sum >/dev/null 2>&1; then
-    printf '%s  %s\n' "$expected" "$file" |
-      sha256sum --check --status
-  elif command -v shasum >/dev/null 2>&1; then
+  if command -v shasum >/dev/null 2>&1; then
     printf '%s  %s\n' "$expected" "$file" |
       shasum -a 256 --check >/dev/null 2>&1
+  elif command -v sha256sum >/dev/null 2>&1; then
+    printf '%s  %s\n' "$expected" "$file" |
+      sha256sum -c >/dev/null 2>&1
   else
     echo "error: sha256sum or shasum is required to verify vim-plug." >&2
     return 1
   fi
 }
+
+function _migrate_vim_plugin_remote() {
+  local current_url directory expected_url
+  directory=$1
+  expected_url=$2
+
+  if ! [ -d "$directory/.git" ]; then
+    return 0
+  fi
+  if ! current_url=$(git -C "$directory" remote get-url origin); then
+    echo "error: $directory has no origin remote." >&2
+    return 1
+  fi
+  if [ "$current_url" != "$expected_url" ]; then
+    git -C "$directory" remote set-url origin "$expected_url"
+  fi
+}
+
 
 function install_vim_plug() {
   local commit destination expected_sha256 url
@@ -255,6 +273,17 @@ function install_vim_plug() {
       trap - EXIT
     )
   fi
+
+  _migrate_vim_plugin_remote "$HOME/.vim/plugged/ale" \
+    https://github.com/dense-analysis/ale.git
+  _migrate_vim_plugin_remote "$HOME/.vim/plugged/nerdcommenter" \
+    https://github.com/preservim/nerdcommenter.git
+  _migrate_vim_plugin_remote "$HOME/.vim/plugged/nerdtree" \
+    https://github.com/preservim/nerdtree.git
+  _migrate_vim_plugin_remote "$HOME/.vim/plugged/indentline" \
+    https://github.com/preservim/vim-indentline.git
+  _migrate_vim_plugin_remote "$HOME/.vim/plugged/youcompleteme" \
+    https://github.com/ycm-core/YouCompleteMe.git
 
   echo "installing missing Vim plugins..."
   vim '+PlugInstall --sync' +qa!
