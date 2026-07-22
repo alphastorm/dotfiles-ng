@@ -1,0 +1,40 @@
+providers:
+  # Temporary for OMP #6108; remove after a release containing PR #6219.
+  openai-codex:
+    baseUrl: https://chatgpt.com/backend-api
+    auth: none
+    models:
+      - id: gpt-5.3-codex-spark
+        name: GPT-5.3-Codex-Spark
+        api: openai-codex-responses
+        reasoning: true
+        thinking:
+          mode: effort
+          efforts: [minimal, low, medium, high, xhigh]
+          defaultLevel: xhigh
+        input: [text]
+        supportsTools: true
+        contextWindow: 128000
+        maxTokens: 128000
+        cost:
+          input: 0
+          output: 0
+          cacheRead: 0
+          cacheWrite: 0
+  nyc-pc:
+    baseUrl: http://nyc-pc:8000/v1
+    api: openai-completions
+    apiKey: dummy
+    models:
+      - id: qwen-5090
+        name: Qwen3.6 35B (5090 vLLM)
+        reasoning: true
+        compat:
+          thinkingFormat: qwen-chat-template
+        contextWindow: 131072
+        maxTokens: 32000
+        cost:
+          input: 0
+          output: 0
+          cacheRead: 0
+          cacheWrite: 0

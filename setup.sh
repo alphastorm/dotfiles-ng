@@ -190,7 +190,9 @@ function install_common_settings() {
 
 function install_osx_settings() {
   echo "installing osx settings..."
-  stow -R -t "$HOME" @mac
+  stow -D -t "$HOME" @mac
+  mkdir -p "$HOME/.zsh"
+  stow -S -t "$HOME" @mac
   defaults write com.apple.Dock autohide -bool TRUE
   defaults write com.apple.Finder AppleShowAllFiles -bool TRUE
   # disable natural scrolling
@@ -340,6 +342,36 @@ function stow_dotfiles() {
   stow -R -t "$HOME" git
   stow -R -t "$HOME" vim
   stow -R -t "$HOME" zsh
+
+  stow -D -t "$HOME" omp
+  mkdir -p \
+    "$HOME/.omp" \
+    "$HOME/.omp/agent" \
+    "$HOME/.omp/agent/agents" \
+    "$HOME/.omp/agent/extensions" \
+    "$HOME/.omp/agent/skills" \
+    "$HOME/.omp/profiles/audit/agent"
+  stow -S -t "$HOME" omp
+}
+
+function stow_private_dotfiles() {
+  local private_dir
+  private_dir=${DOTFILES_PRIVATE_DIR:-"$HOME/.dotfiles-private"}
+
+  if [ -e "$private_dir" ] || [ -L "$private_dir" ]; then
+    if ! [ -d "$private_dir/.git" ]; then
+      echo "error: private dotfiles path is not a Git checkout: $private_dir" >&2
+      return 1
+    fi
+  elif ! git clone git@github.com:alphastorm/dotfiles-private.git "$private_dir"; then
+    echo "warning: private dotfiles unavailable; continuing with public configuration." >&2
+    return 0
+  fi
+
+  stow -S -d "$private_dir" -t "$HOME" omp-private
+  if [ "$OS" == "Darwin" ]; then
+    stow -S -d "$private_dir" -t "$HOME" zsh-private
+  fi
 }
 
 # run main installation
@@ -353,6 +385,7 @@ install_login_shell
 install_common_settings
 "install_${PLATFORM}_settings"
 stow_dotfiles
+stow_private_dotfiles
 install_zplug
 install_zplug_plugins
 install_vim_plug
