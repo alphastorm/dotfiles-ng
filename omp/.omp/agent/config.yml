@@ -1,0 +1,74 @@
+providers:
+  webSearch: auto
+  tinyModel: online
+  memoryModel: online
+disabledProviders: [ollama, llama.cpp, lm-studio]
+symbolPreset: nerd
+theme:
+  dark: dark-solarized
+statusLine:
+  preset: custom
+  leftSegments: [pi, model, mode, collab, path, git, pr, context_pct, cost]
+  rightSegments: [time_spent, time, session_name]
+  segmentOptions:
+    model:
+      showThinkingLevel: true
+    path:
+      abbreviate: true
+      maxLength: 40
+      stripWorkPrefix: true
+    git:
+      showBranch: true
+      showStaged: true
+      showUnstaged: true
+      showUntracked: true
+    time:
+      format: 12h
+      showSeconds: true
+setupVersion: 1
+modelRoles:
+  default: openai-codex/gpt-5.6-sol:xhigh
+  slow: openai-codex/gpt-5.6-sol:max
+  plan: openai-codex/gpt-5.6-sol:max
+  task: openai-codex/gpt-5.6-sol:xhigh
+  advisor: openai-codex/gpt-5.6-sol:max
+  vision: openai-codex/gpt-5.6-sol:xhigh
+  designer: openai-codex/gpt-5.6-sol:xhigh
+  smol: nyc-pc/qwen-5090:low
+  tiny: nyc-pc/qwen-5090:minimal
+  commit: nyc-pc/qwen-5090:low
+tools:
+  approval:
+    github: prompt
+    ssh: prompt
+memory:
+  backend: mnemopi
+images:
+  blockImages: false
+  autoResize: true
+inspect_image:
+  enabled: true
+github:
+  enabled: true
+checkpoint:
+  enabled: true
+dev:
+  autoqa:
+    consent: granted
+eval:
+  py: true
+mnemopi:
+  scoping: per-project
+  autoRecall: true
+  autoRetain: true
+  retainEveryNTurns: 4
+  recallLimit: 8
+  injectionTokenLimit: 2000
+  llmMode: smol
+  noEmbeddings: false
+skills:
+  enabled: true
+  enablePiUser: true
+  enableSkillCommands: true
+codexResets:
+  autoRedeem: true
