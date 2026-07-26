@@ -64,9 +64,8 @@ export default function inputSound(pi: ExtensionAPI): void {
 		resolveAttention(`approval:${event.toolCallId}`, ctx);
 	});
 
-	pi.on("agent_end", (event, ctx) => {
+	pi.on("agent_end", (_event, ctx) => {
 		resolveAllAttention(ctx);
-		if (ctx.hasUI && !event.willContinue && !ctx.hasPendingMessages()) playInputSound();
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
