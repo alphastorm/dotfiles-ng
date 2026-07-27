@@ -220,7 +220,7 @@ def prepare(args) -> AuthorizedRequest | Refusal:
          "--policy-id", policy_id,
          "--item-provider-allowlist", *item.get("provider_data_allowlist", []),
          *(["--item-authorized"] if args.item_authorized else [])],
-        capture_output=True, text=True, cwd=HERE)
+        capture_output=True, text=True, cwd=HERE, check=False)
     if proc.returncode != EXIT_OK:
         try:
             payload = json.loads(proc.stdout)

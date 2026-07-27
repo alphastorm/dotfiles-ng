@@ -97,10 +97,10 @@ def interaction_p(d, n_perm, rng):
     cnt = 0
     for _ in range(n_perm):
         frames = []
-        for k, sub in by.items():
+        for _k, sub in by.items():
             s = sub.copy()
             ls = s["lens"].unique()
-            s["lens"] = s["lens"].map(dict(zip(ls, rng.permutation(ls))))
+            s["lens"] = s["lens"].map(dict(zip(ls, rng.permutation(ls), strict=True)))
             frames.append(s)
         if ss(pd.concat(frames, ignore_index=True)) >= obs:
             cnt += 1

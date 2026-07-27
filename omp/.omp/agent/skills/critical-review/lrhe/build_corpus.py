@@ -772,7 +772,7 @@ def cmd_arvo_sweep(args) -> int:
 def _docker_ready() -> bool:
     try:
         return subprocess.run(["docker", "info"], capture_output=True,
-                              timeout=20).returncode == 0
+                              timeout=20, check=False).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 
@@ -795,7 +795,7 @@ _SANITIZER_RE = re.compile(
 def _run_probe(cmd: str, timeout: int) -> dict:
     try:
         p = subprocess.run(cmd, shell=True, capture_output=True, text=True,
-                           timeout=timeout, errors="replace")
+                           timeout=timeout, errors="replace", check=False)
     except subprocess.TimeoutExpired:
         return {"ran": False, "crashed": False, "signature": "", "why": "timeout"}
     blob = (p.stdout or "") + (p.stderr or "")

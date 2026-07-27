@@ -1,0 +1,46 @@
+# The rule set is written out because ruff's implicit default is not stable across
+# versions. 0.15 and 0.16 disagreed by 99 findings on this same code, so a bare
+# `ruff check` meant one thing locally and another in CI -- the exact drift the
+# lint step was added to prevent. Pin the rules, not just the binary.
+#
+# Selection principle: rules that catch a silent wrong answer, not rules that have
+# an opinion about style. This harness exists to detect defects that produce
+# plausible output, so a linter earns its place here only by finding the same
+# class of thing.
+#
+# Deliberately excluded:
+#   PERF  - manual-list-comprehension and friends are taste, and the loops they
+#           flag are the readable ones in scoring code.
+#   FURB  - re.I vs re.IGNORECASE. 26 findings, zero defects.
+#   I     - import sorting churns diffs across a package that is already stable.
+#   E501  - line length. The comments here carry reasoning; wrapping them at 88
+#           would cost more clarity than it buys.
+
+line-length = 100
+exclude = [".venv", "raw", "runs", "ledger", "router"]
+
+[lint]
+select = [
+    "E4", "E7", "E9",  # real pycodestyle errors, not whitespace opinions
+    "F",               # pyflakes: undefined names, unused imports, f-string bugs
+    "B",               # bugbear: mutable defaults, zip truncation, loop closures
+    "DTZ",             # naive datetimes -- staleness windows must not drift by tz
+    "PLE", "PLW",      # pylint errors and warnings that indicate real mistakes
+    "RUF100",          # noqa comments that no longer suppress anything
+    "BLE",             # blind except: a swallowed error is an invented result
+    "TRY004",          # wrong exception type for a type check
+]
+
+[lint.per-file-ignores]
+# Tests deliberately construct broken input, call things that are supposed to
+# fail, and assert on the wreckage.
+"test_*.py" = [
+    "BLE001",   # asserting that something raised at all is the assertion
+    "PLW1510",  # a helper that returns CompletedProcess so the test can inspect
+                # returncode is the point; check=True would raise instead
+]
+
+[format]
+# Not enforced in CI. Reformatting 40 files would bury the history of a codebase
+# whose provenance is part of what it produces.
+quote-style = "preserve"

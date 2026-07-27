@@ -594,7 +594,7 @@ def cohens_kappa(a: list[str], b: list[str]) -> tuple[float, float]:
     n = len(a)
     if not n:
         return float("nan"), float("nan")
-    po = sum(x == y for x, y in zip(a, b)) / n
+    po = sum(x == y for x, y in zip(a, b, strict=True)) / n
     ca, cb = Counter(a), Counter(b)
     pe = sum(ca[k] * cb[k] for k in set(ca) | set(cb)) / (n * n)
     return ((po - pe) / (1 - pe) if pe < 1 else 1.0), po

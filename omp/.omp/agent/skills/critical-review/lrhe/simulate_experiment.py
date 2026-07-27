@@ -20,6 +20,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import math
 import json
 import subprocess
 import sys
@@ -30,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from make_fixtures import to_v2  # noqa: E402  -- needs the path above
+from make_fixtures import to_v2
 
 HERE = Path(__file__).parent
 # The repository is flat; the protocol's Files section describes a scripts/ layout.
@@ -98,7 +99,7 @@ def simulate(
     corpus, runs, judge, execres = [], [], [], []
     n = 0
     for stratum, n_items, (dmin, dmax), crit_frac, executable in STRATA:
-        for k in range(n_items):
+        for _k in range(n_items):
             n += 1
             iid = f"{stratum[:2]}-{n:04d}"
             kind = rng.choice(
@@ -139,7 +140,8 @@ def simulate(
 
             item_re = rng.normal(0, item_sd)
 
-            def emit_run(fam: str, lens: str, arm: str, replicate: str, run_id: str) -> None:
+            def emit_run(fam: str, lens: str, arm: str, replicate: str, run_id: str,
+                        _labels=labels, _item_re=item_re, _kind=kind, _item=item, _iid=iid) -> None:
                 """One reviewer run: its evidence strings and their judge/exec records.
 
                 Arms D and T share this deliberately. Arm T is only a null if the same
@@ -150,14 +152,14 @@ def simulate(
                 rid_n = 0
                 evidence = []
                 # true positives
-                for lab in labels:
+                for lab in _labels:
                     eta = (
                         b0
                         + fam_effect[fam]
                         # Arm T runs the floor lens, which carries no designed effect.
                         + lens_effect.get(lens, 0.0)
-                        + item_re
-                        + DIFFICULTY_BY_KIND.get(kind, 0.0)
+                        + _item_re
+                        + DIFFICULTY_BY_KIND.get(_kind, 0.0)
                     )
                     # interaction: each family is boosted on one designated lens
                     if interaction and lens == LENS_SETS[0][fam]:
@@ -183,10 +185,10 @@ def simulate(
                                             "reproduced": True, "cmd": lab["verify_cmd"],
                                             "exit_code": 1})
                 # trap bait
-                if "trap" in item and rng.random() < trap_bait[fam]:
+                if "trap" in _item and rng.random() < trap_bait[fam]:
                     rid_n += 1
                     rid = f"{rid_n:02d}"
-                    ts = item["trap"]["sites"][0]
+                    ts = _item["trap"]["sites"][0]
                     evidence.append(
                         f"R{rid}|P0|conf={rng.uniform(.6,.95):.2f}"
                         f"|claim=exploitable condition"
@@ -204,8 +206,8 @@ def simulate(
                     rid_n += 1
                     rid = f"{rid_n:02d}"
                     fab = rng.random() < fabrication_rate / max(1e-9, fabrication_rate + plausible_rate)
-                    path = (f"src/{iid}/ghost.py" if fab
-                            else item["repo_files"][0])
+                    path = (f"src/{_iid}/ghost.py" if fab
+                            else _item["repo_files"][0])
                     evidence.append(
                         f"R{rid}|P{rng.integers(1,4)}|conf={rng.uniform(.2,.7):.2f}"
                         f"|claim=noise|evidence={path}:{rng.integers(1,2000)}"
@@ -219,7 +221,7 @@ def simulate(
                 # Same envelope the fixtures use, so the simulation exercises the
                 # schema the scorer enforces rather than a shape only it produces.
                 runs.append(to_v2({
-                    "run_id": run_id, "item_id": iid, "arm": arm, "family": fam,
+                    "run_id": run_id, "item_id": _iid, "arm": arm, "family": fam,
                     "lens": lens, "replicate": replicate, "context_config": "retrieval",
                     "model_selector_expected": f"{fam}/pinned",
                     "model_selector_reported": f"{fam}/pinned",
@@ -315,7 +317,7 @@ def power_sweep(reps: int, deltas: list[float], boot: int) -> pd.DataFrame:
             loo = {x["configuration"]: x for x in res["leave_one_family_out"]}
             drop = loo.get("drop grok", {})
             lo = drop.get("delta_lo", float("nan"))
-            if lo == lo and lo > 0.0:
+            if not math.isnan(lo) and lo > 0.0:
                 detected += 1
         rows.append({"family_logit_advantage": delta, "reps": reps,
                      "power_loo_ci_excludes_zero": detected / reps})

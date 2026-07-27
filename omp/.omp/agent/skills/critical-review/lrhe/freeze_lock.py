@@ -234,7 +234,7 @@ def cmd_freeze(args: argparse.Namespace) -> int:
 
     try:
         record = _build_record(args)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- command wrapper should convert any build-time/IO failure to a consistent exit status
         print(f"failed to build lock: {exc}", file=sys.stderr)
         return EXIT_ERROR
 
@@ -264,7 +264,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     try:
         current_inputs = _collect_inputs(args)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- command wrapper should surface verification failures without a traceback
         print(f"failed to recalc inputs: {exc}", file=sys.stderr)
         return EXIT_ERROR
 

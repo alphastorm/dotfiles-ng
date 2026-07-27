@@ -27,6 +27,7 @@ import argparse
 import itertools
 import json
 import sys
+import math
 from pathlib import Path
 
 import numpy as np
@@ -96,7 +97,7 @@ def cohens_kappa(a: pd.Series, b: pd.Series) -> dict:
     if n == 0 or len(cats) < 2:
         return {"kappa": float("nan"), "agreement": float("nan"), "n": int(n)}
     m = np.zeros((len(cats), len(cats)))
-    for x, y in zip(a, b):
+    for x, y in zip(a, b, strict=True):
         m[idx[x], idx[y]] += 1
     po = np.trace(m) / n
     pe = float((m.sum(axis=0) / n) @ (m.sum(axis=1) / n))
@@ -373,7 +374,7 @@ def diversity_vs_null(defects: pd.DataFrame, B: int) -> dict:
     hi = out["contrast"]["hi"]
     out["verdict"] = (
         "cross-family errors are less correlated than same-family: diversification supported"
-        if hi == hi and hi < 0
+        if not math.isnan(hi) and hi < 0
         else "no evidence that cross-family review decorrelates errors more than "
              "resampling one family; the extra provider lanes are not yet justified "
              "on coverage grounds"
@@ -414,7 +415,7 @@ def lens_family_decomposition(defects: pd.DataFrame, n_perm: int = 5000) -> dict
         for i in items:
             sub = by_item[i].copy()
             lenses = sub["lens"].unique()
-            mapping = dict(zip(lenses, RNG.permutation(lenses)))
+            mapping = dict(zip(lenses, RNG.permutation(lenses), strict=True))
             sub["lens"] = sub["lens"].map(mapping)
             frames.append(sub)
         dd = pd.concat(frames, ignore_index=True)
@@ -444,8 +445,8 @@ def lens_family_decomposition(defects: pd.DataFrame, n_perm: int = 5000) -> dict
 
 def fp_burden(runs: pd.DataFrame, claims: pd.DataFrame, B: int) -> dict:
     out = {}
-    for arm, sub in runs.groupby("arm", observed=True):
-        sub = sub.copy()
+    for arm, sub_df in runs.groupby("arm", observed=True):
+        sub = sub_df.copy()
         out[str(arm)] = {
             "fabrication_rate": cluster_bootstrap(sub, lambda d: float(d["fabrication_rate"].mean()), B=B),
             "refutation_rate": cluster_bootstrap(sub, lambda d: float(d["refutation_rate"].mean()), B=B),
@@ -485,12 +486,13 @@ def apply_contamination_mask(defects: pd.DataFrame, probe: pd.DataFrame) -> pd.D
         zip(
             probe.loc[probe["probe_localized"].astype(bool), "item_id"],
             probe.loc[probe["probe_localized"].astype(bool), "family"],
+            strict=True,
         )
     )
     if not bad:
         return defects
     mask = [
-        (i, f) not in bad for i, f in zip(defects["item_id"], defects["family"])
+        (i, f) not in bad for i, f in zip(defects["item_id"], defects["family"], strict=True)
     ]
     return defects[pd.Series(mask, index=defects.index)]
 

@@ -32,7 +32,7 @@ from jsonschema.exceptions import SchemaError
 from referencing import Registry, Resource
 
 sys.path.insert(0, str(Path(__file__).parent))
-import shadow_ledger  # noqa: E402  -- needs the path above; owns the disposition vocabulary
+import shadow_ledger
 
 DEFAULT_PUBLIC_REPO = Path.home() / ".omp/agent/skills/critical-review/lrhe-data"
 
@@ -69,7 +69,10 @@ def _read_json(path: Path) -> dict[str, Any]:
     """
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
-        raise RuntimeError(f"schema must be a JSON object: {path}")
+        # TRY004 wants TypeError, but this validates a file's contents, not a
+        # caller's argument. Callers catch ValueError to exit EXIT_DATA_ERROR;
+        # a TypeError escapes them and turns bad input into a traceback.
+        raise ValueError(f"schema must be a JSON object: {path}")  # noqa: TRY004
     return raw
 
 
@@ -84,16 +87,17 @@ def _read_jsonl(path: Path, label: str) -> list[dict[str, Any]]:
         raise FileNotFoundError(f"missing {label} file: {path}")
 
     rows: list[dict[str, Any]] = []
-    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = line.strip()
-        if not line:
+    for line_no, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        stripped_line = raw_line.strip()
+        if not stripped_line:
             continue
         try:
-            row = json.loads(line)
+            row = json.loads(stripped_line)
         except json.JSONDecodeError as exc:
             raise ValueError(f"{path}:{line_no}: bad JSON: {exc}") from None
         if not isinstance(row, dict):
-            raise ValueError(f"{path}:{line_no}: expected JSON object, got {type(row).__name__}")
+            raise ValueError(  # noqa: TRY004 - malformed data, not a caller type error
+                f"{path}:{line_no}: expected JSON object, got {type(row).__name__}")
         rows.append(row)
     return rows
 
@@ -176,7 +180,10 @@ def _parse_iso8601(raw: str | None, label: str) -> datetime:
     if raw is None:
         raise ValueError(f"{label}: expected ISO-8601 string, got None")
     if not isinstance(raw, str):
-        raise ValueError(f"{label}: expected ISO-8601 string, got {type(raw).__name__}")
+        # Same reason as _read_json: run records come from disk, and the caller at
+        # the temporal-leakage check catches ValueError to report a data error.
+        raise ValueError(  # noqa: TRY004
+            f"{label}: expected ISO-8601 string, got {type(raw).__name__}")
     value = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
     try:
         return datetime.fromisoformat(value)

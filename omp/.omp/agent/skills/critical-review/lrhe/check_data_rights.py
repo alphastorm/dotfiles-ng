@@ -35,7 +35,7 @@ import argparse
 import hashlib
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -175,7 +175,7 @@ def load_observation(path: Path, provider_route: str, max_age_days: int) -> tupl
     current is the same defaulting bug as treating absent telemetry as success, one
     layer out, so an expired observation is refused rather than used.
     """
-    from datetime import date
+
 
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -192,7 +192,7 @@ def load_observation(path: Path, provider_route: str, max_age_days: int) -> tupl
     except (KeyError, ValueError):
         return None, f"observation for {provider_route!r} has no usable observedAt date"
 
-    age = (date.today() - observed_at).days
+    age = (datetime.now(timezone.utc).date() - observed_at).days
     if age > max_age_days:
         return None, (f"observation for {provider_route!r} is {age} days old, over the "
                       f"{max_age_days}-day limit; re-check the account and update {path.name}")

@@ -104,14 +104,14 @@ def _base_plan_corpus() -> list[dict]:
         idx += 1
         return f"S{idx:04d}"
 
-    for i in range(4):
+    for _i in range(4):
         items.append(_base_item(item_id=f"S1-{mk()}", stratum="S1_REVIEW_HUMAN", difficulty="Type1_Direct"))
-    for i in range(5):
+    for _i in range(5):
         items.append(_base_item(item_id=f"S1-{mk()}", stratum="S1_REVIEW_HUMAN", difficulty="Type2_Contextual"))
-    for i in range(5):
+    for _i in range(5):
         items.append(_base_item(item_id=f"S1-{mk()}", stratum="S1_REVIEW_HUMAN", difficulty="Type3_Latent_Candidate"))
 
-    for i in range(10):
+    for _i in range(10):
         items.append(_base_item(
             item_id=f"S2-{mk()}",
             stratum="S2_PATCH_VERDICT",
@@ -133,7 +133,7 @@ def _base_plan_corpus() -> list[dict]:
             repo_files=[f"src/patch-{i}.py"],
         ))
 
-    for i in range(12):
+    for _i in range(12):
         items.append(_base_item(
             item_id=f"S4-{mk()}",
             stratum="S4_FP_TRAP",
@@ -147,7 +147,7 @@ def _base_plan_corpus() -> list[dict]:
             repo_files=["src/item.py"],
         ))
 
-    for i in range(3):
+    for _i in range(3):
         items.append(_base_item(
             item_id=f"S5-{mk()}",
             stratum="S5_NULL",

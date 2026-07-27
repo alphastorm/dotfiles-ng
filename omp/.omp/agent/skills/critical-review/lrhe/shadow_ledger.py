@@ -88,7 +88,9 @@ def _read_json(p: Path, label: str) -> dict:
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read {label} JSON from {p}: {exc}") from exc
     if not isinstance(value, dict):
-        raise ValueError(f"{label} metadata at {p} must be a JSON object")
+        # Matches the ValueError raised just above for unreadable JSON: both are
+        # "this file is not what it claims", and callers handle one code path.
+        raise ValueError(f"{label} metadata at {p} must be a JSON object")  # noqa: TRY004
     return value
 
 
@@ -110,8 +112,8 @@ def _parse_iso8601(value: str | None) -> datetime | None:
 def _coerce_non_negative_int(value: object, name: str) -> int:
     try:
         n = int(value)
-    except (TypeError, ValueError):
-        raise ValueError(f"{name} must be an integer; got {value!r}")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer; got {value!r}") from exc
     if n < 0:
         raise ValueError(f"{name} must be >= 0; got {n}")
     return n
@@ -144,7 +146,7 @@ def _validate_enum_list(name: str, value: list[str], allowed: tuple[str, ...]) -
 
 def _git(repo: Path, *args: str, timeout: int = 60) -> str:
     try:
-        r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+        r = subprocess.run(["git", "-C", str(repo), *args], check=False, capture_output=True,
                            text=True, timeout=timeout)
         return r.stdout if r.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
@@ -154,7 +156,7 @@ def _git(repo: Path, *args: str, timeout: int = 60) -> str:
 def _path_exists_at(repo: Path, commit: str, path: str) -> bool:
     try:
         return subprocess.run(["git", "-C", str(repo), "cat-file", "-e", f"{commit}:{path}"],
-                              capture_output=True, timeout=30).returncode == 0
+                              check=False, capture_output=True, timeout=30).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
 

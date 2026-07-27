@@ -118,7 +118,7 @@ class Http:
 
 def _gh_cli_token() -> str | None:
     try:
-        r = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=10, check=False)
         return r.stdout.strip() or None
     except (OSError, subprocess.SubprocessError):
         return None
@@ -742,7 +742,7 @@ def arvo_corrections(db_path: Path, older: list[Path]) -> dict[int, dict]:
     """
     cur = {r["localId"]: r for r in arvo_rows(db_path, limit=None)}
     out: dict[int, dict] = {}
-    for path, release in zip(older, ARVO_OLDER_RELEASES):
+    for path, release in zip(older, ARVO_OLDER_RELEASES, strict=True):
         if not Path(path).exists():
             continue
         con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)

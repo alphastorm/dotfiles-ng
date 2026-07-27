@@ -21,8 +21,9 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import datetime
 import sys
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import yaml
@@ -780,7 +781,7 @@ def test_check_data_rights_stale_observation_records_are_unresolved(tmp_path: Pa
     """Recorded controls that exceed the freshness window must not be trusted as current."""
     policy = _build_policy("claude-code-subscription", "claude-stale-observation")
     observed_path = tmp_path / "observed-controls.yml"
-    stale = (date.today() - timedelta(days=2)).isoformat()
+    stale = (datetime.datetime.now(datetime.timezone.utc).date() - timedelta(days=2)).isoformat()
     observed_path.write_text(
         yaml.safe_dump({
             "observations": [{
@@ -999,3 +1000,34 @@ def test_real_s2_corpus_goals_do_not_name_repository_or_issue_number():
         if issue_re.search(goal):
             offenders.append(f"{item['item_id']} has issue number in goal: {goal}")
     assert not offenders, "found S2 goals with repository/issue leakage: " + "; ".join(offenders)
+
+
+def test_simulator_honours_the_per_family_trap_bait_rate():
+    """Trap susceptibility must stay a tunable rate, not a constant.
+
+    A lint pass once rewrote `if "trap" in item and rng.random() < trap_bait[fam]`
+    to `if "trap" in item`, which makes every family take every trap. The full
+    suite still passed: the simulator produced a complete, plausible dataset in
+    which false-positive rates were identical across families, which is precisely
+    the comparison the traps exist to make. Nothing downstream could notice,
+    because nothing downstream knows what the rate was supposed to be.
+
+    Bracketing the rate is what makes this detectable at all -- a fixed-seed count
+    would only pin today's number, and the failure mode is the rate ceasing to be
+    read.
+    """
+    import numpy as np
+
+    import simulate_experiment as sim
+
+    def trap_claims(bait: float) -> int:
+        outputs = sim.simulate(np.random.default_rng(7),
+                               trap_bait={f: bait for f in sim.FAMILIES})
+        judge = next(o for o in outputs if isinstance(o, list) and o
+                     and isinstance(o[0], dict) and "affinity" in o[0])
+        # The bait claim is the one judged plausible against no label at all.
+        return sum(1 for j in judge if j.get("affinity") == 0.2 and j.get("label_id") == "")
+
+    never, always = trap_claims(0.0), trap_claims(1.0)
+    assert never == 0, f"trap_bait=0.0 still produced {never} trap claims"
+    assert always > 0, "trap_bait=1.0 produced no trap claims; the bait path is dead"

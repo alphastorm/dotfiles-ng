@@ -203,7 +203,7 @@ def _parse_evidence_string(s: str) -> dict[str, Any]:
     tail = s[m.end():]
     marks = [(mm.start(), mm.end(), mm.group(1).lower()) for mm in _KEY_RE.finditer(tail)]
     fields: dict[str, str] = {}
-    for i, (ms, me, key) in enumerate(marks):
+    for i, (_ms, me, key) in enumerate(marks):
         nxt = marks[i + 1][0] if i + 1 < len(marks) else len(tail)
         val = tail[me:nxt].strip().rstrip("|").strip()
         # last key wins if a reviewer repeats one
@@ -352,7 +352,7 @@ def match_claims_to_labels(claims: list[Claim], labels: list[dict]) -> None:
                 s += 1.0
             score[i, j] = s
     rows, cols = linear_sum_assignment(-score)
-    for i, j in zip(rows, cols):
+    for i, j in zip(rows, cols, strict=True):
         if score[i, j] <= 0:
             continue
         cands[i].matched_label_id = lab_ids[j]
@@ -584,14 +584,14 @@ def read_jsonl(p: Path | None) -> list[dict]:
     if not p.exists():
         raise FileNotFoundError(p)
     out = []
-    for ln, line in enumerate(p.read_text().splitlines(), 1):
-        line = line.strip()
+    for ln, raw_line in enumerate(p.read_text().splitlines(), 1):
+        line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         try:
             out.append(json.loads(line))
         except json.JSONDecodeError as e:
-            raise SystemExit(f"{p}:{ln}: bad JSON: {e}")
+            raise SystemExit(f"{p}:{ln}: bad JSON: {e}") from e
     return out
 
 

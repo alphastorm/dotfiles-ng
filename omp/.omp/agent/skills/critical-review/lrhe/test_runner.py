@@ -188,11 +188,8 @@ def test_packet_gate_failure_blocks_dispatch(spy, tmp_path):
     target = items[0]["item_id"]
 
     leaky = tmp_path / "packets.jsonl"
-    rows = []
-    for packet in packets:
-        if packet["item_id"] == target:
-            packet = {**packet, "labels": [{"label_id": "L1", "severity": 1}]}
-        rows.append(packet)
+    leak = {"labels": [{"label_id": "L1", "severity": 1}]}
+    rows = [{**p, **leak} if p["item_id"] == target else p for p in packets]
     leaky.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
 
     outcome = run_review.prepare(_args(item_id=target, packets=leaky))

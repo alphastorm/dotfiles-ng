@@ -95,7 +95,7 @@ python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
-python3 -m pytest test_invariants.py               # the silent-failure guards
+python3 -m pytest -q                               # 117 tests; see "The test suite"
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -393,6 +393,48 @@ The unit is the (review, family, lens) cell. Aggregating to the review loses the
 per-family signal that is the whole point; splitting to the finding conditions
 every example on detection, which is the same bug that makes a claims-only recall
 meaningless.
+
+## The test suite
+
+```bash
+python3 -m pytest -q            # 117 tests, ~60s
+ruff check .                    # rule set pinned in ruff.toml, not inherited
+```
+
+Every test here defends a failure that produced *plausible output*. None of them
+check that a function returns what it returns; the harness is only worth running
+if it fails loudly, so the suite is a list of the ways it has been caught failing
+quietly.
+
+| file | what it defends |
+|---|---|
+| `test_invariants.py` | The scoring and analysis path. Replicates surviving both stages, refusal on mixed panels or collapsed replicates, cross-family judge enforcement, apportionment across strata. Most of these exist because the thing they check was once broken: the simulator emitted only arm D, and `diversity_vs_null` compared a union of k council runs against a single arm-T run and reported +0.266 CI[0.099, 0.413] for what was actually −0.097 CI[−0.270, 0.055]. |
+| `test_corpus_tools.py` | Corpus construction and the six packet gates. The gates caught all ten `S2_PATCH_VERDICT` goals sharing one string — a retrieval test sitting at a 100% ceiling, which would have read as a strong result. |
+| `test_ledger.py` | Shadow-ledger reads against schema v2's nested shape, freeze-lock round-trip and drift detection. |
+| `test_runner.py` | The pre-egress gate. Every refusal test spies the transport table and asserts *zero* calls, because a gate that refuses after dispatching has not refused. |
+| `test_consistency.py` | Cross-file agreement — see below. |
+
+`test_consistency.py` holds the invariants no single module owns, which is why no
+module's tests caught them. It asserts that every `providerRoute` in `panels.yaml`
+has a policy behind it in `provider-policies.yaml`; that every `termsSnapshotId`
+resolves to a real snapshot and none is still a placeholder; that a risk-accepted
+policy names a principal and hashes the record it rests on; that no policy permits
+training a competing model; that an arm-T `nullFamily` is actually in its own
+panel; and that every requirement is pinned.
+
+The first of those is not hypothetical. All three enabled reviewers routed through
+`anthropic-subscription`, `google-antigravity` and `xai-oauth` while
+`provider-policies.yaml` knew about none of them — qualified, in use, and
+ungoverned. Both files were internally consistent. Nothing surfaced it until a
+runner tried to assemble a request.
+
+**Fourteen tests skip without the corpus.** They read the private data package, and
+they skip cleanly when it is absent — which is what happens in CI, because the
+corpus carries the answer key and must never reach a public runner. The remaining
+84 need nothing but this repository. `.github/workflows/lrhe.yml` runs lint, the
+cross-file invariants, the suite, and a final assertion that no `live` transport
+has appeared. The skips there are correct; do not "fix" them by checking the
+corpus out.
 
 ## Three things that are easy to get wrong
 
