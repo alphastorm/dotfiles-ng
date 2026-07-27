@@ -797,7 +797,7 @@ def main(argv: list[str] | None = None) -> int:
     d = sub.add_parser("delete-source", help="delete examples derived from one source review/rights record")
     d.add_argument("--examples", type=Path, default=DEFAULT_OUTPUT_PATH, help=f"router_dataset.jsonl path (default: {DEFAULT_OUTPUT_PATH})")
     d.add_argument("--out", type=Path, default=None,
-                   help=f"output path (default: same as --examples)")
+                   help="output path (default: same as --examples)")
     who = d.add_mutually_exclusive_group(required=True)
     who.add_argument("--review-id", dest="review_id")
     who.add_argument("--data-rights-record-id", dest="data_rights_record_id")

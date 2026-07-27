@@ -39,7 +39,6 @@ sys.path.insert(0, str(HERE))
 import analyze_lrhe  # noqa: E402
 import build_corpus  # noqa: E402
 import make_fixtures  # noqa: E402
-import score_lrhe  # noqa: E402
 
 EXPERIMENT_ID = "lrhe-test-v1"
 PANEL_ID = "test-panel-v1"

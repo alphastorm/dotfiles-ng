@@ -91,7 +91,7 @@ def simulate(
     null_replicates: int | None = None,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     fam_effect = fam_effect or {f: 0.0 for f in FAMILIES}
-    lens_effect = lens_effect or {l: 0.0 for l in LENSES}
+    lens_effect = lens_effect or {lens: 0.0 for lens in LENSES}
     trap_bait = trap_bait or {f: 0.35 for f in FAMILIES}
     null_replicates = null_replicates or len(FAMILIES)
 
@@ -281,7 +281,7 @@ def run_pipeline(d: Path, boot=400, perm=400) -> dict:
          "--out-report", str(d / "report.json")],
         check=True, capture_output=True,
     )
-    p = subprocess.run(
+    subprocess.run(
         [sys.executable, str(SCRIPTS / "analyze_lrhe.py"),
          "--claims", str(d / "claims.csv"), "--runs", str(d / "runs.csv"),
          "--corpus", str(d / "corpus.jsonl"), "--boot", str(boot), "--perm", str(perm),

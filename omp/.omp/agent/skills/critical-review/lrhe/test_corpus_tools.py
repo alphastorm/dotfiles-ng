@@ -11,7 +11,6 @@ import sys
 from hashlib import sha256
 from pathlib import Path
 
-import pytest
 
 HERE = Path(__file__).parent
 PY = sys.executable
@@ -194,7 +193,7 @@ def _snapshot_tree(tmp_path: Path, snapshot_id: str) -> tuple[Path, list[str], l
         paths.extend([body_path, metadata_path])
 
     lines = sorted(entries, key=lambda row: row.split(maxsplit=1)[1])
-    (root / snapshot_terms.MANIFEST_NAME).write_text("".join(l + "\n" for l in lines), encoding="utf-8")
+    (root / snapshot_terms.MANIFEST_NAME).write_text("".join(x + "\n" for x in lines), encoding="utf-8")
     return root, lines, paths
 
 

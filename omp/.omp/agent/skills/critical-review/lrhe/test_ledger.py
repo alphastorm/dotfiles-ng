@@ -12,9 +12,8 @@ They are intentionally focused on invariants that can go wrong silently:
 from __future__ import annotations
 
 import json
-import os
 import subprocess
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -148,7 +147,7 @@ def test_shadow_ingest_keeps_nested_run_fields_and_cost(tmp_path: Path):
     findings_path = tmp_path / "findings.jsonl"
     _write_jsonl(runs_path, [run])
 
-    p = _run(["shadow_ledger.py", "ingest", "--runs", str(runs_path), "--out", str(findings_path)])
+    _run(["shadow_ledger.py", "ingest", "--runs", str(runs_path), "--out", str(findings_path)])
     out = _read_jsonl_rows(findings_path)
     assert len(out) == 1
     finding = out[0]

@@ -25,3 +25,6 @@ pyarrow==25.0.0
 
 # harness invariant tests
 pytest==9.1.1
+
+# lint; CI pins the same version
+ruff==0.16.0

@@ -39,7 +39,7 @@ CRITICAL = {0, 1}
 # ----------------------------------------------------------------- helpers
 
 def read_jsonl(p: Path) -> list[dict]:
-    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+    return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
 
 
 def cluster_bootstrap(
@@ -401,8 +401,8 @@ def lens_family_decomposition(defects: pd.DataFrame, n_perm: int = 5000) -> dict
     lens_eff = (cell.mean(axis=0) - grand).to_dict()
     resid = cell.copy()
     for f in cell.index:
-        for l in cell.columns:
-            resid.loc[f, l] = cell.loc[f, l] - grand - fam_eff[f] - lens_eff[l]
+        for lens in cell.columns:
+            resid.loc[f, lens] = cell.loc[f, lens] - grand - fam_eff[f] - lens_eff[lens]
     obs = float(np.nansum(np.square(resid.values)))
 
     # Permute lens labels within item (and within family block) to build the null.

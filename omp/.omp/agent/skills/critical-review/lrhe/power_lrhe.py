@@ -19,7 +19,6 @@ Run this, pick a corpus size, then build the corpus. Not the other way round.
 from __future__ import annotations
 
 import argparse
-import itertools
 import sys
 
 import numpy as np
@@ -51,13 +50,13 @@ def sim_defects(
         for j in range(n_def):
             for si, lset in enumerate(sets):
                 for f in FAMILIES:
-                    l = lset[f]
-                    eta = b0 + item_re + lens_effect.get(l, 0.0)
+                    lens = lset[f]
+                    eta = b0 + item_re + lens_effect.get(lens, 0.0)
                     eta += fam_adv.get(f, 0.0)
-                    if interaction and l == LENS_SETS[0][f]:
+                    if interaction and lens == LENS_SETS[0][f]:
                         eta += interaction
                     rows.append(
-                        (f"I{i}", f"L{j}", f, l, si, int(rng.random() < sigmoid(eta)))
+                        (f"I{i}", f"L{j}", f, lens, si, int(rng.random() < sigmoid(eta)))
                     )
     return pd.DataFrame(rows, columns=["item_id", "label_id", "family", "lens", "set", "caught"])
 

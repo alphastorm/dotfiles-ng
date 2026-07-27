@@ -36,13 +36,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import re
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -338,7 +337,7 @@ def match_claims_to_labels(claims: list[Claim], labels: list[dict]) -> None:
     cands = [c for c in claims if c.verdict in (V_CONFIRMED, V_CONFIRMED_UNANCHORED)]
     if not cands or not labels:
         return
-    lab_ids = [l["label_id"] for l in labels]
+    lab_ids = [lab["label_id"] for lab in labels]
     score = np.zeros((len(cands), len(lab_ids)), dtype=float)
     for i, c in enumerate(cands):
         for j, lid in enumerate(lab_ids):
@@ -379,13 +378,13 @@ def rollup_run(run: dict, item: dict, claims: list[Claim], gates: list[str]) -> 
     execution = run.get("execution") or {}
     labels = item.get("labels", [])
     n_lab = len(labels)
-    n_lab_crit = sum(1 for l in labels if int(l.get("severity", 3)) <= 1)
+    n_lab_crit = sum(1 for lab in labels if int(lab.get("severity", 3)) <= 1)
     caught = {c.matched_label_id for c in claims if c.matched_label_id}
     caught_crit = {
         c.matched_label_id
         for c in claims
         if c.matched_label_id
-        and any(int(l.get("severity", 3)) <= 1 for l in labels if l["label_id"] == c.matched_label_id)
+        and any(int(lab.get("severity", 3)) <= 1 for lab in labels if lab["label_id"] == c.matched_label_id)
     }
     n_claims = len(claims)
     counts = defaultdict(int)

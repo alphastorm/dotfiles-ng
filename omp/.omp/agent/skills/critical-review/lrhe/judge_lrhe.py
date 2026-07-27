@@ -389,7 +389,7 @@ def cmd_ingest(args) -> int:
     if cross_family_claims:
         print(f"  {'cross-family violations':<28} {len(cross_family_claims):>5}")
         print(f"  Refusing {len(cross_family_claims)} claims with same-family judging")
-        print(f"  Fix responses and re-run to score only safe claims")
+        print("  Fix responses and re-run to score only safe claims")
     print(f"\nwrote {args.out}")
     print(f"wrote {args.out_judgments}")
     if args.human_queue:

@@ -693,7 +693,6 @@ def _positive_float(value: str) -> float:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    here = Path(__file__).resolve().parent
     parser = argparse.ArgumentParser(
         description=(
             "Fetch immutable provider-terms snapshots, or verify existing "

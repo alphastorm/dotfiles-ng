@@ -1,0 +1,75 @@
+# The LRHE harness produces a preregistered result set that people are supposed to
+# be able to audit. Its tests defend failures that are *silent* -- a scorer that
+# drops an arm, a gate that stops being called, a policy that cites a snapshot
+# nobody fetched -- and a suite nobody runs decays into decoration.
+#
+# 84 of the 98 tests need nothing but this repository. The remaining 14 read the
+# private corpus and skip cleanly when it is absent, which is exactly what happens
+# here: the corpus and its answer key live in a separate private repository and
+# must never reach a public runner. Do not "fix" the skips by checking it out.
+#
+# Path-filtered because this is a dotfiles repo; a zsh change should not spend two
+# minutes proving the corpus builder still imports.
+
+name: lrhe
+
+on:
+  push:
+    paths: ['omp/.omp/agent/skills/critical-review/lrhe/**', '.github/workflows/lrhe.yml']
+  pull_request:
+    paths: ['omp/.omp/agent/skills/critical-review/lrhe/**', '.github/workflows/lrhe.yml']
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: omp/.omp/agent/skills/critical-review/lrhe
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          # requirements.txt is fully pinned and a test enforces that, so the
+          # cache key is honest.
+          cache: pip
+          cache-dependency-path: omp/.omp/agent/skills/critical-review/lrhe/requirements.txt
+
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint
+        run: ruff check . --exclude .venv
+
+      # Fails on a schema that stopped parsing, a policy citing a snapshot nobody
+      # fetched, a panel route with no policy behind it. Cheap, and none of it
+      # needs the corpus. Run before the slow suite so a config break reports in
+      # seconds rather than after a minute of scoring.
+      - name: Cross-file invariants
+        run: python -m pytest test_consistency.py -q
+
+      - name: Test suite
+        run: python -m pytest -q --durations=10
+
+      # A gate is only a gate if nothing can reach a provider around it. `none` is
+      # the default transport and raises on any send; assert here that no live
+      # transport has appeared, because the day one does is the day this workflow
+      # starts mattering more than it does now.
+      - name: No live transport exists
+        run: |
+          python - <<'PY'
+          import sys; sys.path.insert(0, '.')
+          import run_review
+          assert 'live' not in run_review.TRANSPORTS, 'a live transport was added'
+          assert run_review.TRANSPORTS['none'] is run_review.no_egress_transport
+          print('transports:', sorted(run_review.TRANSPORTS))
+          PY
