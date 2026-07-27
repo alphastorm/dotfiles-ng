@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lrhe/review.schema.json",
+  "title": "LRHE shadow-ledger review record",
+  "description": "One record per production review. findings.jsonl is per finding and cannot answer 'what was this review like before anyone looked at it' -- which is exactly the question a router has to answer. This is that record, and it is the only place the router's inputs may come from.\n\nThe structure enforces one rule: `features` is frozen at dispatch, before any reviewer output exists, and `outcomes` accrues afterwards. Anything computable only after the review is a LABEL, not a feature, and putting it in `features` trains the router to predict the present from the future. That failure is invisible in offline evaluation -- the model looks excellent and is worthless live -- so the separation is structural rather than a convention.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "review_id",
+    "repo",
+    "epoch_commit",
+    "reviewed_at",
+    "risk_tier",
+    "panel",
+    "features",
+    "features_frozen_at"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "review_id": {"type": "string", "minLength": 1},
+    "repo": {"type": "string", "minLength": 1},
+    "epoch_commit": {"type": "string", "minLength": 1,
+      "description": "the tree every reviewer saw. Two reviewers on different epochs are not comparable and their findings must not share a review_id"},
+    "reviewed_at": {"type": "string", "format": "date-time"},
+    "risk_tier": {"type": "string", "enum": ["routine", "critical", "critical_plus"]},
+    "experiment_id": {"type": "string"},
+    "panel_id": {"type": "string"},
+
+    "panel": {
+      "type": "array",
+      "minItems": 1,
+      "description": "who was actually dispatched, with the exact model each served. A router that learns `family=claude is good` without knowing which Claude has learned nothing transferable",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["family", "lens", "role", "requested_model", "served_model", "run_id"],
+        "properties": {
+          "family": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+          "lens": {"type": "string"},
+          "role": {"type": "string", "enum": ["author", "critic", "refuter", "judge"]},
+          "requested_model": {"type": "string", "minLength": 1},
+          "served_model": {"type": ["string", "null"]},
+          "run_id": {"type": "string", "minLength": 1},
+          "visibility": {"type": "string", "enum": ["baseline", "withheld_shadow"],
+            "description": "live-workflow only. Shadow lanes must be withheld until the baseline ledger is frozen, or independent contribution and synthesis contamination become indistinguishable"}
+        }
+      }
+    },
+
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "KNOWABLE BEFORE DISPATCH. Every field here must be computable from the diff and the repository at epoch_commit, with no reviewer output and no outcome. If you cannot compute it at features_frozen_at, it does not belong here.",
+      "required": ["change_type", "languages", "changed_files", "changed_lines", "packet_tokens"],
+      "properties": {
+        "change_type": {"type": "string",
+          "enum": ["feature", "bugfix", "refactor", "migration", "dependency",
+                   "config", "infrastructure", "docs", "test", "mixed", "unknown"]},
+        "languages": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "changed_files": {"type": "integer", "minimum": 0},
+        "changed_lines": {"type": "integer", "minimum": 0},
+        "repo_files_total": {"type": ["integer", "null"], "minimum": 0},
+        "packet_tokens": {"type": "integer", "minimum": 0,
+          "description": "drives cost prediction directly, and is the one feature that is cheap, exact, and available before dispatch"},
+        "changed_surfaces": {
+          "type": "array", "uniqueItems": true,
+          "items": {"type": "string",
+            "enum": ["public_api", "database_schema", "wire_format", "config_schema",
+                     "build", "ci", "deployment", "internal_only"]}
+        },
+        "indicators": {
+          "type": "array", "uniqueItems": true,
+          "description": "cheap static signals for the failure classes the lenses are designed around. Presence is a hint, never a verdict",
+          "items": {"type": "string",
+            "enum": ["trust_boundary", "authz", "authn", "secret_handling", "crypto",
+                     "migration", "concurrency", "deployment", "destructive_operation",
+                     "money", "pii", "external_input", "error_handling"]}
+        },
+        "has_tests_in_diff": {"type": "boolean"},
+        "author_is_agent": {"type": "boolean"}
+      }
+    },
+    "features_frozen_at": {"type": "string", "format": "date-time",
+      "description": "when `features` was computed. It must precede every run's started_at; the builder refuses an example whose features were frozen after its reviewer ran"},
+
+    "outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "ACCRUES AFTER. Never a router input. `escaped_defect` in particular only becomes true with time, so an example labelled the day of review is not comparable to one labelled ninety days later -- see label_maturity_days on the example.",
+      "properties": {
+        "decision_changed": {"type": "boolean",
+          "description": "did the review change what shipped. The outcome the whole apparatus exists to produce"},
+        "caused_test": {"type": "boolean"},
+        "caused_code_change": {"type": "boolean"},
+        "caused_design_change": {"type": "boolean"},
+        "caused_rollback": {"type": "boolean"},
+        "escaped_defect": {"type": "boolean",
+          "description": "a defect reached production that this review could have caught"},
+        "incident_ref": {"type": ["string", "null"]},
+        "observed_through": {"type": ["string", "null"], "format": "date-time",
+          "description": "how far forward history was actually examined. Absent means the outcome window is unknown and the labels cannot be aged"}
+      }
+    },
+
+    "data_rights_record_ids": {
+      "type": "array", "items": {"type": "string"},
+      "description": "the egress decisions that cleared this review. Retention policy requires deletion and provenance lineage: without these a later takedown cannot find what to remove"
+    }
+  }
+}

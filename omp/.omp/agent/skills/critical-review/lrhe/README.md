@@ -286,6 +286,59 @@ Customer, third-party confidential, personal, secret and unclassified inputs are
 denied on every route. Carrythrough-owned internal material needs explicit per-item
 authorization; only the public corpus is self-authorizing.
 
+## The ledger is the asset; the router is a build product
+
+LRHE measures the council against a fixed public corpus. `shadow_ledger.py`
+measures the same council against real work, and after thirty-odd reviews it is a
+routing dataset nobody outside can reconstruct at any price. It is empty today,
+which is exactly why the schemas exist now: a field not captured at the time of the
+first live review is not recoverable later.
+
+```bash
+python3 shadow_ledger.py review   --runs runs.jsonl --out "$D/ledger/reviews.jsonl" ...
+python3 shadow_ledger.py ingest   --runs runs.jsonl --out "$D/ledger/findings.jsonl"
+python3 shadow_ledger.py outcomes --findings "$D/ledger/findings.jsonl" --repo /path/to/repo
+
+python3 router_dataset.py build   --reviews "$D/ledger/reviews.jsonl" \
+    --findings "$D/ledger/findings.jsonl" --runs runs.jsonl
+python3 router_dataset.py verify        # every lineage reference still resolves
+python3 router_dataset.py delete-source --review-id R-0007
+```
+
+`ledger/` is raw, immutable and committed. `router/` is derived, versioned and
+gitignored — rebuilt whenever the feature set or the label definition changes.
+Pooling two `dataset_version`s trains on labels that mean different things, and
+nothing in the file would say so.
+
+Three invariants are in the schemas rather than in anyone's memory:
+
+**Features freeze before dispatch.** `review.schema.json` splits `features`
+(computable from the diff at `epoch_commit`, frozen at `features_frozen_at`) from
+`outcomes` (accrues afterwards). Anything knowable only after the review is a
+label. Put it in `features` and you train the router to predict the present from
+the future — which looks superb offline and is worthless live, so the builder
+refuses any example whose features were frozen after its reviewer started.
+
+**Labels have an age.** `label_maturity_days` records how far forward history was
+actually examined. Escapes and rollbacks only appear with time, so a review
+labelled the same day reports zero escapes by construction. Train across mixed
+maturity without conditioning on it and the router learns that recent reviews are
+safer than old ones — an artefact of when they were labelled and nothing else. An
+unobserved escape is recorded as null, never as false.
+
+**The router may not fire a critic.** `decision_authority` is a field, not a
+comment, because the constraint has to survive whoever remembers it. Shadow
+prediction, advisory recommendations, additive reviewer selection, refuter
+selection and cost forecasting are permitted immediately. `subtractive` —
+dropping a required critic from a critical review on a prediction — is not
+emitted and must be refused, until LRHE and live outcomes show it does not
+materially reduce critical recall.
+
+The unit is the (review, family, lens) cell. Aggregating to the review loses the
+per-family signal that is the whole point; splitting to the finding conditions
+every example on detection, which is the same bug that makes a claims-only recall
+meaningless.
+
 ## Three things that are easy to get wrong
 
 1. **Arm T is not optional.** Three statistically identical reviewers produce ~5 "unique verified

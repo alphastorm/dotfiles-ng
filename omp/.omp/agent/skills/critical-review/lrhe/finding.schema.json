@@ -14,6 +14,13 @@
     "risk_tier": {"type": "string", "enum": ["routine", "critical", "critical_plus"]},
 
     "reviewer_family": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+    "run_id": {"type": "string",
+      "description": "the reviewer invocation this came from. Without it a finding cannot be traced back to its telemetry, its gate result, or the rights decision that permitted it"},
+    "requested_model": {"type": "string"},
+    "served_model": {"type": ["string", "null"],
+      "description": "the exact model that produced this finding. `reviewer_family` alone is not enough: the router's whole job is choosing between models, and a finding that cannot say which model found it is not training data"},
+    "data_rights_record_id": {"type": "string",
+      "description": "the egress decision that cleared the packet. Retention policy requires deletion and provenance lineage, and this is the link a later rights withdrawal follows"},
     "assigned_lens": {"type": "string",
       "enum": ["", "floor", "architecture", "whole_repo", "adversarial", "independent", "refuter"]},
     "role": {"type": "string", "enum": ["author", "critic", "refuter", "judge"]},

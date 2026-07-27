@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lrhe/router-example.schema.json",
+  "title": "LRHE router training example",
+  "description": "One training example per (review, family, lens) cell. Derived, versioned, and regenerable; the raw findings and runs it came from are immutable and live elsewhere. Authorization 2026-07-27 section 5: 'Store raw records separately from router-ready examples. Every training example must retain the source run IDs and outcome provenance.'\n\nThe grain is deliberate. The router's job is to predict what a given family under a given lens would be worth on a given change, so the unit of prediction is the cell, not the review and not the finding. Aggregating to the review loses the per-family signal that is the entire point; splitting to the finding makes every example conditional on detection, which is the same conditioning bug that makes a claims-only recall meaningless.\n\nWhat this may be used for is narrow and enumerated: model selection, lens selection, reviewer ordering, escalation prediction, finding ranking, deduplication, cost/quality optimisation. It may NOT be used to remove a required critic from a critical review -- see decision_authority, which is a field rather than a comment because the constraint has to survive the person who remembers it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "example_id",
+    "dataset_version",
+    "built_at",
+    "source",
+    "features",
+    "candidate",
+    "labels",
+    "label_maturity_days",
+    "decision_authority"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "example_id": {"type": "string", "minLength": 1},
+    "dataset_version": {"type": "string", "minLength": 1,
+      "description": "bump when the feature set, the label definition, or the builder changes. Examples from two versions must never be pooled: the labels mean different things and nothing in the file would say so"},
+    "built_at": {"type": "string", "format": "date-time"},
+
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Lineage back to immutable records. Required for reproducibility, for audit, and for deletion: a takedown or a rights change has to be able to find every derived row that came from a source and remove it.",
+      "required": ["review_id", "epoch_commit", "run_ids"],
+      "properties": {
+        "review_id": {"type": "string", "minLength": 1},
+        "epoch_commit": {"type": "string", "minLength": 1},
+        "run_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+        "finding_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "data_rights_record_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "provenance": {"type": "string", "enum": ["lrhe_corpus", "production_review"],
+          "description": "a benchmark cell and a production review are not interchangeable evidence. The corpus is fixed and adversarially built; production is neither"}
+      }
+    },
+
+    "features": {
+      "$comment": "Copied verbatim from review.schema.json#/properties/features, which is frozen at dispatch. Copied rather than referenced so an example stays interpretable after the review record is amended.",
+      "type": "object"
+    },
+
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "the arm of the decision this example is about",
+      "required": ["family", "lens", "role", "requested_model", "served_model"],
+      "properties": {
+        "family": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "lens": {"type": "string"},
+        "role": {"type": "string", "enum": ["author", "critic", "refuter", "judge"]},
+        "requested_model": {"type": "string", "minLength": 1},
+        "served_model": {"type": ["string", "null"],
+          "description": "what actually answered. An example whose served model differs from the requested one teaches the router about the wrong model unless it is labelled honestly here"}
+      }
+    },
+
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What this cell was actually worth. Counts are the router's regression targets; the booleans are the outcomes that make a finding matter rather than merely exist.",
+      "required": ["n_confirmed", "n_confirmed_critical", "n_unsupported", "cost_usd", "latency_ms"],
+      "properties": {
+        "n_confirmed": {"type": "integer", "minimum": 0},
+        "n_confirmed_critical": {"type": "integer", "minimum": 0},
+        "n_unsupported": {"type": "integer", "minimum": 0,
+          "description": "the cost side of the ledger. A family that finds one real defect and eleven imaginary ones is not a good first-pass critic, and a router trained only on n_confirmed will keep choosing it"},
+        "n_duplicate": {"type": "integer", "minimum": 0},
+        "n_unique_to_candidate": {"type": ["integer", "null"], "minimum": 0,
+          "description": "confirmed findings no other panel member produced. Null when the panel was incomplete, because uniqueness is defined against who else ran"},
+        "cost_usd": {"type": ["number", "null"], "minimum": 0},
+        "latency_ms": {"type": ["integer", "null"], "minimum": 0},
+        "caused_change": {"type": ["boolean", "null"]},
+        "escaped_defect_attributable": {"type": ["boolean", "null"],
+          "description": "a defect this candidate could have caught and did not. Null until the outcome window is long enough to know"}
+      }
+    },
+
+    "label_maturity_days": {"type": "integer", "minimum": 0,
+      "description": "days of repository history examined after the review. Escape and rollback outcomes only appear with time, so an example labelled the same day systematically reports zero escapes. Training across mixed maturity without conditioning on it teaches the router that recent reviews are safer than old ones, which is an artefact of when they were labelled and nothing else"},
+
+    "decision_authority": {
+      "type": "string",
+      "enum": ["shadow_only", "advisory", "additive_selection", "refuter_selection", "subtractive"],
+      "description": "the strongest use this example may inform. `subtractive` -- removing a required critic from a critical review -- is prohibited until LRHE results and live shadow outcomes show it does not materially reduce critical recall, so a builder must not emit it and a consumer must refuse it"
+    },
+
+    "holdout_group": {"type": "string",
+      "description": "resampling unit for evaluation. Group by review, never by example: cells within one review share a diff and an epoch, and splitting them across train and test leaks the answer"}
+  }
+}
