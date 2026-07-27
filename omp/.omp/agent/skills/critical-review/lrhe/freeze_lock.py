@@ -58,25 +58,36 @@ def _run_command_version(name: str) -> str | None:
 
     A missing CLI for this line item is not a soft failure: provenance must stay
     explicit about tool availability, including a null marker.
+
+    The retry is load-tolerance, not superstition. This runs at both freeze and
+    verify, and the two results are compared: a probe that succeeds once and fails
+    once reports a toolchain change that never happened. `omp --version` boots a
+    Node launcher and takes ~2s idle, so a single slow start under a loaded run
+    used to surface as `drift: versions.omp`, and TimeoutExpired was not caught at
+    all -- it escaped as a traceback out of a provenance helper.
     """
-    try:
-        proc = subprocess.run(
-            [name, "--version"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except FileNotFoundError:
-        return None
+    for _attempt in (1, 2):
+        try:
+            proc = subprocess.run(
+                [name, "--version"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except FileNotFoundError:
+            return None
+        except subprocess.TimeoutExpired:
+            continue
 
-    if proc.returncode != 0:
-        return None
+        if proc.returncode != 0:
+            return None
 
-    output = (proc.stdout or proc.stderr or "").strip()
-    if not output:
-        return None
-    return output.splitlines()[0].strip()
+        output = (proc.stdout or proc.stderr or "").strip()
+        if not output:
+            return None
+        return output.splitlines()[0].strip()
+    return None
 
 
 def _git_state(path: Path) -> dict[str, Any]:
@@ -287,9 +298,16 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     print(f"verify failed for {args.lock}", file=sys.stderr)
     for path, expected, actual in diffs:
-        print(f"  drift: {path}", file=sys.stderr)
+        # A tool that answered at freeze and is silent now has not changed version;
+        # it could not be read. Reporting that as drift sends an operator looking
+        # for an upgrade that never happened.
+        unreadable = path.startswith("lock_inputs.versions.") and actual is None and expected is not None
+        print(f"  {'unreadable' if unreadable else 'drift'}: {path}", file=sys.stderr)
         print(f"    lock: {json.dumps(expected, sort_keys=True)}", file=sys.stderr)
         print(f"    now : {json.dumps(actual, sort_keys=True)}", file=sys.stderr)
+        if unreadable:
+            print("    the tool did not answer --version; confirm it is installed "
+                  "before concluding the toolchain moved", file=sys.stderr)
     return EXIT_MISMATCH
 
 

@@ -12,6 +12,7 @@ They are intentionally focused on invariants that can go wrong silently:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -743,6 +744,49 @@ def test_freeze_lock_roundtrip_and_drift_detection(tmp_path: Path):
     assert verify_bad.returncode != 0
     combined = verify_bad.stdout + verify_bad.stderr
     assert "drift: lock_inputs.corpus.sha256" in combined
+
+
+def test_freeze_lock_names_an_unreadable_tool_instead_of_calling_it_drift(tmp_path: Path):
+    """A silent version probe is not a toolchain change, and must not read as one.
+
+    `versions` is re-collected at verify and compared against the lock, so any
+    flake in the probe becomes a drift report. `omp --version` boots a Node
+    launcher and takes ~2s idle; under a loaded test run it once came back empty
+    and the lock reported `drift: versions.omp` for a version that had not moved.
+    Verification still fails -- an unverifiable input is not a passing one -- but
+    it must say which of the two things happened.
+    """
+    public_repo = tmp_path / "public"
+    private_repo = tmp_path / "private"
+    _init_temp_repo(public_repo)
+    _init_temp_repo(private_repo)
+
+    data_dir = tmp_path / "ledger-data"
+    lock = data_dir / "LOCK.json"
+    data_dir.mkdir(parents=True)
+    (data_dir / "corpus.jsonl").write_text('{"item_id":"S1-0001"}\n', encoding="utf-8")
+    (data_dir / "assignments.manifest.json").write_text('{"assignment":"v1"}\n', encoding="utf-8")
+    _write_terms_manifest(data_dir / "terms")
+
+    common = ["--public-repo", str(public_repo), "--private-repo", str(private_repo),
+              "--data-dir", str(data_dir), "--lock", str(lock)]
+    assert _run_cmd(["freeze_lock.py", "freeze", *common]).returncode == 0
+
+    recorded = json.loads(lock.read_text())["lock_inputs"]["versions"]
+    if not any(recorded.values()):
+        pytest.skip("no versioned tool on PATH to make unreadable")
+
+    # A PATH without the CLIs reproduces "the probe answered at freeze, not now"
+    # without depending on which tools this machine happens to have.
+    blind = subprocess.run([PY, "freeze_lock.py", "verify", *common], cwd=HERE,
+                           capture_output=True, text=True, check=False,
+                           env={**os.environ, "PATH": "/usr/bin:/bin"})
+    combined = blind.stdout + blind.stderr
+    assert blind.returncode != 0, "an input that cannot be re-read must not verify"
+    assert "unreadable: lock_inputs.versions." in combined, combined
+    assert "drift: lock_inputs.versions." not in combined, (
+        "a probe that went silent was reported as a version change: " + combined)
+
 
 
 # --------------------------------------------------------------- judge_lrhe
