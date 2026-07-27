@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lrhe/run.schema.json",
+  "title": "LRHE reviewer run record",
+  "description": "One record per reviewer invocation. The OMP task batch must emit these; several fields exist purely so a promotion gate can be measured rather than asserted.",
+  "type": "object",
+  "required": ["run_id", "item_id", "arm", "family", "evidence"],
+  "properties": {
+    "run_id": {"type": "string"},
+    "item_id": {"type": "string"},
+    "arm": {"type": "string", "enum": ["A", "B", "C", "D", "T", "R", "probe", "smoke"],
+      "description": "R = cold refutation. Unlike A-D it is scheduled per disputed claim, not per item, so it costs nothing on reviews where nothing is disputed"},
+    "family": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "description": "model family id. Open by design: gpt, claude, gemini, grok, kimi, glm, qwen, deepseek, mistral, llama. Adding families scales arms C/D linearly and makes the cross-family judge panel cheaper, but it also inflates 'unique verified findings' by pure arithmetic -- grow arm T with the council or section 7's warning bites harder"},
+    "lens": {"type": "string",
+      "enum": ["", "floor", "architecture", "whole_repo", "adversarial", "independent", "refuter"],
+      "description": "`independent` is a fourth first-pass lens, not a relabelling: reconstruct the system and its invariants from primary evidence instead of checking the author's framing, so it can surface what the other three lenses were never designed to look for"},
+    "role": {"type": "string", "enum": ["author", "critic", "refuter", "judge"],
+      "description": "the council is asymmetric. Conflating roles is what makes six families look like six votes when it is four first-pass critics, one conditional refuter and one accountable integrator"},
+    "replicate": {"type": "string", "description": "set1..set3 for arm D, rep1..rep3 for arm T"},
+    "context_config": {"type": "string", "enum": ["minimal", "expanded", "retrieval"],
+      "description": "the context cross-cut; 'retrieval' = minimal packet + read/grep/glob/lsp/ast_grep"},
+
+    "model_selector_expected": {"type": "string",
+      "description": "the pinned selector from task.agentModelOverrides"},
+    "model_selector_reported": {"type": "string",
+      "description": "what the provider actually reported. Mismatch = silent fallback = hard gate failure"},
+
+    "schema_valid": {"type": "boolean"},
+    "evidence_cap": {"type": "integer", "default": 12},
+    "tool_violations": {"type": "integer", "minimum": 0,
+      "description": "attempted calls outside the allowlist. Headless task agents run at approval mode yolo, so a prompt saying 'do not edit' is not a control -- this counter is"},
+    "wrote_to_repo": {"type": "boolean"},
+    "spawned_subagent": {"type": "boolean"},
+    "consumed_peer_output": {"type": "boolean",
+      "description": "independence violation; round one must be blind"},
+
+    "summary": {"type": "string"},
+    "evidence": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "raw contract strings: R<ID>|P<0-3>|conf=..|claim=..|evidence=..|impact=..|verify=.. -- an empty array is a legitimate result"
+    },
+    "unresolved": {"type": "array", "items": {"type": "string"}},
+
+    "latency_ms": {"type": "integer"},
+    "input_tokens": {"type": "integer"},
+    "output_tokens": {"type": "integer"},
+    "cost_usd": {"type": "number"},
+    "quota_pool": {"type": "string",
+      "description": "which allowance the call was charged to. Required for the Grok Build vs xAI API question -- record both dashboards around a canary before trusting this field"},
+
+    "timed_out": {"type": "boolean",
+      "description": "a timed-out reviewer is MISSING, never APPROVED"},
+    "provider_error": {"type": "string"}
+  }
+}

@@ -1,0 +1,31 @@
+# This directory is in a PUBLIC repository (alphastorm/dotfiles-ng).
+#
+# The corpus carries the answer key: every label, and `trap.ground_truth` plus
+# `invalid_reason` for all twelve S4 traps. Publishing it would destroy the trap
+# stratum outright -- the baits become searchable, and any model trained on public
+# GitHub afterwards can recognize them -- and it would defeat the entire
+# contamination apparatus in LRHE-PROTOCOL.md section 3.
+#
+# Corpus artifacts live in the private package instead:
+#   ~/.dotfiles-private/omp-private/.omp/agent/skills/critical-review/lrhe-data/
+#
+# These patterns are a guard, not a policy. Do not remove them to "just commit the
+# data"; move the data.
+corpus.jsonl
+packets.jsonl
+sweep.jsonl
+assignments.csv
+findings.jsonl
+judge*.jsonl
+refute*.jsonl
+exec.jsonl
+human_queue.jsonl
+calibration*.csv
+raw/
+probes/
+sim/
+fixtures/
+.cache/
+.venv/
+__pycache__/
+*.csv

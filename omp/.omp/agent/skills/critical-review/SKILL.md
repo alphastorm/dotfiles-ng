@@ -123,6 +123,35 @@ Decision rules:
 - P2/P3 items receive explicit dispositions but do not trigger open-ended debate.
 - Every returned item receives a ledger row and final disposition. Never silently omit inconvenient feedback.
 
+### Capture outcomes; do not curate a benchmark
+
+The ledger is also the evaluation. Append each closed review's rows to the shadow
+ledger so lane value accumulates from work already being done, rather than from
+hand-labeled historical examples:
+
+```bash
+L=~/.omp/agent/skills/critical-review/lrhe
+python3 "$L/shadow_ledger.py" ingest   --runs runs.jsonl --dispositions ledger.jsonl
+python3 "$L/shadow_ledger.py" outcomes --findings findings.jsonl --repo .
+python3 "$L/shadow_ledger.py" queue    --findings findings.jsonl   # what you read
+python3 "$L/shadow_ledger.py" metrics  --findings findings.jsonl   # after ~30 reviews
+```
+
+`queue` returns only unresolved P0/P1, irreversible tradeoffs with no empirical
+answer, and proposed invariant waivers. Everything else disposes of itself.
+
+One caveat the metrics print for themselves: the lead issues `Disposition`, and the
+lead is one of the families being compared. That is the single-family-judge problem
+this skill already rejects for review, applied to measurement. Run
+`shadow_ledger.py audit` periodically against a cross-family panel and read its
+kappa beside every per-family number.
+
+The offline counterpart is `skill://critical-review/lrhe` — a 47-item public corpus
+with executable and human-adjudicated labels, twelve seeded false-finding traps,
+and the arm-T empirical null that says whether a lane diversifies at all or merely
+adds another correlated draw. Its corpus and answer key are private
+(`lrhe-data/`); never copy them into the public package.
+
 ## One targeted refutation round
 
 Run a second round only when a P0/P1 remains disputed or unresolved after direct verification. There is at most one targeted refutation round for the entire review ID.

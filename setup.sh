@@ -344,12 +344,18 @@ function stow_dotfiles() {
   stow -R -t "$HOME" zsh
 
   stow -D -t "$HOME" omp
+  # Pre-create every directory that BOTH the public and private packages write
+  # into. Stow folds a directory into a single symlink when only one package
+  # owns it, and a folded directory cannot then accept files from the other
+  # package. `critical-review` is shared: the public package supplies the skill
+  # and the LRHE harness, the private one supplies the corpus and its answer key.
   mkdir -p \
     "$HOME/.omp" \
     "$HOME/.omp/agent" \
     "$HOME/.omp/agent/agents" \
     "$HOME/.omp/agent/extensions" \
     "$HOME/.omp/agent/skills" \
+    "$HOME/.omp/agent/skills/critical-review" \
     "$HOME/.omp/profiles/audit/agent"
   stow -S -t "$HOME" omp
 }

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lrhe/item.schema.json",
+  "title": "LRHE corpus item",
+  "type": "object",
+  "required": ["item_id", "stratum", "source", "labels"],
+  "properties": {
+    "item_id": {"type": "string", "pattern": "^S[1-6]-[A-Za-z0-9][A-Za-z0-9_.-]*$"},
+    "source_item_id": {"type": "string", "description": "pre-scrub id, kept for provenance"},
+    "stratum": {
+      "type": "string",
+      "enum": ["S1_REVIEW_HUMAN", "S2_PATCH_VERDICT", "S3_VULN_POC",
+               "S4_FP_TRAP", "S5_NULL", "S6_REVERT"]
+    },
+    "difficulty": {
+      "type": "string",
+      "description": "SWE-PRBench taxonomy for S1; free-form elsewhere",
+      "examples": ["Type1_Direct", "Type2_Contextual", "Type3_Latent",
+                   "unresolved_agent_patch", "incomplete_fix", "seeded_false_finding",
+                   "clean_merged"]
+    },
+    "source": {"type": "string"},
+    "dataset_ref": {"type": "string", "description": "dataset id + revision/commit pin"},
+
+    "repo": {"type": "string"},
+    "base_commit": {"type": "string"},
+    "review_commit": {"type": "string"},
+    "artifact_digest": {"type": "string",
+      "description": "digest of the reviewed artifact; recompute before synthesis and mark results stale on change"},
+    "changed_file_digests": {"type": "object", "additionalProperties": {"type": "string"}},
+    "repo_files": {
+      "type": "array", "items": {"type": "string"},
+      "description": "path allowlist; a claim anchored outside it is auto-FABRICATED"
+    },
+
+    "merged_at": {"type": "string", "format": "date-time"},
+    "date_gate_cutoff": {"type": "string", "format": "date",
+      "description": "the LATEST cutoff across all participating families, not per-family"},
+    "scrubbed": {"type": "boolean"},
+    "provider_data_allowlist": {"type": "array", "items": {"type": "string"}},
+    "license": {"type": "string",
+      "description": "SPDX id of the source repository, or UNKNOWN / UNDECLARED. Drives provider_data_allowlist: SWE-PRBench and SWE-bench Pro deliberately over-sample GPL, and ARVO-Meta declares no license at all"},
+    "license_url": {"type": "string",
+      "description": "where a human can read the terms in one click. Populated when the host's detector returns NOASSERTION -- a license file exists but is unclassified, which is not the same as unlicensed"},
+    "build_notes": {"type": "object",
+      "description": "provenance the builder observed but the reviewer must never see: dropped bot comments, harness verdicts, candidate-patch authorship, control caveats"},
+
+    "goal": {"type": "string"},
+    "problem_statement": {"type": "string"},
+    "design_or_diff": {"type": "string"},
+    "known_open_questions": {"type": "string"},
+    "tests_already_run": {"type": "array", "items": {"type": "string"}},
+
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["label_id", "severity", "sites", "adjudication"],
+        "properties": {
+          "label_id": {"type": "string"},
+          "severity": {"type": "integer", "minimum": 0, "maximum": 3},
+          "kind": {"type": "string",
+            "examples": ["correctness", "memory_safety", "authz", "migration",
+                         "concurrency", "operability", "compatibility"]},
+          "description": {"type": "string"},
+          "sites": {
+            "type": "array", "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["path"],
+              "properties": {
+                "path": {"type": "string"},
+                "lines": {"type": "array", "items": {"type": "integer"},
+                          "minItems": 2, "maxItems": 2}
+              }
+            }
+          },
+          "adjudication": {
+            "type": "string",
+            "enum": ["fail_to_pass_test", "poc_reproduces", "human_review_comment",
+                     "maintainer_verdict", "documented_revert"],
+            "description": "label semantics differ in strength across these; never average recall across them"
+          },
+          "verify_cmd": {"type": "string",
+            "description": "present iff the label is executable; result feeds the REFUTED branch"},
+          "severity_confirmed_by_human": {"type": "boolean"}
+        }
+      }
+    },
+
+    "trap": {
+      "type": "object",
+      "description": "S4 only: a plausible-but-false finding asserted in the packet",
+      "required": ["trap_id", "assertion", "sites", "ground_truth"],
+      "properties": {
+        "trap_id": {"type": "string"},
+        "assertion": {"type": "string"},
+        "framing": {"type": "string", "enum": ["prior_reviewer_concern", "known_open_question"]},
+        "sites": {"type": "array", "items": {"type": "object"}},
+        "ground_truth": {"type": "string", "enum": ["invalid"]},
+        "invalid_reason": {"type": "string",
+          "description": "category from the disclosed-invalid rejection taxonomy"},
+        "verify_cmd": {"type": "string"}
+      }
+    }
+  }
+}
