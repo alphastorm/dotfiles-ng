@@ -21,6 +21,7 @@
         "policyId",
         "providerRoute",
         "accountType",
+        "dataAllowlistKey",
         "termsSnapshotId",
         "providerTrainingUse",
         "providerRetention",
@@ -37,6 +38,8 @@
         "policyId": {"type": "string", "minLength": 1},
         "providerRoute": {"type": "string", "minLength": 1},
         "accountType": {"type": "string", "minLength": 1},
+        "dataAllowlistKey": {"type": "string", "minLength": 1,
+          "description": "the token this route must find in a corpus item's provider_data_allowlist. Routes are named per account (opencode-go); allowlists are named per vendor (opencode), because the licence decision is about who receives the material, not which billing path carried it"},
         "termsSnapshotId": {"type": "string", "minLength": 1},
         "termsSnapshotDigest": {"type": "string"},
         "providerTrainingUse": {

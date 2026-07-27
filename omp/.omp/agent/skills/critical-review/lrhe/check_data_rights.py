@@ -152,6 +152,39 @@ def _load_registry(path: Path, schema_path: Path) -> dict[str, Any]:
     return registry
 
 
+def load_observation(path: Path, provider_route: str, max_age_days: int) -> tuple[dict | None, str | None]:
+    """The most recent recorded observation of the live account, or why it is unusable.
+
+    An observation decays. A model-improvement setting seen six months ago is not
+    an observation of today's setting: defaults change, subscriptions get recreated,
+    and a re-auth can reset a preference with no notice. Treating a stale record as
+    current is the same defaulting bug as treating absent telemetry as success, one
+    layer out, so an expired observation is refused rather than used.
+    """
+    from datetime import date
+
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        return None, f"cannot read observed controls {path}: {exc}"
+
+    seen = [o for o in doc.get("observations", []) if o.get("providerRoute") == provider_route]
+    if not seen:
+        return None, f"{path.name} records no observation for route {provider_route!r}"
+
+    latest = max(seen, key=lambda o: str(o.get("observedAt", "")))
+    try:
+        observed_at = date.fromisoformat(str(latest["observedAt"]))
+    except (KeyError, ValueError):
+        return None, f"observation for {provider_route!r} has no usable observedAt date"
+
+    age = (date.today() - observed_at).days
+    if age > max_age_days:
+        return None, (f"observation for {provider_route!r} is {age} days old, over the "
+                      f"{max_age_days}-day limit; re-check the account and update {path.name}")
+    return latest, None
+
+
 # ------------------------------------------------------------------ decision
 
 def _emit(decision: str, reason_code: str, message: str, args) -> int:
@@ -213,11 +246,53 @@ def evaluate(args: argparse.Namespace) -> int:
             "--item-authorized only when the item record actually carries it",
         )
 
+    # 2b. The item's own licence decision. `public_corpus` says the material is
+    #     publicly available; `provider_data_allowlist` says WHICH providers its
+    #     licence was cleared for. Those are different questions, and the corpus
+    #     answers the second per item -- four S3 items carry an empty list because
+    #     their upstream licence never resolved. Skipping this check would make all
+    #     of that work decorative at exactly the moment it matters.
+    key = policy.get("dataAllowlistKey")
+    if key is None:
+        return unresolved("missing_allowlist_key",
+                          f"policy {args.policy_id} declares no dataAllowlistKey")
+    if args.item_provider_allowlist is None:
+        return unresolved(
+            "item_allowlist_unknown",
+            "the item's provider_data_allowlist was not supplied; pass "
+            "--item-provider-allowlist with the corpus field, empty if it is empty",
+        )
+    if key not in args.item_provider_allowlist:
+        return deny(
+            "provider_not_in_item_allowlist",
+            f"item authorizes {sorted(args.item_provider_allowlist) or '[]'}, which does "
+            f"not include {key!r}. An empty list means the upstream licence never "
+            f"resolved; adding a provider is a licence decision, not a config change",
+        )
+
     # 3. Controls the route demands of the live account. The policy states the
-    #    demand; the caller must supply the observation.
-    for control, dest in OBSERVED_CONTROLS.get(args.provider_route, {}).items():
+    #    demand; the observation has to come from somewhere else -- either the
+    #    caller's flag, or a dated record in observed-controls.yml that has not
+    #    expired. What it may never come from is the policy file, which would be
+    #    the policy confirming itself.
+    needed = OBSERVED_CONTROLS.get(args.provider_route, {})
+    recorded: dict = {}
+    if needed and args.observed_controls and args.observed_controls.exists():
+        found, why = load_observation(args.observed_controls, args.provider_route,
+                                      args.max_observation_age_days)
+        if why and all(getattr(args, d) is None for d in needed.values()):
+            return unresolved("stale_or_missing_observation", why)
+        recorded = (found or {}).get("controls", {})
+    resolved: dict = {}
+
+    for control, dest in needed.items():
         demanded = policy.get("requiredControls", {}).get(control)
+        # An explicit flag beats the file: it is what a runner passes when it has
+        # just looked, and it must be able to contradict a stale record.
         observed = getattr(args, dest)
+        source = "--" + dest.replace("_", "-")
+        if observed is None and control in recorded:
+            observed, source = recorded[control], str(args.observed_controls)
         if demanded is None:
             return unresolved("missing_required_control",
                               f"route {args.provider_route} needs requiredControls.{control}")
@@ -225,11 +300,13 @@ def evaluate(args: argparse.Namespace) -> int:
             return unresolved(
                 "unobserved_control",
                 f"route {args.provider_route} demands {control}={demanded!r} but no "
-                f"observation was supplied; pass --{dest.replace('_', '-')}",
+                f"observation was supplied; pass --{dest.replace('_', '-')} or record it "
+                f"in observed-controls.yml",
             )
         if observed != demanded:
             return deny("control_violated",
-                        f"{control} is {observed!r}; policy demands {demanded!r}")
+                        f"{control} is {observed!r} per {source}; policy demands {demanded!r}")
+        resolved[control] = observed
 
     # 4. Uses that stay forbidden while the contract questions are open. Unlike the
     #    capture/retention descriptors these are enforced: a registry that flipped
@@ -254,6 +331,7 @@ def evaluate(args: argparse.Namespace) -> int:
         ],
         "explicit_authorization": True,
         "authorized_provider_routes": [args.provider_route],
+        "item_provider_allowlist": sorted(args.item_provider_allowlist),
         "policy_id": policy["policyId"],
         "terms_snapshot_id": policy["termsSnapshotId"],
         "provider_route": policy["providerRoute"],
@@ -261,7 +339,10 @@ def evaluate(args: argparse.Namespace) -> int:
         "provider_authorized": True,
         "customer_data_allowed": policy["customerDataAllowed"],
         "third_party_confidential_allowed": policy["thirdPartyConfidentialAllowed"],
-        "model_improvement_enabled": args.model_improvement_enabled,
+        # Whatever actually satisfied the gate, flag or dated record -- not the flag
+        # alone, or a decision made on the file would record itself as unobserved.
+        "model_improvement_enabled": resolved.get(
+            "modelImprovementEnabled", args.model_improvement_enabled),
         "provider_training_use": policy["providerTrainingUse"],
         "provider_retention": policy["providerRetention"],
         # Recorded, not gating. `contract_pending` here means the raw response is
@@ -314,10 +395,23 @@ def main(argv: list[str] | None = None) -> int:
                     default=False,
                     help="the item record carries explicit authorization for this route. "
                          "Omission is not authorization")
+    ap.add_argument("--item-provider-allowlist", nargs="*", default=None, metavar="VENDOR",
+                    help="the corpus item's provider_data_allowlist verbatim. Pass it even "
+                         "when empty (bare flag); omitting it entirely is unresolved, "
+                         "because 'nobody told me' is not 'the licence permits this'")
     ap.add_argument("--model-improvement-enabled", dest="model_improvement_enabled",
                     type=_bool_arg, default=None,
                     help="OBSERVED account setting, not the policy's demand. Required on "
                          "routes whose policy demands it; absence is unresolved")
+    ap.add_argument("--observed-controls",
+                    type=Path,
+                    default=Path.home() / ".omp/agent/skills/critical-review/observed-controls.yml",
+                    help="dated record of what was actually seen on the account. Used only "
+                         "when the matching flag is absent; a flag always wins, because it "
+                         "is what a runner passes when it has just looked")
+    ap.add_argument("--max-observation-age-days", type=int, default=30,
+                    help="refuse an observation older than this. A setting seen months ago "
+                         "is not an observation of today's setting (default: %(default)s)")
     ap.add_argument("--rights-basis", nargs="*", default=None,
                     help="override the recorded basis strings")
     ap.add_argument("--policies", type=Path, default=HERE / "provider-policies.yaml")

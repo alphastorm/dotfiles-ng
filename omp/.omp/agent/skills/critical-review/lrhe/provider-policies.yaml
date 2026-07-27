@@ -4,6 +4,7 @@ policies:
   - policyId: opencode-go-2026-07-27
     providerRoute: opencode-go
     accountType: paid_go_plus_zen
+    dataAllowlistKey: opencode
     termsSnapshotId: opencode-terms-2026-03-06__go-docs-2026-07-27
     providerTrainingUse: prohibited_by_provider_documentation
     providerRetention: zero_retention_by_provider_documentation
@@ -24,6 +25,7 @@ policies:
   - policyId: claude-consumer-fable-2026-07-27
     providerRoute: claude-code-subscription
     accountType: consumer_max_or_pro
+    dataAllowlistKey: anthropic
     termsSnapshotId: anthropic-consumer-privacy-2026-03-16
     providerTrainingUse: opt_out_required
     providerRetention: consumer_standard_not_zdr

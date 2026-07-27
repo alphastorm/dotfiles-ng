@@ -54,6 +54,12 @@
       "items": {"type": "string", "minLength": 1},
       "uniqueItems": true
     },
+    "item_provider_allowlist": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true,
+      "description": "the corpus item's provider_data_allowlist as it stood when the decision was made, derived from its upstream licence. Distinct from authorized_provider_routes, which is the route this decision cleared: an item can be publicly available and still authorize nobody, which is exactly what an empty list means"
+    },
     "policy_id": {"type": "string", "minLength": 1},
     "terms_snapshot_id": {"type": "string", "minLength": 1},
     "provider_route": {"type": "string", "minLength": 1},
