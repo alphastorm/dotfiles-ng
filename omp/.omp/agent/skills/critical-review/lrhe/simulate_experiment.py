@@ -75,10 +75,16 @@ def simulate(
     plausible_rate: float = 0.30,
     trap_bait: dict | None = None,
     full_square: bool = True,
+    null_family: str = FAMILIES[0],
+    # Grow the null with the council. Three repeats is not the null for a
+    # four-family panel: pairwise overlap is compared between panels of equal size,
+    # so a 4-family council needs 4 same-family samples or the contrast is biased.
+    null_replicates: int | None = None,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     fam_effect = fam_effect or {f: 0.0 for f in FAMILIES}
     lens_effect = lens_effect or {l: 0.0 for l in LENSES}
     trap_bait = trap_bait or {f: 0.35 for f in FAMILIES}
+    null_replicates = null_replicates or len(FAMILIES)
 
     corpus, runs, judge, execres = [], [], [], []
     n = 0
@@ -123,93 +129,119 @@ def simulate(
             corpus.append(item)
 
             item_re = rng.normal(0, item_sd)
+
+            def emit_run(fam: str, lens: str, arm: str, replicate: str, run_id: str) -> None:
+                """One reviewer run: its evidence strings and their judge/exec records.
+
+                Arms D and T share this deliberately. Arm T is only a null if the same
+                generative process produces it -- give it its own code path and the
+                cross-family-minus-same-family contrast measures the simulator rather
+                than the council.
+                """
+                rid_n = 0
+                evidence = []
+                # true positives
+                for lab in labels:
+                    eta = (
+                        b0
+                        + fam_effect[fam]
+                        # Arm T runs the floor lens, which carries no designed effect.
+                        + lens_effect.get(lens, 0.0)
+                        + item_re
+                        + DIFFICULTY_BY_KIND.get(kind, 0.0)
+                    )
+                    # interaction: each family is boosted on one designated lens
+                    if interaction and lens == LENS_SETS[0][fam]:
+                        eta += interaction
+                    if rng.random() < sigmoid(eta):
+                        rid_n += 1
+                        rid = f"{rid_n:02d}"
+                        s = lab["sites"][0]
+                        line = int(rng.integers(s["lines"][0], s["lines"][1] + 1))
+                        evidence.append(
+                            f"R{rid}|P{lab['severity']}|conf={rng.uniform(.4,.9):.2f}"
+                            f"|claim=defect at {lab['label_id']}"
+                            f"|evidence={s['path']}:{line} observed"
+                            f"|impact=sim|verify=check {lab['label_id']}"
+                        )
+                        judge.append({"run_id": run_id, "claim_rid": rid,
+                                      "verdict": "CONFIRMED", "label_id": lab["label_id"],
+                                      "affinity": float(rng.uniform(.55, .95)),
+                                      "panel": [x for x in FAMILIES if x != fam],
+                                      "unanimous": True})
+                        if lab.get("verify_cmd"):
+                            execres.append({"run_id": run_id, "claim_rid": rid,
+                                            "reproduced": True, "cmd": lab["verify_cmd"],
+                                            "exit_code": 1})
+                # trap bait
+                if "trap" in item and rng.random() < trap_bait[fam]:
+                    rid_n += 1
+                    rid = f"{rid_n:02d}"
+                    ts = item["trap"]["sites"][0]
+                    evidence.append(
+                        f"R{rid}|P0|conf={rng.uniform(.6,.95):.2f}"
+                        f"|claim=exploitable condition"
+                        f"|evidence={ts['path']}:{rng.integers(100,160)} timing differential"
+                        f"|impact=sim|verify=timing harness"
+                    )
+                    judge.append({"run_id": run_id, "claim_rid": rid, "verdict": "PLAUSIBLE",
+                                  "label_id": "", "affinity": 0.2,
+                                  "panel": [x for x in FAMILIES if x != fam],
+                                  "unanimous": False})
+                    execres.append({"run_id": run_id, "claim_rid": rid, "reproduced": False,
+                                    "cmd": "timing harness", "exit_code": 0})
+                # noise claims
+                for _ in range(int(rng.poisson(2.0))):
+                    rid_n += 1
+                    rid = f"{rid_n:02d}"
+                    fab = rng.random() < fabrication_rate / max(1e-9, fabrication_rate + plausible_rate)
+                    path = (f"src/{iid}/ghost.py" if fab
+                            else item["repo_files"][0])
+                    evidence.append(
+                        f"R{rid}|P{rng.integers(1,4)}|conf={rng.uniform(.2,.7):.2f}"
+                        f"|claim=noise|evidence={path}:{rng.integers(1,2000)}"
+                        f"|impact=sim|verify=inspect"
+                    )
+                    judge.append({"run_id": run_id, "claim_rid": rid,
+                                  "verdict": "FABRICATED" if fab else "PLAUSIBLE",
+                                  "label_id": "", "affinity": 0.0 if fab else 0.25,
+                                  "panel": [x for x in FAMILIES if x != fam],
+                                  "unanimous": True})
+                runs.append({
+                    "run_id": run_id, "item_id": iid, "arm": arm, "family": fam,
+                    "lens": lens, "replicate": replicate, "context_config": "retrieval",
+                    "model_selector_expected": f"{fam}/pinned",
+                    "model_selector_reported": f"{fam}/pinned",
+                    "schema_valid": True, "tool_violations": 0, "wrote_to_repo": False,
+                    "spawned_subagent": False, "evidence_cap": 12,
+                    "latency_ms": int(rng.normal(40000, 9000)),
+                    "input_tokens": int(rng.normal(20000, 5000)),
+                    "output_tokens": int(rng.normal(1000, 250)),
+                    "cost_usd": round(float(rng.uniform(.02, .25)), 4),
+                    "quota_pool": f"{fam}-pool",
+                    "evidence": evidence,
+                })
+
+            # Arm C: one floor-lens run per family. This is the like-for-like partner
+            # of arm T -- same lens, same one-run-per-column cardinality -- and it is
+            # what the diversity contrast is computed against. Arm D cannot stand in:
+            # its rotation gives each family several runs whose union overlaps more.
+            for fam in FAMILIES:
+                emit_run(fam, "floor", "C", "", f"{iid}-{fam}-c")
+
             sets = LENS_SETS if full_square else [LENS_SETS[n % 3]]
             for si, lset in enumerate(sets):
                 for fam in FAMILIES:
-                    lens = lset[fam]
-                    rid_n = 0
-                    evidence = []
-                    run_id = f"{iid}-{fam}-s{si}"
-                    # true positives
-                    for lab in labels:
-                        eta = (
-                            b0
-                            + fam_effect[fam]
-                            + lens_effect[lens]
-                            + item_re
-                            + DIFFICULTY_BY_KIND.get(kind, 0.0)
-                        )
-                        # interaction: each family is boosted on one designated lens
-                        if interaction and lens == LENS_SETS[0][fam]:
-                            eta += interaction
-                        if rng.random() < sigmoid(eta):
-                            rid_n += 1
-                            rid = f"{rid_n:02d}"
-                            s = lab["sites"][0]
-                            line = int(rng.integers(s["lines"][0], s["lines"][1] + 1))
-                            evidence.append(
-                                f"R{rid}|P{lab['severity']}|conf={rng.uniform(.4,.9):.2f}"
-                                f"|claim=defect at {lab['label_id']}"
-                                f"|evidence={s['path']}:{line} observed"
-                                f"|impact=sim|verify=check {lab['label_id']}"
-                            )
-                            judge.append({"run_id": run_id, "claim_rid": rid,
-                                          "verdict": "CONFIRMED", "label_id": lab["label_id"],
-                                          "affinity": float(rng.uniform(.55, .95)),
-                                          "panel": [x for x in FAMILIES if x != fam],
-                                          "unanimous": True})
-                            if lab.get("verify_cmd"):
-                                execres.append({"run_id": run_id, "claim_rid": rid,
-                                                "reproduced": True, "cmd": lab["verify_cmd"],
-                                                "exit_code": 1})
-                    # trap bait
-                    if "trap" in item and rng.random() < trap_bait[fam]:
-                        rid_n += 1
-                        rid = f"{rid_n:02d}"
-                        ts = item["trap"]["sites"][0]
-                        evidence.append(
-                            f"R{rid}|P0|conf={rng.uniform(.6,.95):.2f}"
-                            f"|claim=exploitable condition"
-                            f"|evidence={ts['path']}:{rng.integers(100,160)} timing differential"
-                            f"|impact=sim|verify=timing harness"
-                        )
-                        judge.append({"run_id": run_id, "claim_rid": rid, "verdict": "PLAUSIBLE",
-                                      "label_id": "", "affinity": 0.2,
-                                      "panel": [x for x in FAMILIES if x != fam],
-                                      "unanimous": False})
-                        execres.append({"run_id": run_id, "claim_rid": rid, "reproduced": False,
-                                        "cmd": "timing harness", "exit_code": 0})
-                    # noise claims
-                    for _ in range(int(rng.poisson(2.0))):
-                        rid_n += 1
-                        rid = f"{rid_n:02d}"
-                        fab = rng.random() < fabrication_rate / max(1e-9, fabrication_rate + plausible_rate)
-                        path = (f"src/{iid}/ghost.py" if fab
-                                else item["repo_files"][0])
-                        evidence.append(
-                            f"R{rid}|P{rng.integers(1,4)}|conf={rng.uniform(.2,.7):.2f}"
-                            f"|claim=noise|evidence={path}:{rng.integers(1,2000)}"
-                            f"|impact=sim|verify=inspect"
-                        )
-                        judge.append({"run_id": run_id, "claim_rid": rid,
-                                      "verdict": "FABRICATED" if fab else "PLAUSIBLE",
-                                      "label_id": "", "affinity": 0.0 if fab else 0.25,
-                                      "panel": [x for x in FAMILIES if x != fam],
-                                      "unanimous": True})
-                    runs.append({
-                        "run_id": run_id, "item_id": iid, "arm": "D", "family": fam,
-                        "lens": lens, "context_config": "retrieval",
-                        "model_selector_expected": f"{fam}/pinned",
-                        "model_selector_reported": f"{fam}/pinned",
-                        "schema_valid": True, "tool_violations": 0, "wrote_to_repo": False,
-                        "spawned_subagent": False, "evidence_cap": 12,
-                        "latency_ms": int(rng.normal(40000, 9000)),
-                        "input_tokens": int(rng.normal(20000, 5000)),
-                        "output_tokens": int(rng.normal(1000, 250)),
-                        "cost_usd": round(float(rng.uniform(.02, .25)), 4),
-                        "quota_pool": f"{fam}-pool",
-                        "evidence": evidence,
-                    })
+                    emit_run(fam, lset[fam], "D", f"set{si+1}", f"{iid}-{fam}-s{si}")
+
+            # Arm T: the empirical null. One family, repeated as many times as the
+            # council has members, on the floor lens. Nothing distinguishes these runs
+            # from each other except the draw -- which is the entire point: whatever
+            # "unique findings" and leave-one-out delta they produce is what identical
+            # reviewers produce for free, and the cross-family numbers have to beat it.
+            for r in range(null_replicates):
+                emit_run(null_family, "floor", "T", f"rep{r+1}",
+                         f"{iid}-{null_family}-t{r+1}")
     return corpus, runs, judge, execres
 
 

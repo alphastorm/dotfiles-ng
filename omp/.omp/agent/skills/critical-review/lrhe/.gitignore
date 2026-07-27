@@ -29,3 +29,7 @@ fixtures/
 .venv/
 __pycache__/
 *.csv
+report.json
+analysis.json
+# the real one is frozen next to the corpus in lrhe-data/
+assignments.manifest.json

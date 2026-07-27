@@ -185,47 +185,112 @@ def _wrap(s: str, w: int) -> list[str]:
 
 # ---------------------------------------------------------------- assignments
 
-def _stable_hash(s: str) -> int:
-    return int(hashlib.sha256(s.encode()).hexdigest()[:8], 16)
+def _stable_hash(s: str, salt: str = "") -> int:
+    """Digest-derived index. Python's built-in hash() is salted per process, so the
+    same corpus would otherwise produce a different matrix on every run.
+
+    An empty salt hashes the value alone. That is the form every assignment frozen
+    so far was generated with, so do NOT "simplify" this into an unconditional
+    prefix: every previously recorded arm-B mapping would silently move. A non-empty
+    salt is how you deliberately reshuffle, and it is written into the manifest so
+    the reshuffle is a declared act rather than an unexplained difference.
+    """
+    payload = f"{salt}\0{s}" if salt else s
+    return int(hashlib.sha256(payload.encode()).hexdigest()[:8], 16)
 
 
-def _stratified_subset(items: list[tuple[str, str]], k: int) -> set[str]:
-    """Pick k item ids spread proportionally across strata, deterministically."""
+def _sha256_path(p: Path | None) -> str | None:
+    if p is None or not Path(p).exists():
+        return None
+    h = hashlib.sha256()
+    with open(p, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _subset_key(item: dict) -> str:
+    """Stratification key for the arm-D / arm-T subset.
+
+    Stratum alone is not enough. Arm D is the Latin square and arm T is the
+    empirical null; if either lands only on defect-bearing items then the
+    false-positive controls -- the S4 traps, and the label-free known-passing and
+    null items -- are never exercised under the conditions the headline numbers come
+    from. Finding nothing when there is nothing is a different measurement from
+    missing something, and only one of the two is checked by recall.
+    """
+    stratum = item.get("stratum", "")
+    if item.get("trap"):
+        kind = "trap"
+    elif not item.get("labels"):
+        kind = "control"
+    else:
+        kind = item.get("difficulty") or "unspecified"
+    return f"{stratum}|{kind}"
+
+
+def _stratified_subset(items: list[tuple[str, str]], k: int, salt: str = "") -> set[str]:
+    """Pick k item ids spread proportionally across the given keys, deterministically.
+
+    Apportionment, not round-robin. Quotas of `max(1, round(...))` routinely sum to
+    more than k, and draining them one pass at a time in sorted key order means
+    whichever group sorts last absorbs the entire shortfall. That is invisible while
+    the key is just the stratum and there are five groups; add difficulty and
+    control status and it silently halved S4 trap representation in the subset that
+    carries arm T -- the one arm where a false positive can be observed at all.
+
+    Coverage first, proportionality second: every group takes one slot while slots
+    remain, largest group first, and the rest go to whoever is furthest below their
+    exact share. Ties break on the salted digest, so the outcome is reproducible
+    without being alphabetical.
+    """
     if k >= len(items):
         return {iid for iid, _ in items}
-    by_stratum: dict[str, list[str]] = {}
-    for iid, stratum in items:
-        by_stratum.setdefault(stratum, []).append(iid)
-    for ids in by_stratum.values():
-        ids.sort(key=_stable_hash)
-    quota = {s: max(1, round(k * len(ids) / len(items))) for s, ids in by_stratum.items()}
-    picked: list[str] = []
-    # Round-robin the quotas so rounding never starves a small stratum entirely.
-    for i in range(max(quota.values(), default=0)):
-        for stratum in sorted(by_stratum):
-            if len(picked) >= k:
-                break
-            if i < min(quota[stratum], len(by_stratum[stratum])):
-                picked.append(by_stratum[stratum][i])
-        if len(picked) >= k:
+
+    groups: dict[str, list[str]] = {}
+    for iid, key in items:
+        groups.setdefault(key, []).append(iid)
+    for ids in groups.values():
+        ids.sort(key=lambda i: _stable_hash(i, salt))
+
+    keys = sorted(groups)
+    exact = {key: k * len(groups[key]) / len(items) for key in keys}
+    alloc = {key: 0 for key in keys}
+
+    for key in sorted(keys, key=lambda key: (-len(groups[key]), _stable_hash(key, salt))):
+        if sum(alloc.values()) >= k:
             break
-    return set(picked)
+        alloc[key] = 1
+
+    while sum(alloc.values()) < k:
+        short = [key for key in keys if alloc[key] < len(groups[key])]
+        if not short:
+            break
+        best = max(short, key=lambda key: (exact[key] - alloc[key], _stable_hash(key, salt)))
+        alloc[best] += 1
+
+    return {iid for key in keys for iid in groups[key][: alloc[key]]}
 
 
 def cmd_assignments(args) -> int:
     """Emit the full run matrix. No network needed; do this before fetching anything
     so the budget is visible up front."""
     if args.corpus and Path(args.corpus).exists():
-        items = [(it["item_id"], it.get("stratum", ""))
-                 for it in _read_jsonl(args.corpus)]
+        corpus_items = _read_jsonl(args.corpus)
     else:
-        items = [(f"{p.name[:2]}-{i + 1:04d}", p.name) for p in PLAN for i in range(p.n)]
+        corpus_items = [{"item_id": f"{p.name[:2]}-{i + 1:04d}", "stratum": p.name}
+                        for p in PLAN for i in range(p.n)]
+    items = [(it["item_id"], it.get("stratum", "")) for it in corpus_items]
 
     # The arm-D subset must be stratified. Taking the first 24 in file order gives
     # the Latin square and arm T to whichever strata happen to sort first, and arm
     # T is the empirical null the whole diversity claim rests on -- it has to span
-    # the same strata the cross-family arms are measured on.
-    d_subset = _stratified_subset(items, args.d_items)
+    # the same strata, difficulties and control types the cross-family arms are
+    # measured on.
+    d_subset = _stratified_subset(
+        [(it["item_id"], _subset_key(it)) for it in corpus_items],
+        args.d_items, args.assignment_salt,
+    )
 
     families = args.families or FAMILIES
     sets = lens_sets(families, args.lenses or LENSES)
@@ -237,7 +302,7 @@ def cmd_assignments(args) -> int:
         # Built-in hash() is salted per process, so the same corpus would produce
         # a different matrix on every run and the design would not be replicable.
         rows.append({"item_id": iid, "stratum": stratum, "arm": "B",
-                     "family": families[_stable_hash(iid) % len(families)],
+                     "family": families[_stable_hash(iid, args.assignment_salt) % len(families)],
                      "lens": "", "replicate": ""})
         for f in families:
             rows.append({"item_id": iid, "stratum": stratum, "arm": "C",
@@ -266,11 +331,37 @@ def cmd_assignments(args) -> int:
 
     from collections import Counter
     c = Counter(r["arm"] for r in rows)
+
+    # The immutable half of the assignment. assignments.csv can be regenerated,
+    # reordered or hand-edited and nothing would notice; these digests are what make
+    # that detectable. The salt and the selected subset are what let someone without
+    # this machine reproduce the matrix -- which is the entire point of freezing it
+    # before any output exists.
+    manifest = {
+        "subset_policy": "stratified",
+        "assignment_salt": args.assignment_salt,
+        "d_items_requested": args.d_items,
+        "d_subset": sorted(d_subset),
+        "families": families,
+        "lenses": args.lenses or LENSES,
+        "author_family": args.author_family,
+        "triplicate_family": args.triplicate_family,
+        "triplicate_n": args.triplicate_n or len(families),
+        "n_items": len(items),
+        "n_rows": len(rows),
+        "arm_counts": {a: c[a] for a in sorted(c)},
+        "corpus_sha256": _sha256_path(args.corpus),
+        "assignments_sha256": _sha256_path(args.out),
+    }
+    args.manifest.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
     print(f"wrote {args.out}: {len(rows)} scheduled runs")
     for arm in ["A", "B", "C", "D", "T", "probe"]:
         print(f"  arm {arm:<6} {c[arm]:>4}")
     print(f"\nreviewer runs (excl. probe): {sum(c[a] for a in 'ABCDT')}")
     print(f"probe runs (short, single-turn): {c['probe']}")
+    print(f"wrote {args.manifest}: {len(d_subset)}-item subset, "
+          f"assignments sha256 {manifest['assignments_sha256'][:12]}")
     if c["T"] == 0:
         print("\nWARNING: arm T empty. Marginal-contribution numbers will be uninterpretable.")
     return 0
@@ -866,6 +957,13 @@ def main() -> int:
                    help=f"lens rotation (default: {' '.join(LENSES)}). Pin the original "
                         f"three to reproduce the pre-registered 523-run budget exactly; "
                         f"arm D is |families| x |lenses| runs per subset item")
+    a.add_argument("--assignment-salt", default="",
+                   help="freeze a deliberate reshuffle of arm B and the arm-D/T subset. "
+                        "Empty reproduces every assignment frozen so far; whatever is "
+                        "used is recorded in the manifest")
+    a.add_argument("--manifest", type=Path, default=Path("assignments.manifest.json"),
+                   help="immutable record: salt, selected subset, and digests of both "
+                        "the corpus and the emitted CSV")
     a.set_defaults(fn=cmd_assignments)
 
     s = sub.add_parser("scrub")

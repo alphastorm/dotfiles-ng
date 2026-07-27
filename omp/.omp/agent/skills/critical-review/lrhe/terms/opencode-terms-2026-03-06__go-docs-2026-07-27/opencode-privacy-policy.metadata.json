@@ -1,0 +1,11 @@
+{
+  "byte_length": 82631,
+  "content_type": "text/html",
+  "fetched_at": "2026-07-27T18:35:10Z",
+  "final_url": "https://opencode.ai/legal/privacy-policy",
+  "http_status": 200,
+  "redirects": [],
+  "sha256": "394528459bc02870f9e84997d41ad803aa091703475a261ca4b034532b39ef3c",
+  "url": "https://opencode.ai/legal/privacy-policy",
+  "user_agent": "LRHE-Terms-Snapshot/1.0 (+https://github.com/alphastorm/dotfiles-ng; compliance archive fetch)"
+}

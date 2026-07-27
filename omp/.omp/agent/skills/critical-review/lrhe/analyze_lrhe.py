@@ -106,8 +106,45 @@ def cohens_kappa(a: pd.Series, b: pd.Series) -> dict:
 
 # ----------------------------------------------- build the defect-level table
 
+# The condition key, in one place because it is repeated at every join and a
+# mismatch between two copies of it is invisible in the output.
+#
+# `replicate` is load-bearing. Arm T is |council| independent runs of ONE family on
+# ONE lens: without it those runs share a key, collapse into a single cell, and
+# their union is reported as if a single reviewer had found everything. The
+# same-family null is the only thing that distinguishes real diversification from
+# resampling one model, so collapsing it does not weaken the analysis -- it removes
+# the control entirely while still printing a number.
+CONDITION_KEYS = ["item_id", "arm", "family", "lens", "replicate", "context_config"]
+
+
+# Which arms may enter which statistic. This is not bookkeeping. Arm T is ONE family
+# repeated, so letting it into a per-family statistic unions a family's caught-set
+# with its own repeats -- inflating that family's `caught`, depressing every other
+# family's `unique_share`, and quietly rigging the leave-one-out delta in favour of
+# whichever family happened to be chosen as the null.
+COUNCIL_ARMS = ("C", "D")   # cross-family review
+FLOOR_ARM = "C"             # one floor-lens run per family
+SQUARE_ARM = "D"            # the Latin square: the only arm where lens varies by design
+NULL_ARM = "T"              # same-family replicates: the empirical null
+
+
+def normalize_conditions(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce the condition columns to strings before any grouping.
+
+    Empty CSV cells read back as NaN and `groupby` drops NaN keys by default. Arms
+    A, B, C and probe all carry an empty `lens` and `replicate`, so grouping the raw
+    frame deletes every one of their hits and scores those arms at zero recall --
+    quietly, with no error and no empty-frame warning.
+    """
+    out = df.copy()
+    for col in CONDITION_KEYS:
+        out[col] = out[col].fillna("").astype(str) if col in out.columns else ""
+    return out
+
+
 def build_defect_table(claims: pd.DataFrame, corpus: list[dict]) -> pd.DataFrame:
-    """One row per (item, label, arm, family, lens, context_config) -> caught 0/1.
+    """One row per (item, label, condition) -> caught 0/1.
 
     Rows are generated from the full label inventory, so defects that nobody
     caught are present as zeros. A recall computed only over claims would be
@@ -132,29 +169,20 @@ def build_defect_table(claims: pd.DataFrame, corpus: list[dict]) -> pd.DataFrame
     if lab_df.empty:
         return lab_df
 
-    conds = (
-        claims[["item_id", "arm", "family", "lens", "context_config"]]
-        .drop_duplicates()
-        .reset_index(drop=True)
-    )
+    claims = normalize_conditions(claims)
+    conds = claims[CONDITION_KEYS].drop_duplicates().reset_index(drop=True)
     grid = lab_df.merge(conds, on="item_id", how="inner")
 
     hits = claims[claims["verdict"] == "CONFIRMED"].copy()
     hits = hits[hits["matched_label_id"].notna() & (hits["matched_label_id"] != "")]
     hits["caught"] = 1
-    hits["caught_crit"] = (hits["severity"] <= 1).astype(int)
     agg = (
-        hits.groupby(
-            ["item_id", "arm", "family", "lens", "context_config", "matched_label_id"],
-            observed=True,
-        )
+        hits.groupby(CONDITION_KEYS + ["matched_label_id"], observed=True)
         .agg(caught=("caught", "max"), promoted=("promoted", "max"))
         .reset_index()
         .rename(columns={"matched_label_id": "label_id"})
     )
-    out = grid.merge(
-        agg, on=["item_id", "arm", "family", "lens", "context_config", "label_id"], how="left"
-    )
+    out = grid.merge(agg, on=CONDITION_KEYS + ["label_id"], how="left")
     out["caught"] = out["caught"].fillna(0).astype(int)
     out["promoted"] = out["promoted"].fillna(0).astype(int)
     return out
@@ -240,7 +268,7 @@ def unique_contribution(defects: pd.DataFrame, families: list[str]) -> pd.DataFr
     return out
 
 
-def diversity_vs_null(defects: pd.DataFrame, families: list[str], B: int) -> dict:
+def diversity_vs_null(defects: pd.DataFrame, B: int) -> dict:
     """Is cross-family review actually diversifying, or just three coin flips?
 
     THIS IS THE LOAD-BEARING COMPARISON. Simulation with three *statistically
@@ -251,19 +279,29 @@ def diversity_vs_null(defects: pd.DataFrame, families: list[str], B: int) -> dic
 
     So a raw unique-finding count or leave-one-out delta cannot distinguish
     diversity from independent noise -- both are positive by construction. The
-    decision requires an empirical null: arm T runs ONE family three times
-    independently on the same items. If the cross-family council's error overlap
-    is no lower than the same-family triplicate's, the diversity premium is
-    unsupported and three samples of one model would buy the same coverage more
-    cheaply.
+    decision requires an empirical null: arm T runs ONE family as many times as the
+    council has members, independently, on the same items. If the cross-family
+    council's error overlap is no lower than the same-family replicates', the
+    diversity premium is unsupported and resampling one model would buy the same
+    coverage more cheaply.
 
-    Reported statistic: mean pairwise Jaccard of caught-sets, cross-family
-    (arm C/D) minus same-family (arm T). Negative = real diversification.
-    Jaccard over all pairs is better powered than the union-based delta because
-    it does not collapse three reviewers into one number.
+    Reported statistic: mean pairwise Jaccard of caught-sets, cross-family minus
+    same-family. Negative = real diversification. Jaccard over all pairs is better
+    powered than the union-based delta because it does not collapse the council into
+    one number.
+
+    Both sides must be ONE run per column. Pooling arms C and D for the cross-family
+    side -- which this did until the null was first actually exercised -- pivots on
+    `family` with aggfunc=max and so unions each family's floor run with its |lenses|
+    square runs, then compares that union against a single arm-T run. Larger sets
+    overlap more, so the contrast is biased toward "no diversification": a real
+    effect can be masked, and the section 7 promotion gate would refuse a council
+    that actually works. Arm C is the like-for-like counterpart -- one floor-lens run
+    per family, same lens and same cardinality as arm T.
     """
-    council = defects[defects["arm"].isin(["C", "D"])]
-    triplicate = defects[defects["arm"] == "T"]
+    triplicate = defects[defects["arm"] == NULL_ARM]
+    null_items = set(triplicate["item_id"])
+    council = defects[(defects["arm"] == FLOOR_ARM) & defects["item_id"].isin(null_items)]
 
     def mean_pair_jaccard(d: pd.DataFrame, key: str) -> float:
         sub = d[d["label_severity"].isin(CRITICAL)]
@@ -279,33 +317,58 @@ def diversity_vs_null(defects: pd.DataFrame, families: list[str], B: int) -> dic
                 vals.append(inter / union)
         return float(np.mean(vals)) if vals else float("nan")
 
-    out: dict = {
-        "cross_family_jaccard": cluster_bootstrap(
-            council, lambda d: mean_pair_jaccard(d, "family"), B=B
-        ),
-    }
+    # Guards first. The cross-family side is defined only on the items the null ran
+    # on, so with no null there is no cross-family number to report either -- the
+    # statistic is a contrast, not two independent measurements.
+    out: dict = {"n_null_items": len(null_items), "cross_family_jaccard": None,
+                 "same_family_jaccard": None, "contrast": None}
     if triplicate.empty:
-        out["same_family_jaccard"] = None
-        out["contrast"] = None
         out["verdict"] = (
-            "NOT MEASURABLE -- arm T (same-family triplicate) was not run. Without it, "
-            "unique-finding counts and leave-one-out deltas cannot be interpreted: "
-            "identical reviewers generate both. Run arm T before promoting any lane."
+            f"NOT MEASURABLE -- arm {NULL_ARM} (same-family replicates) was not run. "
+            "Without it, unique-finding counts and leave-one-out deltas cannot be "
+            "interpreted: identical reviewers generate both. Run the null arm before "
+            "promoting any lane."
+        )
+        return out
+    if council.empty:
+        out["verdict"] = (
+            f"NOT MEASURABLE -- arm {NULL_ARM} ran on {len(null_items)} item(s) but "
+            f"arm {FLOOR_ARM} did not run on any of them. The contrast needs one "
+            "floor-lens run per family against one floor-lens run per replicate, on "
+            "the same items. Arm D is not a substitute: its lens rotation gives each "
+            "family several runs, and unioning them inflates cross-family overlap."
         )
         return out
 
-    rep_col = "replicate" if "replicate" in triplicate.columns else "family"
-    out["same_family_jaccard"] = cluster_bootstrap(
-        triplicate, lambda d: mean_pair_jaccard(d, rep_col), B=B
+    out["cross_family_jaccard"] = cluster_bootstrap(
+        council, lambda d: mean_pair_jaccard(d, "family"), B=B
     )
 
-    def contrast(_):
-        return mean_pair_jaccard(council, "family") - mean_pair_jaccard(triplicate, rep_col)
+    # No fallback to `family`. Every arm-T row is the same family by construction,
+    # so keying on it gives one column, no pairs, and a silent nan -- which the
+    # verdict below then reads as "no evidence of diversification". That reports the
+    # absence of the control as a finding about the council. Refuse instead.
+    reps = sorted(set(triplicate["replicate"]) - {""})
+    if len(reps) < 2:
+        out["same_family_jaccard"] = None
+        out["contrast"] = None
+        out["verdict"] = (
+            f"NOT MEASURABLE -- arm T ran but carries {len(reps)} distinct replicate "
+            "id(s). Independent repeats of one family ARE the empirical null; without "
+            "distinct `replicate` values they collapse into one cell and their union "
+            "is scored as though a single reviewer had found everything. Check that "
+            "runs.jsonl sets `replicate` and that scoring preserved it."
+        )
+        return out
+
+    out["same_family_jaccard"] = cluster_bootstrap(
+        triplicate, lambda d: mean_pair_jaccard(d, "replicate"), B=B
+    )
 
     both = pd.concat([council, triplicate], ignore_index=True)
     out["contrast"] = cluster_bootstrap(both, lambda d: (
-        mean_pair_jaccard(d[d["arm"].isin(["C", "D"])], "family")
-        - mean_pair_jaccard(d[d["arm"] == "T"], rep_col)
+        mean_pair_jaccard(d[d["arm"] == FLOOR_ARM], "family")
+        - mean_pair_jaccard(d[d["arm"] == NULL_ARM], "replicate")
     ), B=B)
     hi = out["contrast"]["hi"]
     out["verdict"] = (
@@ -460,7 +523,12 @@ def main(argv: list[str] | None = None) -> int:
 
     n_before = len(defects)
     defects = apply_contamination_mask(defects, probe)
-    families = sorted(f for f in claims["family"].dropna().unique() if f)
+    # Per-family statistics run on the council arms ONLY. `families` derived from all
+    # claims would include the author (arm A), the refuter (arm R) and probe rows,
+    # none of which are first-pass critics, and would then be compared against each
+    # other as though they were.
+    council = defects[defects["arm"].isin(COUNCIL_ARMS)]
+    families = sorted(f for f in council["family"].unique() if f)
 
     result: dict = {
         "n_items": len(corpus),
@@ -472,6 +540,7 @@ def main(argv: list[str] | None = None) -> int:
             .drop_duplicates().shape[0]
         ),
         "families": families,
+        "council_arms": list(COUNCIL_ARMS),
         "contamination_cells_dropped": int(n_before - len(defects)),
         "bootstrap_B": args.boot,
     }
@@ -485,9 +554,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # 2. marginal contribution
     if len(families) >= 2:
-        loo = leave_one_out(defects, families, B=args.boot)
+        loo = leave_one_out(council, families, B=args.boot)
         result["leave_one_family_out"] = loo.to_dict("records")
-        uc = unique_contribution(defects, families)
+        uc = unique_contribution(council, families)
         result["unique_contribution"] = uc.to_dict("records")
         result["overlap"] = {
             "n_critical_defects": uc.attrs["n_critical_defects"],
@@ -497,10 +566,15 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     # 2b. is the diversity real, or three coin flips?
-    result["diversity_vs_null"] = diversity_vs_null(defects, families, B=args.boot)
+    result["diversity_vs_null"] = diversity_vs_null(defects, B=args.boot)
 
-    # 3. lens decomposition
-    result["lens_family_decomposition"] = lens_family_decomposition(defects, n_perm=args.perm)
+    # 3. lens decomposition -- the Latin square only. Arm C and arm T both run the
+    # floor lens, so including them adds a "floor" column that only some families
+    # occupy, and the family x lens interaction is then computed over a grid with
+    # structurally empty cells.
+    result["lens_family_decomposition"] = lens_family_decomposition(
+        defects[defects["arm"] == SQUARE_ARM], n_perm=args.perm
+    )
 
     # 4. cost of being wrong
     result["false_positive_burden"] = fp_burden(runs, claims, B=args.boot)

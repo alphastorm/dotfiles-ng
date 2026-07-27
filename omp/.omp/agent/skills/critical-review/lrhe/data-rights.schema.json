@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lrhe/data-rights.schema.json",
+  "title": "LRHE per-item provider data-rights decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_id",
+    "item_id",
+    "classification",
+    "input_owner",
+    "explicit_authorization",
+    "policy_id",
+    "terms_snapshot_id",
+    "provider_route",
+    "provider_authorized",
+    "provider_training_use",
+    "provider_retention",
+    "raw_output_capture_status",
+    "internal_evaluation_allowed",
+    "router_training_allowed",
+    "model_training_allowed",
+    "egress_decision",
+    "decision_reason",
+    "checked_at"
+  ],
+  "properties": {
+    "record_id": {"type": "string", "minLength": 1},
+    "item_id": {"type": "string", "minLength": 1},
+    "repository_id": {"type": ["string", "null"]},
+    "classification": {
+      "type": "string",
+      "enum": [
+        "public_corpus",
+        "carrythrough_owned_internal",
+        "customer_confidential",
+        "third_party_confidential",
+        "personal_data",
+        "secrets_or_credentials",
+        "export_or_regulatory_restricted",
+        "unknown"
+      ]
+    },
+    "input_owner": {"type": "string", "minLength": 1},
+    "rights_basis": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "explicit_authorization": {"type": "boolean"},
+    "authorized_provider_routes": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "policy_id": {"type": "string", "minLength": 1},
+    "terms_snapshot_id": {"type": "string", "minLength": 1},
+    "provider_route": {"type": "string", "minLength": 1},
+    "account_type": {"type": "string"},
+    "provider_authorized": {"type": "boolean"},
+    "customer_data_allowed": {"type": "boolean"},
+    "third_party_confidential_allowed": {"type": "boolean"},
+    "model_improvement_enabled": {"type": ["boolean", "null"]},
+    "provider_training_use": {
+      "type": "string",
+      "enum": [
+        "prohibited_by_provider_documentation",
+        "opt_out_required",
+        "explicit_opt_in_only",
+        "permitted",
+        "contract_pending",
+        "unknown"
+      ]
+    },
+    "provider_retention": {
+      "type": "string",
+      "enum": [
+        "zero_retention_by_provider_documentation",
+        "consumer_standard_not_zdr",
+        "limited_transient_processing",
+        "30_day_standard",
+        "contract_specific",
+        "unknown"
+      ]
+    },
+    "raw_output_capture_status": {
+      "type": "string",
+      "enum": [
+        "allowed",
+        "internal_evaluation_only",
+        "contract_pending",
+        "prohibited"
+      ]
+    },
+    "internal_evaluation_allowed": {"type": "boolean"},
+    "router_training_allowed": {"type": "boolean"},
+    "model_training_allowed": {"type": "boolean"},
+    "derived_aggregate_use_allowed": {"type": "boolean"},
+    "egress_decision": {
+      "type": "string",
+      "enum": ["allow", "deny", "manual_review"]
+    },
+    "decision_reason": {"type": "string", "minLength": 1},
+    "checked_at": {"type": "string", "format": "date-time"},
+    "checked_by": {"type": "string"},
+    "policy_digest": {"type": "string"},
+    "terms_snapshot_digest": {"type": "string"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"classification": {"const": "public_corpus"}}},
+      "then": {"properties": {"explicit_authorization": {"const": true}}}
+    },
+    {
+      "if": {
+        "properties": {
+          "classification": {
+            "enum": [
+              "customer_confidential",
+              "third_party_confidential",
+              "personal_data",
+              "secrets_or_credentials",
+              "export_or_regulatory_restricted",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "then": {"properties": {"egress_decision": {"enum": ["deny", "manual_review"]}}}
+    },
+    {
+      "if": {"properties": {"egress_decision": {"const": "allow"}}},
+      "then": {
+        "properties": {
+          "explicit_authorization": {"const": true},
+          "provider_authorized": {"const": true},
+          "internal_evaluation_allowed": {"const": true}
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+schemaVersion: 1
+
+policies:
+  - policyId: opencode-go-2026-07-27
+    providerRoute: opencode-go
+    accountType: paid_go_plus_zen
+    termsSnapshotId: opencode-terms-2026-03-06__go-docs-2026-07-27
+    providerTrainingUse: prohibited_by_provider_documentation
+    providerRetention: zero_retention_by_provider_documentation
+    gatewayContentRetention: not_retained_for_third_party_models_by_terms
+    outputOwnership: user_owned_by_terms
+    rawOutputCaptureStatus: contract_pending
+    internalEvaluationAllowed: true
+    routerTrainingAllowed: false
+    modelTrainingAllowed: false
+    publicCorpusAllowed: true
+    carrythroughOwnedInternalAllowed: true
+    customerDataAllowed: false
+    thirdPartyConfidentialAllowed: false
+    notes:
+      - Official API usage necessarily returns output programmatically, but Terms also contain a broad automated-output-extraction restriction. Preserve the ambiguity and seek written clarification.
+      - Terms restrict use for the benefit of third parties and use of output to develop competing AI models.
+
+  - policyId: claude-consumer-fable-2026-07-27
+    providerRoute: claude-code-subscription
+    accountType: consumer_max_or_pro
+    termsSnapshotId: anthropic-consumer-privacy-2026-03-16
+    providerTrainingUse: opt_out_required
+    providerRetention: consumer_standard_not_zdr
+    gatewayContentRetention: not_applicable
+    outputOwnership: verify_current_consumer_terms
+    rawOutputCaptureStatus: internal_evaluation_only
+    internalEvaluationAllowed: true
+    routerTrainingAllowed: false
+    modelTrainingAllowed: false
+    publicCorpusAllowed: true
+    carrythroughOwnedInternalAllowed: true
+    customerDataAllowed: false
+    thirdPartyConfidentialAllowed: false
+    requiredControls:
+      modelImprovementEnabled: false
+      feedbackSubmissionAllowed: false
+      noSessionPersistence: true
+      exactServedModelIdentityRequired: true

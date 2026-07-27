@@ -150,6 +150,10 @@ class Claim:
     arm: str
     family: str
     lens: str
+    # Part of the condition key, not decoration. Arm T is |council| independent
+    # runs of ONE family; drop this and all of them collapse into a single cell,
+    # which is precisely the empirical null the diversity claim rests on.
+    replicate: str
     context_config: str
     idx: int
     raw: str
@@ -412,6 +416,7 @@ def rollup_run(run: dict, item: dict, claims: list[Claim]) -> dict:
         "arm": run.get("arm", ""),
         "family": run.get("family", ""),
         "lens": run.get("lens", ""),
+        "replicate": run.get("replicate", ""),
         "context_config": run.get("context_config", ""),
         "model_selector_reported": run.get("model_selector_reported", ""),
         "model_selector_expected": run.get("model_selector_expected", ""),
@@ -529,6 +534,7 @@ def main(argv: list[str] | None = None) -> int:
             c = Claim(
                 run_id=run["run_id"], item_id=item["item_id"], arm=run.get("arm", ""),
                 family=run.get("family", ""), lens=run.get("lens", ""),
+                replicate=run.get("replicate", ""),
                 context_config=run.get("context_config", ""), idx=i, raw=raw,
                 **{k: v for k, v in parsed.items() if k in
                    {"parse_status", "rid", "severity", "confidence",

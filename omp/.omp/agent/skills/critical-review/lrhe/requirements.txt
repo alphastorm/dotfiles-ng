@@ -1,0 +1,27 @@
+# Direct dependencies only; pinned because the harness produces a preregistered
+# result set and a silent library upgrade is an unrecorded change to the analysis.
+# Recreate with:
+#
+#   uv venv --python 3.13 .venv
+#   VIRTUAL_ENV=.venv uv pip install -r requirements.txt
+#
+# `.venv/` is gitignored. Nothing here is needed to read the protocol or the
+# schemas -- only to run the harness.
+
+# scoring and analysis
+pandas==3.0.5
+numpy==2.5.1
+scipy==1.18.0
+
+# panels.yaml, provider-policies.yaml, qualification.yml
+pyyaml==6.0.3
+
+# hard-gate enforcement: a run that does not validate against run.schema.json
+# must fail rather than be scored on defaults
+jsonschema==4.26.0
+
+# build_corpus.py fetch --stratum S2 reads SWE-bench parquet
+pyarrow==25.0.0
+
+# harness invariant tests
+pytest==9.1.1
