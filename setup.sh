@@ -374,9 +374,15 @@ function stow_private_dotfiles() {
     return 0
   fi
 
-  stow -S -d "$private_dir" -t "$HOME" omp-private
+  # -R, not -S. A plain -S leaves stale links behind when a file moves between the
+  # public and private packages: the old package's link survives, the new package
+  # refuses to overwrite something it does not own, and stow then aborts the whole
+  # operation. That is exactly how five agent definitions ended up unstowable, three
+  # of them dangling and silently not loading. The public package above already
+  # unstows first; do the same here so a rerun repairs rather than jams.
+  stow -R -d "$private_dir" -t "$HOME" omp-private
   if [ "$OS" == "Darwin" ]; then
-    stow -S -d "$private_dir" -t "$HOME" zsh-private
+    stow -R -d "$private_dir" -t "$HOME" zsh-private
   fi
 }
 
