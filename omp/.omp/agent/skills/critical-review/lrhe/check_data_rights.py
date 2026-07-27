@@ -83,9 +83,18 @@ OBSERVED_CONTROLS = {
     "claude-code-subscription": {"modelImprovementEnabled": "model_improvement_enabled"},
 }
 
-# Restrictions that hold regardless of route while the contract questions in
-# notes/OPEN_QUESTIONS.md are open. These are enforced, not merely recorded.
-FORBIDDEN_USES = ("routerTrainingAllowed", "modelTrainingAllowed")
+# The one use that stays prohibited on every route regardless of what a policy
+# says. Authorization 2026-07-27 section 2 keeps training, fine-tuning, distilling
+# and behaviour-cloning a competing foundation or general coding model prohibited,
+# and OpenCode's Terms prohibit it independently -- so a registry edit must not be
+# able to grant it.
+#
+# routerTrainingAllowed is NOT here any more. A local, non-generative
+# model-selection router is materially different from distilling a coding model,
+# and the operator has authorised it for the OpenCode route. It is per-policy data
+# now: the Claude consumer route still carries false, and the guard records
+# whatever the policy says instead of overriding both.
+FORBIDDEN_USES = ("modelTrainingAllowed",)
 
 INDETERMINATE = {"contract_pending", "unknown"}
 
@@ -308,13 +317,13 @@ def evaluate(args: argparse.Namespace) -> int:
                         f"{control} is {observed!r} per {source}; policy demands {demanded!r}")
         resolved[control] = observed
 
-    # 4. Uses that stay forbidden while the contract questions are open. Unlike the
-    #    capture/retention descriptors these are enforced: a registry that flipped
-    #    one to true would be granting a permission nobody has been given.
+    # 4. The one use no policy may grant. Every other downstream restriction is
+    #    recorded on the emitted record and enforced where it is exercised.
     for field in FORBIDDEN_USES:
         if policy.get(field) is not False:
             return deny("forbidden_use_enabled",
-                        f"{field} must be false until written clarification is on file")
+                        f"{field} must be false; training a competing generative model "
+                        f"is prohibited by the Terms and unauthorised by the operator")
     if policy.get("internalEvaluationAllowed") is not True:
         return deny("internal_evaluation_not_allowed",
                     "internalEvaluationAllowed must be true to run an evaluation")

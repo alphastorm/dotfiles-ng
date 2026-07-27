@@ -309,6 +309,7 @@ def to_v2(run: dict, experiment_id: str = EXPERIMENT_ID, panel_id: str = PANEL_I
     """
     requested, served = run["model_selector_expected"], run["model_selector_reported"]
     digest = f"sha256:fixture-repo-{run['item_id']}"
+    data_rights = _rights(run["item_id"])
     return {
         "schema_version": 2,
         "experiment_id": experiment_id,
@@ -330,12 +331,12 @@ def to_v2(run: dict, experiment_id: str = EXPERIMENT_ID, panel_id: str = PANEL_I
             "account_type": "fixture",
             "requested_model": requested,
             "served_model": served,
-            # r-s5-grok-arch reports a different model than it asked for. That run
-            # exists to make the identity gate fire; do not "fix" it.
             "identity_verified": served == requested,
             "fallback_detected": served != requested,
             "omp_version": "fixture",
             "provider_client_version": "fixture",
+            "product_route": run.get("product_route", "opencode-go"),
+            "billing_route": run.get("billing_route", "unknown"),
         },
         "execution": {
             "started_at": "2026-07-27T00:00:00Z",
@@ -351,6 +352,12 @@ def to_v2(run: dict, experiment_id: str = EXPERIMENT_ID, panel_id: str = PANEL_I
             "allowance_after": None,
             "zen_balance_before": None,
             "zen_balance_after": None,
+            "raw_output_digest": run.get(
+                "raw_output_digest", f"sha256:fixture-raw-output-{run['item_id']}"
+            ),
+            "tool_trace_digest": run.get(
+                "tool_trace_digest", f"sha256:fixture-tool-trace-{run['item_id']}"
+            ),
         },
         "safety": {
             "telemetry_complete": True,
@@ -364,10 +371,14 @@ def to_v2(run: dict, experiment_id: str = EXPERIMENT_ID, panel_id: str = PANEL_I
             "timed_out": False,
             "provider_error": None,
         },
-        "data_rights": _rights(run["item_id"]),
+        "data_rights": data_rights,
         "summary": run.get("summary", ""),
-        "evidence": run["evidence"],
         "unresolved": run.get("unresolved", []),
+        "input_rights_record_id": data_rights["record_id"],
+        "clarification_snapshot_id": run.get("clarification_snapshot_id"),
+        "provider_documentation_snapshot_id": run.get("provider_documentation_snapshot_id"),
+        "router_dataset_example_ids": run.get("router_dataset_example_ids", []),
+        "evidence": run["evidence"],
     }
 
 

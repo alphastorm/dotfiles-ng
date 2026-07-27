@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""Freeze or offline-verify the provider terms named by LRHE policies.
+"""Freeze or verify non-replicable provider-terms snapshots.
 
-Fetch exit statuses are 0 for success, 3 for an HTTP/network failure, 4 for an
-offline verification failure, and 5 for a local I/O failure.  Argparse uses 2
-for usage errors.  Offline mode never constructs an opener or performs a URL
-request; ``--offline --self-test`` exercises that same verifier with a temporary
-local snapshot when a network-independent smoke test is needed.
+Fetch exits are:
+
+* 0 — success
+* 3 — fetch/network failure
+* 4 — offline verification failure
+* 5 — local I/O error
+
+`argparse` keeps 2 for usage issues.  `--offline --self-test` exercises the
+same verifier with a temporary local fixture and never performs any network
+request.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import socket
@@ -39,44 +45,44 @@ USER_AGENT = (
 MANIFEST_NAME = "MANIFEST.sha256"
 MANIFEST_LINE = re.compile(r"^([0-9a-fA-F]{64}) ([ *])(.+)$")
 
-# Component keys are stable filenames; snapshot IDs are the exact values a policy
-# in provider-policies.yaml names in `termsSnapshotId`, so a rights record can be
-# re-audited against the documents it was actually decided on. Keeping them
-# separate avoids pretending one web page is a complete contractual snapshot for a
-# route that rests on several documents.
-#
-# These URLs are the verified source list in HANDOFF.md section 12. Do not
-# "correct" them from memory: opencode.ai uses /legal/terms-of-service, and the
-# Anthropic consumer article lives on privacy.claude.com, not privacy.anthropic.com.
-# A snapshot of the wrong page is worse than no snapshot -- it looks like evidence.
+# Keep HTTP, HTTPS, and file sources explicit because a "file" override is only
+# for local, offline evidence.  Mixing override and URL fetch in one implicit
+# branch silently blurs reproducibility.
+VALID_COMPONENT_SOURCE_SCHEMES = ("file", "http", "https")
+
+# Component keys are stable snapshot IDs names; policy files map `termsSnapshotId`
+# to these groups and later check their snapshots by these exact names.
 TERMS_SOURCES: dict[str, str] = {
     "opencode-go-docs": "https://opencode.ai/docs/go/",
     "opencode-terms-of-service": "https://opencode.ai/legal/terms-of-service",
     "opencode-privacy-policy": "https://opencode.ai/legal/privacy-policy",
+    "opencode-zen-privacy": "https://opencode.ai/docs/zen/",
     "anthropic-consumer-model-training": (
         "https://privacy.claude.com/en/articles/10023580-is-my-data-used-for-model-training"
     ),
 }
 
-# Keys MUST match `termsSnapshotId` in provider-policies.yaml exactly.
+# Keys MUST match `termsSnapshotId` values in provider-policies.yaml exactly.
 SNAPSHOT_COMPONENTS: dict[str, tuple[str, ...]] = {
     "opencode-terms-2026-03-06__go-docs-2026-07-27": (
         "opencode-go-docs",
         "opencode-terms-of-service",
         "opencode-privacy-policy",
+        "opencode-zen-privacy",
     ),
     "anthropic-consumer-privacy-2026-03-16": (
         "anthropic-consumer-model-training",
     ),
 }
+DEFAULT_SNAPSHOT_IDS = tuple(sorted(SNAPSHOT_COMPONENTS))
 
 
 class SnapshotError(Exception):
-    """A fetch, freeze, or verification operation failed safely."""
+    """An immutable snapshot operation failed safely."""
 
 
 class RecordingRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Follow ordinary redirects while retaining and constraining every hop."""
+    """Follow supported redirects while enforcing safety invariants."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -94,6 +100,7 @@ class RecordingRedirectHandler(urllib.request.HTTPRedirectHandler):
         target = urllib.parse.urljoin(request.full_url, new_url)
         source_scheme = urllib.parse.urlparse(request.full_url).scheme.lower()
         target_scheme = urllib.parse.urlparse(target).scheme.lower()
+
         if target_scheme not in {"http", "https"}:
             raise SnapshotError(
                 f"redirect from {request.full_url} used unsupported scheme {target_scheme!r}"
@@ -113,13 +120,17 @@ class RecordingRedirectHandler(urllib.request.HTTPRedirectHandler):
                 "to_url": target,
             }
         )
-        return super().redirect_request(
-            request, file_pointer, code, message, headers, target
-        )
+        return super().redirect_request(request, file_pointer, code, message, headers, target)
 
 
-def _sha256_bytes(body: bytes) -> str:
-    return hashlib.sha256(body).hexdigest()
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _sha256_bytes(data: bytes) -> str:
+    digest = hashlib.sha256()
+    digest.update(data)
+    return digest.hexdigest()
 
 
 def _sha256_file(path: Path) -> str:
@@ -130,16 +141,108 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+def _metadata_bytes(metadata: dict[str, Any]) -> bytes:
+    # Keep pretty UTF-8 JSON for review: one-byte-per-visual-change diffs are the
+    # only durable audit trail for legal evidence.
+    return json.dumps(metadata, indent=2).encode("utf-8") + b"\n"
 
 
-def _fetch_component(component: str, timeout: float) -> dict[str, Any]:
-    url = TERMS_SOURCES[component]
+def _resolve_component_sources(raw_sources: list[str] | None) -> dict[str, str]:
+    # Keep source overrides explicit and opt-in.  Missing overrides use the
+    # canonical URL declared by TERMS_SOURCES.
+    component_sources = dict(TERMS_SOURCES)
+    if not raw_sources:
+        return component_sources
+
+    expected = ", ".join(sorted(component_sources))
+    for raw in raw_sources:
+        if "=" not in raw:
+            raise ValueError(f"--component-source value {raw!r} is not COMPONENT=SOURCE")
+        component, source = (part.strip() for part in raw.split("=", 1))
+        if not component:
+            raise ValueError("component name in --component-source cannot be empty")
+        if component not in component_sources:
+            raise ValueError(
+                f"unknown component {component!r} for --component-source; expected one of: {expected}"
+            )
+        if not source:
+            raise ValueError(
+                f"--component-source for {component!r} must include a source URL or path"
+            )
+        component_sources[component] = source
+    return component_sources
+
+
+def _fetch_component(
+    component: str,
+    timeout: float,
+    source: str,
+    canonical_url: str,
+) -> dict[str, Any]:
+    parsed = urllib.parse.urlparse(source)
+    scheme = (parsed.scheme or "file").lower()
+    if scheme not in VALID_COMPONENT_SOURCE_SCHEMES:
+        raise SnapshotError(
+            f"component {component} has unsupported source scheme {scheme!r} in {source!r}; "
+            f"expected one of {', '.join(VALID_COMPONENT_SOURCE_SCHEMES)}"
+        )
+
+    metadata: dict[str, Any] = {
+        "url": canonical_url,
+        "fetched_at": _utc_now(),
+        "http_status": 200,
+    }
+    if source != canonical_url:
+        metadata["source"] = source
+
+    if scheme == "file":
+        if parsed.netloc and parsed.netloc not in {"", "localhost"}:
+            raise SnapshotError(
+                f"{source} for {component} uses unsupported file URL host {parsed.netloc!r}"
+            )
+        path = Path(parsed.path or source).expanduser()
+        if not path.is_absolute():
+            path = Path(source).expanduser()
+
+        if not path.exists():
+            raise SnapshotError(f"{source} for {component} does not exist")
+        if not path.is_file():
+            raise SnapshotError(f"{source} for {component} is not a regular file")
+        if path.is_symlink():
+            raise SnapshotError(
+                f"{source} for {component} is a symlink, which bypasses offline reproducibility"
+            )
+
+        try:
+            body = path.read_bytes()
+        except OSError as exc:
+            raise SnapshotError(
+                f"{source} for {component} could not be read ({exc})"
+            ) from exc
+
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise SnapshotError(
+                f"{source} for {component} exceeded the {MAX_RESPONSE_BYTES}-byte snapshot limit"
+            )
+
+        metadata.update(
+            {
+                "final_url": canonical_url,
+                "sha256": _sha256_bytes(body),
+                "byte_length": len(body),
+                "content_type": mimetypes.guess_type(path.as_posix())[0] or "text/plain",
+                "redirects": [],
+                "user_agent": USER_AGENT,
+            }
+        )
+        return {"component": component, "body": body, "metadata": metadata}
+
+    # Keep HTTP/HTTPS in the existing deterministic fetch path: opener recreated
+    # per run so each invocation is independently bounded by redirect and timeout.
     redirects = RecordingRedirectHandler()
     opener = urllib.request.build_opener(redirects)
     request = urllib.request.Request(
-        url,
+        source,
         headers={
             "User-Agent": USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.1",
@@ -153,55 +256,115 @@ def _fetch_component(component: str, timeout: float) -> dict[str, Any]:
             final_url = response.geturl()
             if status != 200:
                 raise SnapshotError(
-                    f"{url} returned HTTP {status}; no snapshot was written"
+                    f"{source} returned HTTP {status}; no snapshot was written"
                 )
             body = response.read(MAX_RESPONSE_BYTES + 1)
             if len(body) > MAX_RESPONSE_BYTES:
                 raise SnapshotError(
-                    f"{url} exceeded the {MAX_RESPONSE_BYTES}-byte snapshot limit"
+                    f"{source} exceeded the {MAX_RESPONSE_BYTES}-byte snapshot limit"
                 )
             content_type = response.headers.get("Content-Type")
     except urllib.error.HTTPError as exc:
         raise SnapshotError(
-            f"{url} returned HTTP {exc.code} ({exc.reason}); no snapshot was written"
+            f"{source} returned HTTP {exc.code} ({exc.reason}); no snapshot was written"
         ) from exc
-    except SnapshotError:
-        raise
     except (socket.timeout, TimeoutError) as exc:
         raise SnapshotError(
-            f"{url} timed out after {timeout:g} seconds; no snapshot was written"
+            f"{source} timed out after {timeout:g} seconds; no snapshot was written"
         ) from exc
     except urllib.error.URLError as exc:
         reason = exc.reason
         if isinstance(reason, (socket.timeout, TimeoutError)):
             raise SnapshotError(
-                f"{url} timed out after {timeout:g} seconds; no snapshot was written"
+                f"{source} timed out after {timeout:g} seconds; no snapshot was written"
             ) from exc
         raise SnapshotError(
-            f"{url} could not be fetched ({reason}); no snapshot was written"
+            f"{source} could not be fetched ({reason}); no snapshot was written"
         ) from exc
     except OSError as exc:
-        raise SnapshotError(
-            f"{url} could not be fetched ({exc}); no snapshot was written"
-        ) from exc
+        raise SnapshotError(f"{source} could not be fetched ({exc}); no snapshot was written") from exc
 
-    sha256 = _sha256_bytes(body)
-    metadata = {
-        "url": url,
-        "final_url": final_url,
-        "sha256": sha256,
-        "byte_length": len(body),
-        "fetched_at": _utc_now(),
-        "http_status": status,
-        "content_type": content_type,
-        "redirects": redirects.redirects,
-        "user_agent": USER_AGENT,
-    }
-    return {
-        "component": component,
-        "body": body,
-        "metadata": metadata,
-    }
+    metadata.update(
+        {
+            "final_url": final_url,
+            "sha256": _sha256_bytes(body),
+            "byte_length": len(body),
+            "content_type": content_type,
+            "redirects": redirects.redirects,
+            "user_agent": USER_AGENT,
+        }
+    )
+    return {"component": component, "body": body, "metadata": metadata}
+
+
+def _destination_paths(
+    terms_root: Path,
+    snapshot_id: str,
+    component: str,
+) -> tuple[Path, Path]:
+    snapshot_dir = terms_root / snapshot_id
+    return snapshot_dir / f"{component}.body", snapshot_dir / f"{component}.metadata.json"
+
+
+def _preflight_freeze(
+    terms_root: Path,
+    fetched: list[tuple[str, dict[str, Any]]],
+) -> set[tuple[str, str]]:
+    # Preflight allows reusing an existing body+metadata pair only when the pair
+    # is unchanged and self-consistent.  Any partial or altered file set blocks the
+    # freeze so we do not silently write an apparently complete tree over stale
+    # evidence.
+    reused: set[tuple[str, str]] = set()
+    for snapshot_id, result in fetched:
+        component = result["component"]
+        body_path, metadata_path = _destination_paths(terms_root, snapshot_id, component)
+
+        body_exists = body_path.exists()
+        metadata_exists = metadata_path.exists()
+        if body_exists != metadata_exists:
+            raise SnapshotError(
+                f"refusing partial existing snapshot for {snapshot_id}/{component}"
+            )
+        if not body_exists:
+            continue
+
+        if body_path.is_symlink() or metadata_path.is_symlink():
+            raise SnapshotError(
+                f"refusing symlinked existing snapshot for {snapshot_id}/{component}"
+            )
+
+        existing_sha256 = _sha256_file(body_path)
+        fetched_sha256 = result["metadata"]["sha256"]
+        if existing_sha256 != fetched_sha256:
+            raise SnapshotError(
+                f"snapshot {snapshot_id}/{component} is immutable: existing SHA-256 "
+                f"{existing_sha256} differs from fetched {fetched_sha256}"
+            )
+
+        try:
+            existing_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise SnapshotError(
+                f"cannot verify existing sidecar {metadata_path}: {exc}"
+            ) from exc
+
+        if (
+            not isinstance(existing_metadata, dict)
+            or existing_metadata.get("sha256") != existing_sha256
+            or existing_metadata.get("url") != TERMS_SOURCES[component]
+        ):
+            raise SnapshotError(
+                f"existing sidecar {metadata_path} does not describe its frozen body"
+            )
+
+        if existing_metadata.get("http_status") != 200:
+            raise SnapshotError(
+                f"existing sidecar {metadata_path} records non-200 status"
+            )
+
+        reused.add((snapshot_id, component))
+
+    return reused
 
 
 def _atomic_write(path: Path, content: bytes) -> None:
@@ -209,7 +372,10 @@ def _atomic_write(path: Path, content: bytes) -> None:
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="wb", dir=path.parent, prefix=f".{path.name}.", delete=False
+            mode="wb",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
         ) as handle:
             temporary = Path(handle.name)
             handle.write(content)
@@ -225,84 +391,27 @@ def _atomic_write(path: Path, content: bytes) -> None:
                 pass
 
 
-def _destination_paths(
-    terms_root: Path, snapshot_id: str, component: str
-) -> tuple[Path, Path]:
-    directory = terms_root / snapshot_id
-    return directory / f"{component}.body", directory / f"{component}.metadata.json"
-
-
-def _metadata_bytes(metadata: dict[str, Any]) -> bytes:
-    return (
-        json.dumps(metadata, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    ).encode("utf-8")
-
-
-def _preflight_freeze(
-    terms_root: Path,
-    fetched: list[tuple[str, dict[str, Any]]],
-) -> set[tuple[str, str]]:
-    reused: set[tuple[str, str]] = set()
-    for snapshot_id, result in fetched:
-        component = result["component"]
-        body_path, metadata_path = _destination_paths(
-            terms_root, snapshot_id, component
-        )
-        body_exists = body_path.exists()
-        metadata_exists = metadata_path.exists()
-        if body_exists != metadata_exists:
-            raise SnapshotError(
-                f"refusing partial existing snapshot for {snapshot_id}/{component}"
-            )
-        if not body_exists:
-            continue
-        if body_path.is_symlink() or metadata_path.is_symlink():
-            raise SnapshotError(
-                f"refusing symlinked existing snapshot for {snapshot_id}/{component}"
-            )
-        existing_sha256 = _sha256_file(body_path)
-        fetched_sha256 = result["metadata"]["sha256"]
-        if existing_sha256 != fetched_sha256:
-            raise SnapshotError(
-                f"snapshot {snapshot_id}/{component} is immutable: existing SHA-256 "
-                f"{existing_sha256} differs from fetched {fetched_sha256}"
-            )
-        try:
-            existing_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise SnapshotError(
-                f"cannot verify existing sidecar {metadata_path}: {exc}"
-            ) from exc
-        if (
-            not isinstance(existing_metadata, dict)
-            or existing_metadata.get("sha256") != existing_sha256
-            or existing_metadata.get("url") != TERMS_SOURCES[component]
-        ):
-            raise SnapshotError(
-                f"existing sidecar {metadata_path} does not describe its frozen body"
-            )
-        reused.add((snapshot_id, component))
-    return reused
-
-
 def _manifest_files(terms_root: Path) -> list[Path]:
     files: list[Path] = []
     for path in terms_root.rglob("*"):
-        if path == terms_root / MANIFEST_NAME or not path.is_file():
+        if path == terms_root / MANIFEST_NAME:
             continue
         if path.is_symlink():
             raise SnapshotError(f"refusing symlink in snapshot tree: {path}")
-        files.append(path)
+        if path.is_file():
+            files.append(path)
     return sorted(files, key=lambda path: path.relative_to(terms_root).as_posix())
 
 
 def _write_manifest(terms_root: Path) -> int:
-    lines = []
+    lines: list[str] = []
     for path in _manifest_files(terms_root):
         relative = path.relative_to(terms_root).as_posix()
         lines.append(f"{_sha256_file(path)}  {relative}\n")
+
     if not lines:
         raise SnapshotError("refusing to write an empty terms manifest")
+
     _atomic_write(terms_root / MANIFEST_NAME, "".join(lines).encode("utf-8"))
     return len(lines)
 
@@ -311,24 +420,33 @@ def freeze_snapshots(
     terms_root: Path,
     snapshot_ids: tuple[str, ...],
     timeout: float,
+    component_sources: dict[str, str],
 ) -> int:
-    # Fetch every source before writing any result.  A timeout or 404 therefore
-    # cannot leave a plausible-looking manifest for only part of a policy.
+    # Fetch every requested component before mutating anything.  A transient DNS
+    # or timeout is not allowed to leave a partially refreshed manifest behind.
     fetched: list[tuple[str, dict[str, Any]]] = []
     for snapshot_id in snapshot_ids:
         for component in SNAPSHOT_COMPONENTS[snapshot_id]:
-            result = _fetch_component(component, timeout)
+            result = _fetch_component(
+                component,
+                timeout,
+                component_sources[component],
+                TERMS_SOURCES[component],
+            )
             fetched.append((snapshot_id, result))
 
     reused = _preflight_freeze(terms_root, fetched)
     for snapshot_id, result in fetched:
         component = result["component"]
         body_path, metadata_path = _destination_paths(
-            terms_root, snapshot_id, component
+            terms_root,
+            snapshot_id,
+            component,
         )
         if (snapshot_id, component) not in reused:
             _atomic_write(body_path, result["body"])
             _atomic_write(metadata_path, _metadata_bytes(result["metadata"]))
+
         metadata = result["metadata"]
         print(
             json.dumps(
@@ -344,6 +462,7 @@ def freeze_snapshots(
                 separators=(",", ":"),
             )
         )
+
     count = _write_manifest(terms_root)
     print(f"wrote {terms_root / MANIFEST_NAME} with {count} entries")
     return count
@@ -355,6 +474,7 @@ def _parse_manifest(terms_root: Path) -> dict[PurePosixPath, str]:
         lines = manifest.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError) as exc:
         raise SnapshotError(f"cannot read manifest {manifest}: {exc}") from exc
+
     if not lines:
         raise SnapshotError(f"manifest {manifest} is empty")
 
@@ -365,11 +485,13 @@ def _parse_manifest(terms_root: Path) -> dict[PurePosixPath, str]:
             raise SnapshotError(
                 f"{manifest}:{line_number}: not shasum -a 256 manifest syntax"
             )
+
         expected, marker, raw_name = match.groups()
         if marker != " ":
             raise SnapshotError(
                 f"{manifest}:{line_number}: binary-mode '*' marker is not canonical"
             )
+
         relative = PurePosixPath(raw_name)
         if relative.is_absolute() or not relative.parts or ".." in relative.parts:
             raise SnapshotError(
@@ -378,10 +500,10 @@ def _parse_manifest(terms_root: Path) -> dict[PurePosixPath, str]:
         if relative == PurePosixPath(MANIFEST_NAME):
             raise SnapshotError(f"{manifest}:{line_number}: manifest cannot hash itself")
         if relative in entries:
-            raise SnapshotError(
-                f"{manifest}:{line_number}: duplicate path {raw_name!r}"
-            )
+            raise SnapshotError(f"{manifest}:{line_number}: duplicate path {raw_name!r}")
+
         entries[relative] = expected.lower()
+
     return entries
 
 
@@ -392,69 +514,77 @@ def _validate_sidecars(
 ) -> None:
     entry_names = {path.as_posix() for path in entries}
     body_names = {name for name in entry_names if name.endswith(".body")}
-    metadata_names = {
-        name for name in entry_names if name.endswith(".metadata.json")
-    }
-    expected_metadata = {
-        f"{name[:-len('.body')]}.metadata.json" for name in body_names
-    }
-    expected_bodies = {
-        f"{name[:-len('.metadata.json')]}.body" for name in metadata_names
-    }
+    metadata_names = {name for name in entry_names if name.endswith(".metadata.json")}
+
+    expected_metadata = {name[:-len(".body")] + ".metadata.json" for name in body_names}
+    expected_bodies = {name[:-len(".metadata.json")] + ".body" for name in metadata_names}
     if metadata_names != expected_metadata or body_names != expected_bodies:
         raise SnapshotError("every frozen body must have exactly one manifested sidecar")
 
     for raw_name in sorted(metadata_names):
         relative = PurePosixPath(raw_name)
-        path = terms_root.joinpath(*relative.parts)
+        sidecar = terms_root.joinpath(*relative.parts)
         try:
-            metadata = json.loads(path.read_text(encoding="utf-8"))
+            metadata = json.loads(sidecar.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise SnapshotError(f"cannot read sidecar {path}: {exc}") from exc
+            raise SnapshotError(f"cannot read sidecar {sidecar}: {exc}") from exc
+
         if not isinstance(metadata, dict):
-            raise SnapshotError(f"sidecar {path} must contain a JSON object")
+            raise SnapshotError(f"sidecar {sidecar} must contain a JSON object")
+
         required = {
             "url",
             "sha256",
             "byte_length",
             "fetched_at",
             "http_status",
+            "final_url",
+            "content_type",
+            "redirects",
+            "user_agent",
         }
         missing = sorted(required - metadata.keys())
         if missing:
-            raise SnapshotError(
-                f"sidecar {path} is missing: {', '.join(missing)}"
-            )
+            raise SnapshotError(f"sidecar {sidecar} is missing: {', '.join(missing)}")
+
         if metadata["http_status"] != 200:
-            raise SnapshotError(f"sidecar {path} records non-200 HTTP status")
+            raise SnapshotError(f"sidecar {sidecar} records non-200 HTTP status")
+
         if not isinstance(metadata["byte_length"], int) or metadata["byte_length"] < 0:
-            raise SnapshotError(f"sidecar {path} has invalid byte_length")
+            raise SnapshotError(f"sidecar {sidecar} has invalid byte_length")
+
         if not isinstance(metadata["fetched_at"], str):
-            raise SnapshotError(f"sidecar {path} has invalid fetched_at")
+            raise SnapshotError(f"sidecar {sidecar} has invalid fetched_at")
+
         try:
             datetime.fromisoformat(metadata["fetched_at"].replace("Z", "+00:00"))
         except ValueError as exc:
-            raise SnapshotError(f"sidecar {path} has invalid fetched_at") from exc
+            raise SnapshotError(f"sidecar {sidecar} has invalid fetched_at") from exc
 
-        body_name = f"{raw_name[:-len('.metadata.json')]}.body"
+        body_name = raw_name[:-len(".metadata.json")] + ".body"
         body_path = terms_root.joinpath(*PurePosixPath(body_name).parts)
         body_sha256 = _sha256_file(body_path)
         if metadata["sha256"] != body_sha256:
-            raise SnapshotError(f"sidecar {path} SHA-256 does not match {body_path}")
+            raise SnapshotError(f"sidecar {sidecar} SHA-256 does not match {body_path}")
         if metadata["byte_length"] != body_path.stat().st_size:
-            raise SnapshotError(f"sidecar {path} byte_length does not match {body_path}")
+            raise SnapshotError(f"sidecar {sidecar} byte_length does not match {body_path}")
+
+        if metadata["url"] not in TERMS_SOURCES.values():
+            raise SnapshotError(
+                f"sidecar {sidecar} uses unknown canonical url {metadata['url']!r}"
+            )
 
     for snapshot_id in expected_snapshot_ids:
         for component in SNAPSHOT_COMPONENTS[snapshot_id]:
             body_name = f"{snapshot_id}/{component}.body"
-            sidecar_name = f"{snapshot_id}/{component}.metadata.json"
-            if body_name not in entry_names or sidecar_name not in entry_names:
+            metadata_name = f"{snapshot_id}/{component}.metadata.json"
+            if body_name not in entry_names or metadata_name not in entry_names:
                 raise SnapshotError(
                     f"snapshot {snapshot_id} is missing component {component}"
                 )
             sidecar_path = terms_root / snapshot_id / f"{component}.metadata.json"
-            metadata = json.loads(sidecar_path.read_text(encoding="utf-8"))
-            if metadata.get("url") != TERMS_SOURCES[component]:
+            component_metadata = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            if component_metadata.get("url") != TERMS_SOURCES[component]:
                 raise SnapshotError(
                     f"sidecar {sidecar_path} URL does not match component {component}"
                 )
@@ -465,12 +595,14 @@ def verify_snapshots(
     expected_snapshot_ids: tuple[str, ...],
 ) -> int:
     entries = _parse_manifest(terms_root)
+
     for relative, expected in entries.items():
         path = terms_root.joinpath(*relative.parts)
         if path.is_symlink():
             raise SnapshotError(f"manifest path is a symlink: {path}")
         if not path.is_file():
             raise SnapshotError(f"manifest path is missing: {path}")
+
         actual = _sha256_file(path)
         if actual != expected:
             raise SnapshotError(
@@ -493,30 +625,42 @@ def verify_snapshots(
 
 
 def _run_offline_self_test() -> int:
-    # The fixture is intentionally built locally and then passed through the
-    # production verifier.  No alternate permissive test-only verification path
-    # can therefore conceal a broken or network-dependent --offline mode.
+    # Self-test builds a local tree and verifies it by the production verifier.
+    # This catches verifier drift without any network dependency.
+    fixtures = {
+        "opencode-go-docs": b"LRHE offline terms verification fixture for opencode-go-docs\n",
+        "opencode-terms-of-service": (
+            b"LRHE offline terms verification fixture for opencode-terms-of-service\n"
+        ),
+        "opencode-privacy-policy": b"LRHE offline terms verification fixture for privacy-policy\n",
+        "opencode-zen-privacy": b"LRHE offline terms verification fixture for zen-privacy\n",
+    }
+
     with tempfile.TemporaryDirectory(prefix="lrhe-terms-offline-") as temporary:
-        root = Path(temporary) / "terms"
-        snapshot_id = "offline-self-test"
-        component = "local-fixture"
-        body = b"LRHE offline terms verification fixture\n"
-        body_path, metadata_path = _destination_paths(root, snapshot_id, component)
-        metadata = {
-            "url": "https://example.invalid/offline-fixture",
-            "final_url": "https://example.invalid/offline-fixture",
-            "sha256": _sha256_bytes(body),
-            "byte_length": len(body),
-            "fetched_at": "2026-07-27T00:00:00Z",
-            "http_status": 200,
-            "content_type": "text/plain",
-            "redirects": [],
-            "user_agent": USER_AGENT,
-        }
-        _atomic_write(body_path, body)
-        _atomic_write(metadata_path, _metadata_bytes(metadata))
-        _write_manifest(root)
-        count = verify_snapshots(root, ())
+        terms_root = Path(temporary) / "terms"
+        snapshot_id = "opencode-terms-2026-03-06__go-docs-2026-07-27"
+        for component, body in fixtures.items():
+            body_path, metadata_path = _destination_paths(
+                terms_root,
+                snapshot_id,
+                component,
+            )
+            metadata = {
+                "url": TERMS_SOURCES[component],
+                "final_url": TERMS_SOURCES[component],
+                "sha256": _sha256_bytes(body),
+                "byte_length": len(body),
+                "fetched_at": "2026-07-27T00:00:00Z",
+                "http_status": 200,
+                "content_type": "text/plain",
+                "redirects": [],
+                "user_agent": USER_AGENT,
+            }
+            _atomic_write(body_path, body)
+            _atomic_write(metadata_path, _metadata_bytes(metadata))
+
+        _write_manifest(terms_root)
+        count = verify_snapshots(terms_root, (snapshot_id,))
         print(f"offline self-test verified {count} manifest entries")
     return EXIT_OK
 
@@ -536,7 +680,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Fetch immutable provider-terms snapshots, or verify existing "
-            "snapshots without making a network call."
+            "snapshots without using the network."
         ),
         epilog=(
             "fetch exit codes: 0 success; 3 HTTP/network failure; "
@@ -551,25 +695,31 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--self-test",
         action="store_true",
-        help="with --offline, verify a locally constructed temporary snapshot",
+        help="with --offline, verify a temporary local snapshot fixture",
     )
     parser.add_argument(
         "--terms-dir",
         type=Path,
-        # Snapshots are accumulated evidence, not replicable output -- a later fetch
-        # returns a different document -- so they live beside the corpus in the
-        # private package, not in this public one.
-        #
-        # Addressed absolutely on purpose. This directory is a stow symlink, so `..`
-        # from inside it resolves to the dotfiles parent, not the stowed one.
+        # Snapshots are evidence records (potentially changed by upstream policy
+        # updates), so keep them in the private corpus location where the canonical
+        # evidence already lives.
         default=Path.home() / ".omp/agent/skills/critical-review/lrhe-data/terms",
         help="snapshot root (default: %(default)s)",
     )
     parser.add_argument(
         "--snapshot-id",
         action="append",
-        choices=tuple(sorted(SNAPSHOT_COMPONENTS)),
+        choices=DEFAULT_SNAPSHOT_IDS,
         help="snapshot to fetch or require; repeatable (default: all)",
+    )
+    parser.add_argument(
+        "--component-source",
+        action="append",
+        metavar="COMPONENT=SOURCE",
+        help=(
+            "override a component fetch source; repeatable, for example "
+            "opencode-go-docs=file:/tmp/opencode-go-docs.html"
+        ),
     )
     parser.add_argument(
         "--timeout",
@@ -583,8 +733,10 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+
     if args.self_test and not args.offline:
         parser.error("--self-test requires --offline")
+
     if args.self_test:
         try:
             return _run_offline_self_test()
@@ -592,20 +744,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"offline self-test failed: {exc}", file=sys.stderr)
             return EXIT_VERIFY_ERROR
 
-    snapshot_ids = tuple(args.snapshot_id or sorted(SNAPSHOT_COMPONENTS))
+    snapshot_ids = tuple(args.snapshot_id or DEFAULT_SNAPSHOT_IDS)
+
     if args.offline:
         try:
             count = verify_snapshots(args.terms_dir, snapshot_ids)
         except (OSError, UnicodeError, json.JSONDecodeError, SnapshotError) as exc:
             print(f"offline verification failed: {exc}", file=sys.stderr)
             return EXIT_VERIFY_ERROR
-        print(
-            f"offline verification passed: {count} manifest entries in {args.terms_dir}"
-        )
+
+        print(f"offline verification passed: {count} manifest entries in {args.terms_dir}")
         return EXIT_OK
 
     try:
-        freeze_snapshots(args.terms_dir, snapshot_ids, args.timeout)
+        component_sources = _resolve_component_sources(args.component_source)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    try:
+        freeze_snapshots(args.terms_dir, snapshot_ids, args.timeout, component_sources)
     except SnapshotError as exc:
         print(f"snapshot fetch failed: {exc}", file=sys.stderr)
         return EXIT_FETCH_ERROR
@@ -615,6 +772,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("snapshot fetch interrupted; no complete snapshot was certified", file=sys.stderr)
         return EXIT_FETCH_ERROR
+
     return EXIT_OK
 
 

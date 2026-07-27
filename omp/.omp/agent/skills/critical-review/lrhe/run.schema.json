@@ -23,7 +23,11 @@
     "execution",
     "safety",
     "data_rights",
-    "evidence"
+    "evidence",
+    "input_rights_record_id",
+    "clarification_snapshot_id",
+    "provider_documentation_snapshot_id",
+    "router_dataset_example_ids"
   ],
   "properties": {
     "schema_version": {"type": "integer", "const": 2},
@@ -44,7 +48,7 @@
     "role": {"type": "string", "enum": ["author", "critic", "refuter", "judge"],
       "description": "derivable from arm via panels.yaml; recorded when the emitter knows it. The council is asymmetric, and conflating roles is what makes six families look like six votes when it is four first-pass critics, one conditional refuter and one accountable integrator"},
     "replicate": {"type": "string",
-      "description": "set1..setN for arm D, rep1..repN for arm T. Part of the condition key: drop it and N independent runs of one family collapse into a single cell, which deletes the empirical null while still printing a number"},
+      "description": "set1..setN for arm D, rep1..repN for arm T. Part of the condition key: drop it and N independent runs of one family collapse into a single cell, which deletes the empirical null while still printing the number"},
     "context_config": {"type": "string", "enum": ["minimal", "expanded", "retrieval"],
       "description": "'retrieval' = minimal packet plus read/grep/glob/lsp/ast_grep"},
 
@@ -66,7 +70,9 @@
         "identity_verified",
         "fallback_detected",
         "omp_version",
-        "provider_client_version"
+        "provider_client_version",
+        "product_route",
+        "billing_route"
       ],
       "properties": {
         "provider_route": {"type": "string", "minLength": 1},
@@ -78,7 +84,13 @@
         "identity_verified": {"type": "boolean"},
         "fallback_detected": {"type": "boolean"},
         "omp_version": {"type": "string", "minLength": 1},
-        "provider_client_version": {"type": "string", "minLength": 1}
+        "provider_client_version": {"type": "string", "minLength": 1},
+        "product_route": {"type": "string", "enum": ["opencode-go", "opencode-zen"]},
+        "billing_route": {
+          "type": "string",
+          "enum": ["go_allowance", "zen_overflow", "direct_zen", "unknown"],
+          "description": "who is billed this request. `unknown` means unavailable and is legal; absence is illegal"
+        }
       }
     },
 
@@ -98,7 +110,9 @@
         "allowance_before",
         "allowance_after",
         "zen_balance_before",
-        "zen_balance_after"
+        "zen_balance_after",
+        "raw_output_digest",
+        "tool_trace_digest"
       ],
       "properties": {
         "started_at": {"type": "string", "format": "date-time"},
@@ -115,7 +129,11 @@
         "allowance_before": {"type": ["number", "string", "null"]},
         "allowance_after": {"type": ["number", "string", "null"]},
         "zen_balance_before": {"type": ["number", "null"], "minimum": 0},
-        "zen_balance_after": {"type": ["number", "null"], "minimum": 0}
+        "zen_balance_after": {"type": ["number", "null"], "minimum": 0},
+        "raw_output_digest": {"type": ["string", "null"], "minLength": 1,
+          "description": "sha256 digest of the provider's raw output artifact"},
+        "tool_trace_digest": {"type": ["string", "null"], "minLength": 1,
+          "description": "sha256 digest of captured tool trace provenance"}
       }
     },
 
@@ -161,7 +179,19 @@
       "items": {"type": "string"},
       "description": "raw contract strings: R<ID>|P<0-3>|conf=..|claim=..|evidence=..|impact=..|verify=.. -- an empty array is a legitimate result, and on an S5 null item it is the correct one"
     },
-    "unresolved": {"type": "array", "items": {"type": "string"}}
+    "unresolved": {"type": "array", "items": {"type": "string"}},
+
+    "input_rights_record_id": {"type": "string", "minLength": 1,
+      "description": "foreign key to data_rights.record_id for the decision used by this run"},
+    "clarification_snapshot_id": {"type": ["string", "null"], "minLength": 1,
+      "description": "snapshot id for provider documentation clarifications that arrive after terms snapshotting"},
+    "provider_documentation_snapshot_id": {"type": ["string", "null"], "minLength": 1,
+      "description": "snapshot id of provider documentation for the run-level claims in this run"},
+    "router_dataset_example_ids": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "row ids in the router-ready dataset derived from this run"
+    }
   },
 
   "allOf": [

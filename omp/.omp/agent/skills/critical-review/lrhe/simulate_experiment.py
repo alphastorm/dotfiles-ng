@@ -231,6 +231,13 @@ def simulate(
                     "cost_usd": round(float(rng.uniform(.02, .25)), 4),
                     "quota_pool": f"{fam}-pool",
                     "evidence": evidence,
+                    "product_route": "opencode-go",
+                    "billing_route": "unknown",
+                    "raw_output_digest": f"sha256:sim-raw-output-{run_id}",
+                    "tool_trace_digest": f"sha256:sim-tool-trace-{run_id}",
+                    "clarification_snapshot_id": None,
+                    "provider_documentation_snapshot_id": None,
+                    "router_dataset_example_ids": [],
                 }, experiment_id=EXPERIMENT_ID, panel_id=PANEL_ID))
 
             # Arm C: one floor-lens run per family. This is the like-for-like partner

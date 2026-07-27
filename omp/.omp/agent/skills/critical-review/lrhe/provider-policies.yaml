@@ -10,17 +10,45 @@ policies:
     providerRetention: zero_retention_by_provider_documentation
     gatewayContentRetention: not_retained_for_third_party_models_by_terms
     outputOwnership: user_owned_by_terms
-    rawOutputCaptureStatus: contract_pending
+    rawOutputCaptureStatus: allowed
     internalEvaluationAllowed: true
-    routerTrainingAllowed: false
+    routerTrainingAllowed: true
+    routerUseAllowed: true
     modelTrainingAllowed: false
     publicCorpusAllowed: true
     carrythroughOwnedInternalAllowed: true
     customerDataAllowed: false
     thirdPartyConfidentialAllowed: false
+    termsClearanceStatus: operator_risk_accepted_pending_written_clarification
+    legalReviewStatus: deferred_until_entity_or_third_party_use
+    termsClarificationStatus: pending_nonblocking
+    operatorAuthorization:
+      principal: Sunil Srivatsa
+      capacity: individual
+      effectiveDate: "2026-07-27"
+      scope: personal_internal_evaluation_review_and_routing
+      recordPath: authorizations/2026-07-27-operator-risk-acceptance.md
+      recordSha256: 7a817ffba857f699d59f09b090188a680c9d254410bb3c428fb338bc5fb27055
     notes:
-      - Official API usage necessarily returns output programmatically, but Terms also contain a broad automated-output-extraction restriction. Preserve the ambiguity and seek written clarification.
-      - Terms restrict use for the benefit of third parties and use of output to develop competing AI models.
+      - >-
+        The permissive values above rest on an operator risk acceptance dated
+        2026-07-27, not on a vendor clearance. No reply from OpenCode has been
+        received. Do not restate this as "OpenCode confirmed" anywhere.
+      - >-
+        Official API usage necessarily returns output programmatically, while the
+        Terms separately restrict automated output extraction. That tension is
+        unresolved and deliberately preserved in the record rather than argued away.
+      - >-
+        routerTrainingAllowed is true only for a local, non-generative
+        model-selection router, ranker or deduplicator. modelTrainingAllowed stays
+        false and covers fine-tuning, distillation and behaviour cloning of any
+        generative or general coding model, which the Terms prohibit and the
+        operator has not authorised.
+      - >-
+        Go documentation claims zero retention and no training by serving
+        providers, while the Terms say third-party provider policies apply and are
+        outside OpenCode's control. Record the documentation snapshot and the
+        served model per run rather than treating either statement as settled.
 
   - policyId: claude-consumer-fable-2026-07-27
     providerRoute: claude-code-subscription

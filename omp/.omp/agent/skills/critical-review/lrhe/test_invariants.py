@@ -454,6 +454,15 @@ def test_missing_hard_gate_field_is_refused(tmp_path: Path):
     assert "wrote_to_repo" in (p.stdout + p.stderr)
 
 
+def test_missing_new_provenance_field_is_refused(tmp_path: Path):
+    """Section 7 requires explicit provenance fields; absence is a schema failure."""
+    run = _one_run()
+    del run["reviewer"]["product_route"]
+    p = _score(tmp_path, [run])
+    assert p.returncode != 0
+    assert "product_route" in (p.stdout + p.stderr)
+
+
 def test_model_mismatch_fails_identity(tmp_path: Path):
     """A Fable request answered by Opus is an Opus result, never a Fable one."""
     ok = _score(tmp_path, [_one_run()])

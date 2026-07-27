@@ -74,6 +74,32 @@
         "routerTrainingAllowed": {"type": "boolean"},
         "modelTrainingAllowed": {"type": "boolean"},
         "publicCorpusAllowed": {"type": "boolean"},
+        "routerUseAllowed": {"type": "boolean"},
+        "termsClearanceStatus": {
+          "type": "string",
+          "enum": ["vendor_confirmed_in_writing", "operator_risk_accepted_pending_written_clarification",
+                   "contract_pending", "unknown"],
+          "description": "how the permissive values in this policy are justified. `operator_risk_accepted...` means a human decided to proceed under acknowledged contractual ambiguity -- it is NOT a vendor clearance, and a later reply upgrades it rather than confirming it"
+        },
+        "legalReviewStatus": {"type": "string"},
+        "termsClarificationStatus": {
+          "type": "string",
+          "enum": ["not_sent", "pending_nonblocking", "pending_blocking", "answered", "refused"]
+        },
+        "operatorAuthorization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["principal", "capacity", "effectiveDate", "scope"],
+          "description": "provenance for a risk acceptance. A permissive policy with no named principal and no dated record is an assertion nobody owns",
+          "properties": {
+            "principal": {"type": "string", "minLength": 1},
+            "capacity": {"type": "string", "enum": ["individual", "entity"]},
+            "effectiveDate": {"type": "string", "format": "date"},
+            "scope": {"type": "string", "minLength": 1},
+            "recordPath": {"type": "string"},
+            "recordSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        },
         "carrythroughOwnedInternalAllowed": {"type": "boolean"},
         "customerDataAllowed": {"type": "boolean"},
         "thirdPartyConfidentialAllowed": {"type": "boolean"},

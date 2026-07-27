@@ -641,8 +641,15 @@ def _s2_item(inst: dict, submission: str, patch: str, *, lic: str | None,
         "scrubbed": False,
         "license": lic or "UNKNOWN",
         "provider_data_allowlist": _allowlist(lic, allow_copyleft=allow_copyleft),
-        "goal": f"Review a candidate patch for {inst.get('repo', '')} issue "
-                f"{iid.rsplit('-', 1)[-1]}.",
+        # NEVER name the repository or the issue number here. `goal` is prose the
+        # reviewer reads as instructions, and "Review a candidate patch for
+        # beetbox/beets issue 5495" is a search query: one lookup returns the
+        # merged resolution, and the blind patch-verdict measurement this whole
+        # stratum exists for becomes a retrieval test with a 100% ceiling. The
+        # technical detail the reviewer legitimately needs is already in
+        # problem_statement and design_or_diff. check_packet_gates.py enforces this.
+        "goal": "Review a candidate patch and decide whether it resolves the "
+                "reported issue.",
         "problem_statement": _cap(inst.get("problem_statement"), 12000),
         "design_or_diff": patch,
         "tests_already_run": [],
