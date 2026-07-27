@@ -28,6 +28,7 @@ from referencing import Registry, Resource
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
+import preflight  # noqa: E402
 import snapshot_terms  # noqa: E402
 
 PANELS = yaml.safe_load((HERE / "panels.yaml").read_text())
@@ -166,3 +167,45 @@ def test_requirements_are_all_pinned():
         if line.strip() and not line.strip().startswith("#") and "==" not in line
     ]
     assert not unpinned, f"unpinned requirements: {unpinned}"
+
+
+# ---------------------------------------------------------------- preflight
+
+def test_every_preflight_gate_reports_instead_of_raising(monkeypatch):
+    """A gate that crashes tells you nothing about the thing it guards.
+
+    preflight runs where the private package may be absent -- on CI, on a fresh
+    clone, before stow has linked anything. Every gate must degrade to a stated
+    unknown, because "could not check" and "checked, fine" are different answers
+    and only one of them is safe to act on.
+    """
+    monkeypatch.setattr(preflight, "SKILL", Path("/nonexistent/skill"))
+    monkeypatch.setattr(preflight, "AGENTS", Path("/nonexistent/agents"))
+    monkeypatch.setattr(preflight, "DATA", Path("/nonexistent/data"))
+
+    for name, gate in preflight.GATES:
+        result = gate()
+        assert result.state in (preflight.PASS, preflight.FAIL,
+                                preflight.UNKNOWN, preflight.SKIP), f"{name}: {result.state}"
+        assert result.detail, f"{name} reported {result.state} with no detail"
+
+
+def test_preflight_will_not_pass_a_lock_frozen_under_the_wrong_toolchain(tmp_path, monkeypatch):
+    """The lock must name the version that actually runs.
+
+    Freezing before the upgrade records a toolchain that produced nothing, and the
+    lock's whole job is to be believed later. This is the one ordering mistake
+    that cannot be corrected after the fact without discarding the result set.
+    """
+    monkeypatch.setattr(preflight, "DATA", tmp_path)
+    assert preflight.check_lock_state().state == preflight.PASS, "absent is correct pre-upgrade"
+
+    (tmp_path / "LOCK.json").write_text(json.dumps(
+        {"lock_inputs": {"versions": {"omp": "0.0.0-stale"}}}), encoding="utf-8")
+    stale = preflight.check_lock_state()
+    assert stale.state == preflight.FAIL
+    assert "0.0.0-stale" in stale.detail
+
+    (tmp_path / "LOCK.json").write_text(json.dumps(
+        {"lock_inputs": {"versions": {"omp": preflight.EXPECTED_OMP}}}), encoding="utf-8")
+    assert preflight.check_lock_state().state == preflight.PASS

@@ -95,7 +95,7 @@ python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
-python3 -m pytest -q                               # 118 tests; see "The test suite"
+python3 -m pytest -q                               # 120 tests; see "The test suite"
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -394,10 +394,38 @@ per-family signal that is the whole point; splitting to the finding conditions
 every example on detection, which is the same bug that makes a claims-only recall
 meaningless.
 
+## Before the first paid request
+
+```bash
+python3 preflight.py            # every checkable gate, spends nothing
+python3 preflight.py --slow     # same, plus the full suite
+```
+
+Exit 0 means every automatic gate holds, and the remaining manual steps print in
+order. Exit 10 means one failed. Nothing in it contacts a provider: the steps that
+would cost money are *named*, not run, because a preflight that can spend is not a
+preflight.
+
+It exists because two steps are order-sensitive and expensive to get wrong, and
+that ordering was living in a chat log. `runs/LOCK.json` must be frozen **after**
+the OMP upgrade — a lock is a claim about the starting state of a result set, and
+one frozen under the old version records a toolchain that never produced anything.
+And a lane stays `councilEnabled: false` until its credential exists and its canary
+has passed, because enabling first makes the first live request also the first test
+of the request path.
+
+The gates it owns that no test covers: reviewer definitions parse and declare
+`thinkingLevel` rather than the `thinking-level` that is silently ignored; their
+output schemas compile, since a reviewer whose schema fails returns free text and
+free text cannot be scored against a label; every reviewer in `qualification.yml`
+resolves to an agent file that is present and not a dangling stow symlink; and an
+enabled lane is checked against the evidence recorded for it rather than a
+hardcoded list of names.
+
 ## The test suite
 
 ```bash
-python3 -m pytest -q            # 118 tests, ~60s
+python3 -m pytest -q            # 120 tests, ~60s
 ruff check .                    # rule set pinned in ruff.toml, not inherited
 ```
 
