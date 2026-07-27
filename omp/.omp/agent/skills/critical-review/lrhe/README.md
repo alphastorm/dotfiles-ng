@@ -52,21 +52,30 @@ python3 validate_corpus.py --corpus "$D/corpus.jsonl" --plan
 
 ## Corpus status
 
-43 of 47 items are built, validated, scrubbed and dispatched as reviewer-safe
+All 47 items are built, validated, scrubbed and dispatched as reviewer-safe
 packets. `PROVENANCE.md` is the source audit — read it before trusting any count,
 because several things `LRHE-PROTOCOL.md` §2 asserts about these datasets are not
 true of the data as shipped, and three of them would have corrupted the result
 silently rather than failing loudly.
 
-| Stratum | Built | Target | Blocker |
+| Stratum | Built | Target | Note |
 |---|---|---|---|
 | S1 `REVIEW_HUMAN` | 14 | 14 | — |
 | S2 `PATCH_VERDICT` | 10 | 10 | — |
-| S3 `VULN_POC` | 4 | 8 | needs 4 more incomplete fixes: ~76 more swept cases (~2.5 h) at the observed 5.3% rate |
-| S4 `FP_TRAP` | 12 | 12 | — (6 of the 12 await one license decision; see `license_url`) |
+| S3 `VULN_POC` | 8 | 8 | 4 carry an unresolved upstream licence; see below |
+| S4 `FP_TRAP` | 12 | 12 | — |
 | S5 `NULL` | 3 | 3 | — |
 
-81 labels, 33 critical, 6 executable, 12 traps, 11 controls.
+85 labels, 37 critical, 5 executable, 12 traps, 11 controls.
+
+Four S3 items — ImageMagick, KDE kimageformats, libheif, freetype2 — have a
+licence the host's detector could not classify (`NOASSERTION` or `UNDECLARED`).
+They are authorized for `anthropic` and `opencode` by explicit operator decision
+and denied to everyone else, so **gemini and grok cannot review them**. That
+leaves the core three-family panel with four holes in S3, the executable stratum:
+half its items get one family instead of three. Either extend the grant or treat
+S3 cross-family recall as measured on four items, but do not average over the hole
+without saying so. `check_packet_gates.py audit` names these four on every run.
 
 ## Quick start
 

@@ -19,15 +19,21 @@ What each test defends:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
+from datetime import date, timedelta
 from pathlib import Path
+
+import yaml
+from jsonschema import Draft202012Validator, FormatChecker
 
 import pandas as pd
 import pytest
 
 HERE = Path(__file__).parent
 PY = sys.executable
+DATA_RIGHTS_SCHEMA = json.loads((HERE / "data-rights.schema.json").read_text(encoding="utf-8"))
 
 sys.path.insert(0, str(HERE))
 import analyze_lrhe  # noqa: E402
@@ -179,6 +185,119 @@ def scored(tmp_path: Path):
         "corpus": corpus,
         "tmp": tmp_path,
     }
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _base_packet_item(item_id: str, goal: str = "Refactor module behavior", *,
+                     repo: str = "acme/widget",
+                     problem_statement: str = "Fix issue in the existing module.",
+                     known_open_questions: str = "",
+                     license_: str = "MIT",
+                     license_url: str = "https://spdx.org/licenses/MIT.html",
+                     provider_data_allowlist: list[str] = ("opencode",),
+                     base_commit: str = "abc123",
+                     source: str = "test-corpus") -> dict:
+    return {
+        "item_id": item_id,
+        "stratum": "S1_REVIEW_HUMAN",
+        "source": source,
+        "labels": [],
+        "repo_files": ["src/widget.py"],
+        "repo": repo,
+        "source_item_id": f"{item_id}-src",
+        "dataset_ref": f"{item_id}-dataset",
+        "base_commit": base_commit,
+        "goal": goal,
+        "problem_statement": problem_statement,
+        "known_open_questions": known_open_questions,
+        "provider_data_allowlist": list(provider_data_allowlist),
+        "license": license_,
+        "license_url": license_url,
+    }
+
+
+def _build_policy(provider_route: str, policy_id: str, **overrides) -> dict:
+    policy = {
+        "policyId": policy_id,
+        "providerRoute": provider_route,
+        "accountType": "test",
+        "dataAllowlistKey": "opencode" if provider_route == "opencode-go" else "anthropic",
+        "termsSnapshotId": "test-terms-2026-07-27",
+        "providerTrainingUse": "prohibited_by_provider_documentation",
+        "providerRetention": "zero_retention_by_provider_documentation",
+        "rawOutputCaptureStatus": "allowed",
+        "internalEvaluationAllowed": True,
+        "routerTrainingAllowed": True,
+        "modelTrainingAllowed": False,
+        "publicCorpusAllowed": True,
+        "carrythroughOwnedInternalAllowed": True,
+        "customerDataAllowed": False,
+        "thirdPartyConfidentialAllowed": False,
+    }
+    if provider_route == "claude-code-subscription":
+        policy["requiredControls"] = {"modelImprovementEnabled": False}
+    policy.update(overrides)
+    return policy
+
+def _write_policy_registry(tmp_path: Path, policy: dict) -> Path:
+    path = tmp_path / "provider-policies.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {"schemaVersion": 1, "policies": [policy]},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _run_check_data_rights(tmp_path: Path, policy: dict, args: list[str]) -> subprocess.CompletedProcess:
+    registry = _write_policy_registry(tmp_path, policy)
+    return subprocess.run(
+        [
+            PY,
+            "check_data_rights.py",
+            *args,
+            "--policies", str(registry),
+            "--policy-schema", str(HERE / "provider-policy.schema.json"),
+            "--data-rights-schema", str(HERE / "data-rights.schema.json"),
+        ],
+        cwd=HERE,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _run_packet_gates(tmp_path: Path, cmd: str, corpus: list[dict], packets: list[dict],
+                      *extra: str):
+    corpus_path = tmp_path / "corpus.jsonl"
+    packets_path = tmp_path / "packets.jsonl"
+    _write_jsonl(corpus_path, corpus)
+    _write_jsonl(packets_path, packets)
+    return subprocess.run(
+        [PY, "check_packet_gates.py", cmd, "--corpus", str(corpus_path),
+         "--packets", str(packets_path), *extra],
+        cwd=HERE, capture_output=True, text=True,
+    )
+
+
+def _assert_data_rights_schema(record: dict) -> None:
+    errors = sorted(
+        Draft202012Validator(DATA_RIGHTS_SCHEMA, format_checker=FormatChecker())
+        .iter_errors(record),
+        key=lambda e: (list(e.absolute_path), e.message),
+    )
+    assert not errors, "data-rights schema check failed: " + "; ".join(
+        "$" + "".join(f"[{p}]" if isinstance(p, int) else f".{p}" for p in e.absolute_path)
+        + f": {e.message}" for e in errors
+    )
 
 
 # ------------------------------------------------------- 1. determinism
@@ -530,3 +649,354 @@ def test_unanchored_claims_are_never_promoted(scored):
     assert len(promoted) > 0, "fixture promotes nothing, so this proves nothing"
     assert promoted["has_anchor"].all()
     assert (promoted["verdict"] != "CONFIRMED_UNANCHORED").all()
+
+
+# ----------------------------------------------------- 9. data-rights gate
+
+
+def test_check_data_rights_public_corpus_on_opencode_go_allows_and_validates_schema(tmp_path: Path):
+    """Public corpus over OpenCode must pass the gate and emit a schema-valid record."""
+    policy = _build_policy("opencode-go", "opencode-go-public-corpus")
+    p = _run_check_data_rights(
+        tmp_path,
+        policy,
+        [
+            "--item-id", "S1-0001",
+            "--classification", "public_corpus",
+            "--provider-route", "opencode-go",
+            "--policy-id", policy["policyId"],
+            "--item-provider-allowlist", policy["dataAllowlistKey"],
+        ],
+    )
+    assert p.returncode == 0
+    record = json.loads(p.stdout)
+    assert record["egress_decision"] == "allow"
+    _assert_data_rights_schema(record)
+
+
+@pytest.mark.parametrize("provider_route", ["opencode-go", "claude-code-subscription"])
+@pytest.mark.parametrize("classification", [
+    "customer_confidential",
+    "third_party_confidential",
+    "secrets_or_credentials",
+    "unknown",
+])
+def test_check_data_rights_sensitive_classifications_are_denied_on_all_routes(
+        tmp_path: Path, provider_route: str, classification: str):
+    """Sensitive item classes must be blocked before any packet can be assembled."""
+    policy = _build_policy(provider_route, f"{provider_route}-sensitivity-policy")
+    args = [
+        "--item-id", "S1-0001",
+        "--classification", classification,
+        "--provider-route", provider_route,
+        "--policy-id", policy["policyId"],
+        "--item-provider-allowlist", policy["dataAllowlistKey"],
+    ]
+    if provider_route == "claude-code-subscription":
+        args += ["--model-improvement-enabled", "false"]
+    p = _run_check_data_rights(tmp_path, policy, args)
+    assert p.returncode == 10
+    reason = json.loads(p.stdout)["reason_code"]
+    assert reason in {"classification_not_permitted", "classification_blocked"}
+
+
+def test_check_data_rights_unrecognized_classification_is_unresolved(tmp_path: Path):
+    """Unrecognized classes must stay unresolved, because they are missing legal facts."""
+    policy = _build_policy("opencode-go", "opencode-go-unknown")
+    p = _run_check_data_rights(
+        tmp_path,
+        policy,
+        [
+            "--item-id", "S1-0001",
+            "--classification", "not_a_real_class",
+            "--provider-route", "opencode-go",
+            "--policy-id", policy["policyId"],
+            "--item-provider-allowlist", policy["dataAllowlistKey"],
+        ],
+    )
+    assert p.returncode == 20
+    assert json.loads(p.stdout)["reason_code"] == "unknown_classification"
+
+
+def test_check_data_rights_carrythrough_owned_internal_requires_item_authorization(tmp_path: Path):
+    """Carrythrough-internal items need explicit per-item authorization; otherwise they are denied."""
+    policy = _build_policy("opencode-go", "opencode-go-carrythrough")
+    common = [
+        "--item-id", "S1-0001",
+        "--classification", "carrythrough_owned_internal",
+        "--provider-route", "opencode-go",
+        "--policy-id", policy["policyId"],
+        "--item-provider-allowlist", policy["dataAllowlistKey"],
+    ]
+
+    denied = _run_check_data_rights(tmp_path, policy, common)
+    assert denied.returncode == 10
+    assert json.loads(denied.stdout)["reason_code"] == "item_authorization_required"
+
+    passed = _run_check_data_rights(
+        tmp_path,
+        policy,
+        common + ["--item-authorized"],
+    )
+    assert passed.returncode == 0
+    record = json.loads(passed.stdout)
+    assert record["classification"] == "carrythrough_owned_internal"
+    _assert_data_rights_schema(record)
+
+
+def test_check_data_rights_claude_route_respects_model_improvement_gate(tmp_path: Path):
+    """A stale or permissive model-improvement signal must block Claude usage."""
+    policy = _build_policy("claude-code-subscription", "claude-model-improvement")
+    denied = _run_check_data_rights(
+        tmp_path,
+        policy,
+        [
+            "--item-id", "S1-0001",
+            "--classification", "public_corpus",
+            "--provider-route", "claude-code-subscription",
+            "--policy-id", policy["policyId"],
+            "--item-provider-allowlist", policy["dataAllowlistKey"],
+            "--model-improvement-enabled", "true",
+        ],
+    )
+    assert denied.returncode == 10
+    assert json.loads(denied.stdout)["reason_code"] == "control_violated"
+
+    allowed = _run_check_data_rights(
+        tmp_path,
+        policy,
+        [
+            "--item-id", "S1-0001",
+            "--classification", "public_corpus",
+            "--provider-route", "claude-code-subscription",
+            "--policy-id", policy["policyId"],
+            "--item-provider-allowlist", policy["dataAllowlistKey"],
+            "--model-improvement-enabled", "false",
+        ],
+    )
+    assert allowed.returncode == 0
+
+
+def test_check_data_rights_stale_observation_records_are_unresolved(tmp_path: Path):
+    """Recorded controls that exceed the freshness window must not be trusted as current."""
+    policy = _build_policy("claude-code-subscription", "claude-stale-observation")
+    observed_path = tmp_path / "observed-controls.yml"
+    stale = (date.today() - timedelta(days=2)).isoformat()
+    observed_path.write_text(
+        yaml.safe_dump({
+            "observations": [{
+                "providerRoute": "claude-code-subscription",
+                "observedAt": stale,
+                "controls": {"modelImprovementEnabled": False},
+            }]
+        }),
+        encoding="utf-8",
+    )
+    p = _run_check_data_rights(
+        tmp_path,
+        policy,
+        [
+            "--item-id", "S1-0001",
+            "--classification", "public_corpus",
+            "--provider-route", "claude-code-subscription",
+            "--policy-id", policy["policyId"],
+            "--item-provider-allowlist", policy["dataAllowlistKey"],
+            "--observed-controls", str(observed_path),
+            "--max-observation-age-days", "1",
+        ],
+    )
+    assert p.returncode == 20
+    assert json.loads(p.stdout)["reason_code"] == "stale_or_missing_observation"
+
+
+@pytest.mark.parametrize("item_allowlist", [[], ["anthropic"]])
+def test_check_data_rights_item_allowlist_denies_routes_without_opt_in(tmp_path: Path, item_allowlist: list[str]):
+    """Only routes named in an item allowlist may proceed; no implicit fallback is allowed."""
+    policy = _build_policy("opencode-go", "opencode-go-allowlist")
+    args = [
+        "--item-id", "S1-0001",
+        "--classification", "public_corpus",
+        "--provider-route", "opencode-go",
+        "--policy-id", policy["policyId"],
+        "--item-provider-allowlist",
+    ] + item_allowlist
+    p = _run_check_data_rights(tmp_path, policy, args)
+    assert p.returncode == 10
+    assert json.loads(p.stdout)["reason_code"] == "provider_not_in_item_allowlist"
+
+
+def test_check_data_rights_model_training_flag_denies_regardless_of_classification(tmp_path: Path):
+    """A policy cannot permit model-training even when another classification would otherwise pass."""
+    policy = _build_policy(
+        "opencode-go", "opencode-go-training-allowed", modelTrainingAllowed=True
+    )
+    p = _run_check_data_rights(
+        tmp_path,
+        policy,
+        [
+            "--item-id", "S1-0001",
+            "--classification", "public_corpus",
+            "--provider-route", "opencode-go",
+            "--policy-id", policy["policyId"],
+            "--item-provider-allowlist", policy["dataAllowlistKey"],
+        ],
+    )
+    assert p.returncode == 10
+    assert json.loads(p.stdout)["reason_code"] == "forbidden_use_enabled"
+
+
+# ----------------------------------------------------- 10. packet gates
+
+
+def test_check_packet_gates_clean_corpus_and_packet_pair_passes_all_six_gates(tmp_path: Path):
+    """A valid pair with no leaks, no repo-in-prose clues, and resolved metadata should pass."""
+    items = [
+        _base_packet_item("S1-9001", goal="Refactor parser entrypoint handling."),
+        _base_packet_item("S1-9002", goal="Align behavior with upstream style."),
+    ]
+    packets = [
+        {"item_id": "S1-9001"},
+        {"item_id": "S1-9002"},
+    ]
+    p = _run_packet_gates(tmp_path, "audit", items, packets)
+    assert p.returncode == 0
+    assert "passed all six gates : 2" in p.stdout
+    assert "blocked              : 0" in p.stdout
+
+
+@pytest.mark.parametrize("oracle_payload", [
+    {"labels": []},
+    {"trap": {"trap_id": "T1", "assertion": "seeded"}},
+])
+def test_check_packet_gates_blocks_oracle_leaks(tmp_path: Path, oracle_payload: dict):
+    """Packet fields that expose oracle answers must fail hard before grant or assignment."""
+    item = _base_packet_item("S1-9003", goal="Refactor the packet builder.")
+    p = _run_packet_gates(
+        tmp_path,
+        "audit",
+        [item],
+        [{"item_id": "S1-9003", **oracle_payload}],
+    )
+    assert p.returncode == 1
+    assert "BLOCKED S1-9003" in p.stdout
+    assert "oracle_leak:" in p.stdout
+
+
+def test_check_packet_gates_repo_named_in_prose_is_blocked_but_diff_path_is_allowed(tmp_path: Path):
+    """Naming a repository in packet prose must block, while the same token in diff text does not."""
+    repo_slug = "acme/widget-core"
+    prose_item = _base_packet_item(
+        "S1-9004",
+        goal="Diff-safe cleanup of tokenizer callsites.",
+    )
+    diff_item = _base_packet_item(
+        "S1-9005",
+        repo=repo_slug,
+        goal="Fix the tokenizer bug without upstream context.",
+    )
+    p = _run_packet_gates(
+        tmp_path,
+        "audit",
+        [prose_item, diff_item],
+        [
+            {"item_id": "S1-9004", "goal": f"Review and fix upstream issue in {repo_slug}."},
+            {"item_id": "S1-9005", "design_or_diff": f"diff --git a/{repo_slug}/x.py b/{repo_slug}/x.py", "goal": "Fix tokenizer bug"},
+        ],
+    )
+    assert p.returncode == 1
+    assert "BLOCKED S1-9004  upstream_repo_named_in_prose" in p.stdout
+    assert "BLOCKED S1-9005" not in p.stdout
+
+
+def test_check_packet_gates_blocks_issue_number_in_prose(tmp_path: Path):
+    """Mentioning upstream issue IDs in prose is a retrieval cue and must be blocked."""
+    item = _base_packet_item(
+        "S1-9006",
+        goal="Fix issue 9876: transient NPE during startup.",
+    )
+    p = _run_packet_gates(
+        tmp_path,
+        "audit",
+        [item],
+        [{"item_id": "S1-9006", "goal": "Fix issue 9876: transient NPE during startup."}],
+    )
+    assert p.returncode == 1
+    assert "BLOCKED S1-9006  upstream_issue_number_in_prose" in p.stdout
+
+
+def test_check_packet_gates_unresolved_license_warning_is_reported_not_blocking(tmp_path: Path):
+    """Unresolved licence fields are a compliance report, not an automatic block."""
+    item = _base_packet_item(
+        "S1-9007",
+        license_="NOASSERTION",
+    )
+    p = _run_packet_gates(
+        tmp_path,
+        "audit",
+        [item],
+        [{"item_id": "S1-9007"}],
+    )
+    assert p.returncode == 0
+    assert "passed all six gates : 1" in p.stdout
+    assert "warn    S1-9007  licence_unresolved:NOASSERTION" in p.stdout
+
+
+def test_check_packet_gates_grant_only_pass_items_and_keeps_allowlists_in_sync(tmp_path: Path):
+    """Grant should only mutate pass items and keep corpus and packet allowlists identical."""
+    passed_item = _base_packet_item(
+        "S1-9008",
+        goal="Normalize packet fields and strip private metadata.",
+    )
+    blocked_item = _base_packet_item(
+        "S1-9009",
+        goal="A known false-positive gate regression.",
+    )
+    p = _run_packet_gates(
+        tmp_path,
+        "grant",
+        [passed_item, blocked_item],
+        [
+            {"item_id": "S1-9008"},
+            {
+                "item_id": "S1-9009",
+                "labels": [{"label_id": "L1", "severity": "high"}],
+                "provider_data_allowlist": ["opencode"],
+            },
+        ],
+        "--vendor", "opencode-judge",
+    )
+    assert p.returncode == 0
+    corpus_rows = _read_jsonl(tmp_path / "corpus.jsonl")
+    packet_rows = _read_jsonl(tmp_path / "packets.jsonl")
+    corpus_by_id = {row["item_id"]: row for row in corpus_rows}
+    packets_by_id = {row["item_id"]: row for row in packet_rows}
+    assert corpus_by_id["S1-9008"]["provider_data_allowlist"] == ["opencode", "opencode-judge"]
+    assert packets_by_id["S1-9008"]["provider_data_allowlist"] == ["opencode", "opencode-judge"]
+    assert corpus_by_id["S1-9009"]["provider_data_allowlist"] == ["opencode"]
+    assert packets_by_id["S1-9009"]["provider_data_allowlist"] == ["opencode"]
+
+
+def test_real_s2_corpus_goals_do_not_name_repository_or_issue_number():
+    """The shipped S2 packets must not hand the reviewer a search query.
+
+    Every S2 goal once read "Review a candidate patch for beetbox/beets issue
+    5495". One lookup returns the merged resolution, so the stratum whose job is
+    measuring whether a reviewer can tell a good patch from a bad one was
+    measuring retrieval instead, at a ceiling of 100%. Nothing about that looks
+    wrong in the output -- the recall number simply comes back excellent.
+    """
+    corpus_path = Path.home() / ".omp/agent/skills/critical-review/lrhe-data/corpus.jsonl"
+    if not corpus_path.exists():
+        pytest.skip("private corpus is not present in this checkout")
+    issue_re = re.compile(r"\b(?:issue|pull request|PR)\s*#?\d{2,}", re.I)
+    offenders: list[str] = []
+    for item in _read_jsonl(corpus_path):
+        if item.get("stratum") != "S2_PATCH_VERDICT":
+            continue
+        goal = str(item.get("goal", ""))
+        repo = str(item.get("repo", ""))
+        if repo and repo.lower() in goal.lower():
+            offenders.append(f"{item['item_id']} has repo in goal: {repo}")
+        if issue_re.search(goal):
+            offenders.append(f"{item['item_id']} has issue number in goal: {goal}")
+    assert not offenders, "found S2 goals with repository/issue leakage: " + "; ".join(offenders)

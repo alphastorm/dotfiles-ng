@@ -206,12 +206,18 @@ across three runs under `PYTHONHASHSEED=random`.
 |---|---|---|---|
 | S1 `REVIEW_HUMAN` | **14** | 14 | complete — 4/5/5 across Type1/Type2/Type3_Latent_Candidate, 75 labels (27 critical), 10 repos, merged 2026-01-28 → 2026-02-17 |
 | S2 `PATCH_VERDICT` | **10** | 10 | complete — 5 unresolved + 5 resolved controls, 4 submissions, executable `verify_cmd` |
-| S3 `VULN_POC` | **4** | 8 | 1 incomplete fix + 3 correct-fix controls. Needs 4 more incomplete fixes |
+| S3 `VULN_POC` | **8** | 8 | complete — 4 of the 8 carry an upstream licence the host's detector could not classify (`NOASSERTION`/`UNDECLARED`); see below |
 | S4 `FP_TRAP` | **12** | 12 | complete — every trap sits on a fix whose PoC was observed running clean |
 | S5 `NULL` | **3** | 3 | complete — 4–6 files, 5.7–8.7 KB diffs, no same-file follow-up in 90d |
 
-43 of 47 items built, validated, scrubbed, and dispatched as reviewer-safe packets.
-81 labels, 33 critical, 6 executable, 12 traps, 11 controls.
+All 47 items built, validated, scrubbed, and dispatched as reviewer-safe packets.
+85 labels, 37 critical, 5 executable, 12 traps, 11 controls.
+
+The four S3 items with an unresolved licence — ImageMagick, KDE kimageformats,
+libheif, freetype2 — are authorized for `anthropic` and `opencode` by explicit
+operator decision and denied to everyone else. Gemini and grok therefore cannot
+review them, which leaves the core three-family panel with four holes in the
+executable stratum. `check_packet_gates.py audit` names them on every run.
 
 ### Sweep results
 
@@ -234,8 +240,9 @@ silently remove that population.
 resumes; `--prune` deletes each pair's images after use, which is mandatory beyond
 about 50 cases — 113 GB is free and an unpruned 120-case run would pull ~240 GB.
 
-To finish S3, 4 more incomplete fixes are needed: **~76 more cases in expectation,
-~2.5 h** at the observed rate.
+S3 is complete. The sweep that finished it ran at the observed 5.3% incomplete-fix
+rate; budget roughly 76 cases and 2.5 h per additional item if the stratum is ever
+extended.
 
 ### 13. Provider authorization was a two-way switch on a three-way question
 
