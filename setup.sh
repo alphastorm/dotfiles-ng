@@ -344,15 +344,27 @@ function stow_dotfiles() {
   stow -R -t "$HOME" zsh
 
   stow -D -t "$HOME" omp
-  # Pre-create every directory that BOTH the public and private packages write
-  # into. Stow folds a directory into a single symlink when only one package
-  # owns it, and a folded directory cannot then accept files from the other
-  # package. `critical-review` is shared: the public package supplies the skill
-  # and the LRHE harness, the private one supplies the corpus and its answer key.
+  # Pre-create every directory that something OTHER than a single stow package
+  # writes into. Stow folds a directory into one symlink when exactly one package
+  # owns it, and a folded directory then belongs to that package's repository --
+  # so anything else writing there writes into the repository.
+  #
+  # Two kinds qualify:
+  #   - shared between packages: `critical-review` takes the skill and the LRHE
+  #     harness from public, the corpus and answer key from private.
+  #   - written by the OMP runtime: `profiles/audit/agent` holds agent.db,
+  #     history.db, models.db and their WAL files. Fold it and OMP writes live
+  #     databases into .dotfiles-private on every run.
+  #
+  # `agent/agents` is deliberately NOT here. Nothing but agent definitions lives
+  # in it and only the private package owns them, so letting it fold makes the
+  # whole directory one symlink into the repository. That is what stops
+  # `omp agents unpack --user` from re-breaking stow: an unpacked file lands in
+  # the private checkout as a visible, revertible diff instead of as a foreign
+  # real file that stow refuses to overwrite and aborts the whole package on.
   mkdir -p \
     "$HOME/.omp" \
     "$HOME/.omp/agent" \
-    "$HOME/.omp/agent/agents" \
     "$HOME/.omp/agent/extensions" \
     "$HOME/.omp/agent/skills" \
     "$HOME/.omp/agent/skills/critical-review" \
