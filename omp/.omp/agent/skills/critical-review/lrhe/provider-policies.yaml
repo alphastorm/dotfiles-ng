@@ -72,3 +72,118 @@ policies:
       feedbackSubmissionAllowed: false
       noSessionPersistence: true
       exactServedModelIdentityRequired: true
+
+  # The three routes below predate this registry. Their lanes were qualified and
+  # set councilEnabled: true before any rights apparatus existed, so they have been
+  # in use with no policy governing them at all. run_review.py refused every one of
+  # them until these were written, which is the gate working rather than a
+  # regression: an enabled lane with no policy is not a permission, it is an
+  # oversight nobody had a way to see.
+  #
+  # They inherit the same operator risk acceptance. Their terms are NOT snapshotted
+  # -- termsSnapshotId says so in the id rather than pointing at a file that does
+  # not exist -- so `providerTrainingUse` and `providerRetention` are recorded as
+  # `unknown`, which is honest and, being downstream-use descriptors rather than
+  # egress gates, does not block a public-corpus run. Snapshot them before any
+  # result from these lanes is published.
+
+  - policyId: anthropic-subscription-2026-07-27
+    providerRoute: anthropic-subscription
+    accountType: consumer_max_or_pro
+    dataAllowlistKey: anthropic
+    termsSnapshotId: anthropic-consumer-privacy-2026-03-16
+    providerTrainingUse: opt_out_required
+    providerRetention: consumer_standard_not_zdr
+    outputOwnership: verify_current_consumer_terms
+    rawOutputCaptureStatus: internal_evaluation_only
+    internalEvaluationAllowed: true
+    routerTrainingAllowed: false
+    modelTrainingAllowed: false
+    publicCorpusAllowed: true
+    carrythroughOwnedInternalAllowed: true
+    customerDataAllowed: false
+    thirdPartyConfidentialAllowed: false
+    termsClearanceStatus: operator_risk_accepted_pending_written_clarification
+    legalReviewStatus: deferred_until_entity_or_third_party_use
+    termsClarificationStatus: not_sent
+    operatorAuthorization:
+      principal: Sunil Srivatsa
+      capacity: individual
+      effectiveDate: "2026-07-27"
+      scope: personal_internal_evaluation_review_and_routing
+      recordPath: authorizations/2026-07-27-operator-risk-acceptance.md
+      recordSha256: 7a817ffba857f699d59f09b090188a680c9d254410bb3c428fb338bc5fb27055
+    requiredControls:
+      modelImprovementEnabled: false
+      feedbackSubmissionAllowed: false
+      exactServedModelIdentityRequired: true
+    notes:
+      - >-
+        Same consumer account as claude-code-subscription, reached through OMP's
+        Anthropic provider rather than the Claude Code CLI. Same terms, different
+        client, so it needs its own route entry and its own served-model check.
+
+  - policyId: google-antigravity-2026-07-27
+    providerRoute: google-antigravity
+    accountType: antigravity_remote
+    dataAllowlistKey: google
+    termsSnapshotId: google-antigravity-UNSNAPSHOTTED
+    providerTrainingUse: unknown
+    providerRetention: unknown
+    rawOutputCaptureStatus: internal_evaluation_only
+    internalEvaluationAllowed: true
+    routerTrainingAllowed: false
+    modelTrainingAllowed: false
+    publicCorpusAllowed: true
+    carrythroughOwnedInternalAllowed: false
+    customerDataAllowed: false
+    thirdPartyConfidentialAllowed: false
+    termsClearanceStatus: operator_risk_accepted_pending_written_clarification
+    legalReviewStatus: deferred_until_entity_or_third_party_use
+    termsClarificationStatus: not_sent
+    operatorAuthorization:
+      principal: Sunil Srivatsa
+      capacity: individual
+      effectiveDate: "2026-07-27"
+      scope: personal_internal_evaluation_review_and_routing
+      recordPath: authorizations/2026-07-27-operator-risk-acceptance.md
+      recordSha256: 7a817ffba857f699d59f09b090188a680c9d254410bb3c428fb338bc5fb27055
+    notes:
+      - >-
+        carrythroughOwnedInternalAllowed is FALSE here and true elsewhere. The
+        standing rule is that Antigravity is a remote provider and must never
+        receive material marked local-only or confidential-to-device; public
+        benchmark corpus only until that boundary is written down somewhere it can
+        be cited.
+      - Terms and retention posture are unsnapshotted and recorded as unknown rather than assumed favourable.
+
+  - policyId: xai-oauth-2026-07-27
+    providerRoute: xai-oauth
+    accountType: supergrok_subscription
+    dataAllowlistKey: xai
+    termsSnapshotId: xai-oauth-UNSNAPSHOTTED
+    providerTrainingUse: unknown
+    providerRetention: unknown
+    rawOutputCaptureStatus: internal_evaluation_only
+    internalEvaluationAllowed: true
+    routerTrainingAllowed: false
+    modelTrainingAllowed: false
+    publicCorpusAllowed: true
+    carrythroughOwnedInternalAllowed: false
+    customerDataAllowed: false
+    thirdPartyConfidentialAllowed: false
+    termsClearanceStatus: operator_risk_accepted_pending_written_clarification
+    legalReviewStatus: deferred_until_entity_or_third_party_use
+    termsClarificationStatus: not_sent
+    operatorAuthorization:
+      principal: Sunil Srivatsa
+      capacity: individual
+      effectiveDate: "2026-07-27"
+      scope: personal_internal_evaluation_review_and_routing
+      recordPath: authorizations/2026-07-27-operator-risk-acceptance.md
+      recordSha256: 7a817ffba857f699d59f09b090188a680c9d254410bb3c428fb338bc5fb27055
+    notes:
+      - >-
+        Quota path was verified as SuperGrok-included, which is a billing fact and
+        not a data-rights one. Nothing about retention or training use has been
+        established for this route.

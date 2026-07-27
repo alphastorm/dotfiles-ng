@@ -269,6 +269,44 @@ Majority settles a *judging label* here, never a review finding. Nothing in
 `judge_lrhe.py` promotes a claim because reviewers agreed — agreement is metadata,
 not proof, and `unresolved` deliberately writes no exec record in either direction.
 
+## The runner is the gate, not a caller of one
+
+```bash
+python3 run_review.py plan     --item-id S1-... --family claude --lens architecture
+python3 run_review.py dispatch --item-id S1-... --family claude --transport stub --out runs.jsonl
+```
+
+`prepare()` returns either a `Refusal` or an `AuthorizedRequest`; `dispatch()`
+accepts nothing but an `AuthorizedRequest`. There is no argument that makes
+`dispatch()` skip a check and no call order that reaches a provider without a
+rights record in hand. Python cannot enforce that at the type level, so
+`dispatch()` re-validates the record it was handed against
+`data-rights.schema.json` before touching a transport — a hand-built request with
+a plausible-looking record still dies at the last step, and there is a test that
+builds exactly that.
+
+Gates run cheapest-first: lane qualified in `qualification.yml` → item and packet
+exist → `check_packet_gates` on what would actually be transmitted →
+`check_data_rights` for the route. The rights guard is invoked as the CLI it
+already is, so there is one implementation of that decision and the runner cannot
+reach around it.
+
+Transports are explicit and default to refusing:
+
+| | |
+|---|---|
+| `none` | raises on any send. The default, so a dry run cannot leak by forgetting a flag |
+| `stub` | deterministic canned response; exercises assembly, run-record emission and provenance with no socket in the path |
+| `live` | **not implemented.** No credential is configured and provider calls are held. A half-written live path is the one that gets called by mistake |
+
+Every test that asserts a refusal spies on the transport table and asserts zero
+calls. A gate that refuses *after* sending is not a gate.
+
+Writing this runner is what surfaced that **all three enabled reviewers routed
+through providers with no data-rights policy at all** — qualified, in use, and
+ungoverned, because `provider-policies.yaml` had only been written for the two
+new routes. Nothing else asked the question, so nothing else could notice.
+
 ## Nothing leaves the machine without a rights decision
 
 ```bash

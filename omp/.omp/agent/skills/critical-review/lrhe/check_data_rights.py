@@ -81,6 +81,11 @@ INPUT_OWNER = {
 # observation. A route listed here without its observation is unresolved.
 OBSERVED_CONTROLS = {
     "claude-code-subscription": {"modelImprovementEnabled": "model_improvement_enabled"},
+    # Same consumer account, reached through OMP's Anthropic provider instead of the
+    # Claude Code CLI. The account setting is a property of the account, not of the
+    # client, so the same observation governs both routes -- but each route has to
+    # ask for it, or adding a client silently drops the check.
+    "anthropic-subscription": {"modelImprovementEnabled": "model_improvement_enabled"},
 }
 
 # The one use that stays prohibited on every route regardless of what a policy
