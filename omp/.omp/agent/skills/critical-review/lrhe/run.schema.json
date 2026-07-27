@@ -38,7 +38,8 @@
       "description": "a family comparison is only meaningful within one complete, declared panel"},
 
     "run_id": {"type": "string", "minLength": 1},
-    "item_id": {"type": "string", "minLength": 1},
+    "item_id": {"type": "string", "minLength": 1,
+      "description": "the corpus item under review. There is deliberately no separate review_id: the ledger coalesces review_id -> item_id -> run_id, so on a production run against real work rather than a corpus item, set this to the review's own id. Adding a parallel field would let the two disagree, and the ledger would have to guess which one the finding belongs to"},
     "arm": {"type": "string", "minLength": 1,
       "description": "defined in panels.yaml, not here. R = cold refutation: unlike A-D it is scheduled per disputed claim rather than per item, so it costs nothing on reviews where nothing is disputed"},
     "family": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$",
