@@ -33,3 +33,6 @@ report.json
 analysis.json
 # the real one is frozen next to the corpus in lrhe-data/
 assignments.manifest.json
+# provider terms snapshots are accumulated evidence, not replicable output:
+# a later fetch returns a different document. They live beside the corpus.
+terms/

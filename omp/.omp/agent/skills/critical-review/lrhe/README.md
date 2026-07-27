@@ -15,7 +15,7 @@ The cut is **replicable vs. accumulated**, not public vs. private:
   lrhe/                  harness, schemas, PROVENANCE.md
 
   qualification.yml   →  .dotfiles-private        PRIVATE  (Git LFS)
-  lrhe-data/             corpus, sweep, ledger
+  lrhe-data/             corpus, sweep, ledger, terms snapshots, handoff/
 ```
 
 **Public because replicable.** Anyone reading `LRHE-PROTOCOL.md` could rebuild the
@@ -220,6 +220,10 @@ python3 check_data_rights.py --item-id S1-0001 \
     --classification public_corpus --route opencode-go \
     --policy-id opencode-go-2026-07-27        # stdout is the data_rights record
 ```
+
+Snapshots land in `lrhe-data/terms/`, not here: a re-fetch returns a different
+document, so the frozen bodies are accumulated evidence rather than replicable
+output — and the harness has no business republishing two vendors' legal text.
 
 `check_data_rights.py` runs before a provider request is assembled and exits 0
 allow, 10 deny, 20 unresolved. Deny and unresolved both stop egress; they stay

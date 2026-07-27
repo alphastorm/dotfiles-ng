@@ -556,7 +556,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--terms-dir",
         type=Path,
-        default=here / "terms",
+        # Snapshots are accumulated evidence, not replicable output -- a later fetch
+        # returns a different document -- so they live beside the corpus in the
+        # private package, not in this public one.
+        #
+        # Addressed absolutely on purpose. This directory is a stow symlink, so `..`
+        # from inside it resolves to the dotfiles parent, not the stowed one.
+        default=Path.home() / ".omp/agent/skills/critical-review/lrhe-data/terms",
         help="snapshot root (default: %(default)s)",
     )
     parser.add_argument(
