@@ -71,10 +71,14 @@ silently rather than failing loudly.
 ## Quick start
 
 ```bash
+uv venv --python 3.13 .venv                        # pinned; see requirements.txt
+VIRTUAL_ENV=.venv uv pip install -r requirements.txt
+
 python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
+python3 -m pytest test_invariants.py               # the silent-failure guards
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -144,6 +148,18 @@ python3 build_corpus.py assignments --corpus corpus.jsonl --d-items 24 \
     --triplicate-n 3
 ```
 
+Both write `assignments.manifest.json` beside the CSV: the salt, the 24 selected
+subset ids, and SHA-256 of the corpus and of the CSV itself. The CSV can be
+regenerated, reordered or hand-edited and nothing would notice; the manifest is what
+makes that detectable. `--assignment-salt` reshuffles arm B and the subset on
+purpose and is recorded; empty reproduces every mapping frozen so far byte-for-byte.
+
+The subset is apportioned by largest remainder over stratum × trap/control/
+difficulty, not by stratum alone. Arm T is the only place a false positive can be
+observed, so a subset that misses the traps or the label-free items measures nothing
+about either — and finding nothing when there is nothing is a different measurement
+from missing something, which recall cannot tell you.
+
 Arm D is `|families| × |lenses|` runs per subset item, so both knobs cost. The
 refuter costs nothing per item — on the 261-claim run below it fired on 16 claims,
 about 6%. Adding critics also inflates "unique verified findings" by pure
@@ -193,6 +209,36 @@ a panel calibrated against nothing measures nothing. What is removable is the ot
 Majority settles a *judging label* here, never a review finding. Nothing in
 `judge_lrhe.py` promotes a claim because reviewers agreed — agreement is metadata,
 not proof, and `unresolved` deliberately writes no exec record in either direction.
+
+## Nothing leaves the machine without a rights decision
+
+```bash
+python3 snapshot_terms.py                     # freeze the provider terms, hash them
+python3 snapshot_terms.py --offline           # re-verify without a network call
+
+python3 check_data_rights.py --item-id S1-0001 \
+    --classification public_corpus --route opencode-go \
+    --policy-id opencode-go-2026-07-27        # stdout is the data_rights record
+```
+
+`check_data_rights.py` runs before a provider request is assembled and exits 0
+allow, 10 deny, 20 unresolved. Deny and unresolved both stop egress; they stay
+distinct because a prohibition and missing evidence need different remediation.
+
+Two distinctions carry the design. **Gating facts are not downstream-use facts:**
+whether this classification may travel this route is a gate, while whether the raw
+response may later be exported or used to train a router is a restriction recorded
+on the record. Conflate them and `raw_output_capture_status: contract_pending`
+blocks a public benchmark item, which pressures whoever maintains the registry into
+writing `allowed` instead — asserting a permission nobody granted. **Demanded
+controls are not observed controls:** a policy's `requiredControls` says what must
+be true of the account, so re-reading that same file to confirm it checks the policy
+against itself. Claude's model-improvement setting comes from
+`--model-improvement-enabled`, and its absence on that route is `unresolved`.
+
+Customer, third-party confidential, personal, secret and unclassified inputs are
+denied on every route. Carrythrough-owned internal material needs explicit per-item
+authorization; only the public corpus is self-authorizing.
 
 ## Three things that are easy to get wrong
 
