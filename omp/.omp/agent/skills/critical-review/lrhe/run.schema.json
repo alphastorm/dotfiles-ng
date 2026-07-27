@@ -85,11 +85,17 @@
         "fallback_detected": {"type": "boolean"},
         "omp_version": {"type": "string", "minLength": 1},
         "provider_client_version": {"type": "string", "minLength": 1},
-        "product_route": {"type": "string", "enum": ["opencode-go", "opencode-zen"]},
+        "product_route": {
+          "type": "string",
+          "enum": ["opencode-go", "opencode-zen", "anthropic-subscription",
+                   "google-antigravity", "supergrok-subscription", "unknown"],
+          "description": "which product or tier of the provider served this. Section 7 wrote it as opencode-go|opencode-zen because it was drafted for the OpenCode expansion, and a two-value enum forced every other route to record one of them -- a Claude run was being stamped `opencode-zen`, a fabricated provenance field on three of the five configured routes. `unknown` is legal; guessing is not"
+        },
         "billing_route": {
           "type": "string",
-          "enum": ["go_allowance", "zen_overflow", "direct_zen", "unknown"],
-          "description": "who is billed this request. `unknown` means unavailable and is legal; absence is illegal"
+          "enum": ["go_allowance", "zen_overflow", "direct_zen",
+                   "subscription_included", "not_applicable", "unknown"],
+          "description": "who is billed this request. `unknown` means the signal was unavailable and is legal; absence is illegal, and inference is forbidden -- a fabricated billing route reconciles against the dashboard and nobody looks again"
         }
       }
     },

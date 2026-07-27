@@ -307,6 +307,31 @@ def dispatch(req: AuthorizedRequest, transport: str, *,
     return record
 
 
+# The product tier each configured route serves. Only the OpenCode route is
+# genuinely ambiguous -- a request can land on the Go allowance or spill to Zen,
+# and only the provider's own telemetry knows which -- so it is absent here and
+# must come from the transport or stay `unknown`.
+PRODUCT_ROUTE: dict[str, str] = {
+    "anthropic-subscription": "anthropic-subscription",
+    "claude-code-subscription": "anthropic-subscription",
+    "google-antigravity": "google-antigravity",
+    "xai-oauth": "supergrok-subscription",
+}
+
+
+def _enum_or_unknown(value: Any, field: str) -> str:
+    """Accept a reported value only if the schema already allows it.
+
+    A transport reporting something the enum does not know is telling us about a
+    route we have not modelled. Recording it verbatim fails validation at the last
+    step and loses the run; recording `unknown` keeps the run and is honest about
+    what could be established.
+    """
+    schema = json.loads((HERE / "run.schema.json").read_text())
+    allowed = schema["properties"]["reviewer"]["properties"][field]["enum"]
+    return value if value in allowed else "unknown"
+
+
 def _run_record(req: AuthorizedRequest, response: dict, started, completed,
                 transport: str, omp_version: str) -> dict[str, Any]:
     served = response.get("served_model")
@@ -333,11 +358,17 @@ def _run_record(req: AuthorizedRequest, response: dict, started, completed,
         "router_dataset_example_ids": [],
         "reviewer": {
             "provider_route": req.provider_route,
-            "product_route": "opencode-go" if req.provider_route == "opencode-go" else "opencode-zen",
-            # Never inferred. Section 7 permits `unknown` and forbids guessing:
-            # a fabricated billing route is worse than an absent one, because it
-            # reconciles against the dashboard and nobody looks again.
-            "billing_route": "unknown",
+            # Reported by the transport when it can tell, `unknown` when it cannot.
+            # Section 7 permits `unknown` and forbids inference: a fabricated
+            # billing route reconciles against the dashboard and nobody looks
+            # again. The previous version stamped every non-OpenCode run
+            # `opencode-zen` because the enum offered nothing else -- a Claude run
+            # carrying an OpenCode product route is not a rounding error, it is a
+            # provenance field that is simply false.
+            "product_route": _enum_or_unknown(
+                response.get("product_route") or PRODUCT_ROUTE.get(req.provider_route),
+                "product_route"),
+            "billing_route": _enum_or_unknown(response.get("billing_route"), "billing_route"),
             "account_type": req.account_type,
             "requested_model": req.requested_model,
             "served_model": served,

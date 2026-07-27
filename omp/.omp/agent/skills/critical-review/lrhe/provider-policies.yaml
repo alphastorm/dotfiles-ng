@@ -127,7 +127,7 @@ policies:
     providerRoute: google-antigravity
     accountType: antigravity_remote
     dataAllowlistKey: google
-    termsSnapshotId: google-antigravity-UNSNAPSHOTTED
+    termsSnapshotId: google-antigravity-2026-07-27
     providerTrainingUse: unknown
     providerRetention: unknown
     rawOutputCaptureStatus: internal_evaluation_only
@@ -155,13 +155,20 @@ policies:
         receive material marked local-only or confidential-to-device; public
         benchmark corpus only until that boundary is written down somewhere it can
         be cited.
-      - Terms and retention posture are unsnapshotted and recorded as unknown rather than assumed favourable.
+      - >-
+        Terms ARE now snapshotted (Antigravity's own Terms of Service plus Google's
+        Generative AI Additional Terms, which is the governing data-use document
+        since Antigravity publishes no privacy page of its own). providerTrainingUse
+        and providerRetention stay `unknown` regardless: the documents exist in the
+        snapshot and nobody has read them to a conclusion. Reading 560KB of terms to
+        a retention posture is a legal determination, not a field an agent should
+        fill in.
 
   - policyId: xai-oauth-2026-07-27
     providerRoute: xai-oauth
     accountType: supergrok_subscription
     dataAllowlistKey: xai
-    termsSnapshotId: xai-oauth-UNSNAPSHOTTED
+    termsSnapshotId: xai-oauth-2026-07-27
     providerTrainingUse: unknown
     providerRetention: unknown
     rawOutputCaptureStatus: internal_evaluation_only

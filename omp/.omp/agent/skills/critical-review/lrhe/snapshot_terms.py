@@ -60,6 +60,15 @@ TERMS_SOURCES: dict[str, str] = {
     "anthropic-consumer-model-training": (
         "https://privacy.claude.com/en/articles/10023580-is-my-data-used-for-model-training"
     ),
+    # Antigravity publishes product terms but has no privacy page of its own
+    # (/privacy is a 404), so the governing data-use document is Google's
+    # Generative AI Terms. Both are captured; neither alone is the answer.
+    "antigravity-terms": "https://antigravity.google/terms",
+    "google-generative-ai-terms": "https://policies.google.com/terms/generative-ai",
+    # Verified by page title rather than URL shape: "Terms of Service - Consumer"
+    # and "Privacy Policy", both 200 on x.ai/legal/.
+    "xai-terms-of-service": "https://x.ai/legal/terms-of-service",
+    "xai-privacy-policy": "https://x.ai/legal/privacy-policy",
 }
 
 # Keys MUST match `termsSnapshotId` values in provider-policies.yaml exactly.
@@ -72,6 +81,14 @@ SNAPSHOT_COMPONENTS: dict[str, tuple[str, ...]] = {
     ),
     "anthropic-consumer-privacy-2026-03-16": (
         "anthropic-consumer-model-training",
+    ),
+    "google-antigravity-2026-07-27": (
+        "antigravity-terms",
+        "google-generative-ai-terms",
+    ),
+    "xai-oauth-2026-07-27": (
+        "xai-terms-of-service",
+        "xai-privacy-policy",
     ),
 }
 DEFAULT_SNAPSHOT_IDS = tuple(sorted(SNAPSHOT_COMPONENTS))
