@@ -62,20 +62,28 @@ silently rather than failing loudly.
 |---|---|---|---|
 | S1 `REVIEW_HUMAN` | 14 | 14 | — |
 | S2 `PATCH_VERDICT` | 10 | 10 | — |
-| S3 `VULN_POC` | 8 | 8 | 4 carry an unresolved upstream licence; see below |
+| S3 `VULN_POC` | 8 | 8 | 4 carry an upstream licence the detector could not classify; see below |
 | S4 `FP_TRAP` | 12 | 12 | — |
 | S5 `NULL` | 3 | 3 | — |
 
 85 labels, 37 critical, 5 executable, 12 traps, 11 controls.
 
-Four S3 items — ImageMagick, KDE kimageformats, libheif, freetype2 — have a
-licence the host's detector could not classify (`NOASSERTION` or `UNDECLARED`).
-They are authorized for `anthropic` and `opencode` by explicit operator decision
-and denied to everyone else, so **gemini and grok cannot review them**. That
-leaves the core three-family panel with four holes in S3, the executable stratum:
-half its items get one family instead of three. Either extend the grant or treat
-S3 cross-family recall as measured on four items, but do not average over the hole
-without saying so. `check_packet_gates.py audit` names these four on every run.
+All 47 items authorize all five provider vendors, so every family can review every
+item and no stratum has a coverage hole.
+
+Four S3 items — ImageMagick, KDE kimageformats, libheif, freetype2 — reached that
+state by explicit operator decision rather than automatically. Their upstream
+licence is real but the host's detector could not classify it (`NOASSERTION` or
+`UNDECLARED`), and `_allowlist()` in `sources.py` withholds every provider in that
+case rather than quietly defaulting to open. Two of the four are copyleft, which
+governs distribution of derivative works and not reading source for review; none
+carries a no-machine-processing term, and `check_packet_gates.py` finds no explicit
+restriction on any of them. They are still named as warnings on every audit run,
+because an unresolved licence is a fact worth seeing even once it has been decided.
+
+**A rebuild narrows them again.** `_allowlist()` is deliberately conservative, so
+regenerating the corpus returns those four to an empty allowlist. Re-run
+`check_packet_gates.py grant` afterwards; the audit will tell you if you forgot.
 
 ## Quick start
 

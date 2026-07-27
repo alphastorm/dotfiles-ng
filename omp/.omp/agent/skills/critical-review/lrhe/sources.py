@@ -274,11 +274,18 @@ def license_class(license_id: str | None) -> str:
 
 
 def _allowlist(license_id: str | None, *, allow_copyleft: bool = False) -> list[str]:
-    """Which providers may receive this item.
+    """Which providers may receive this item, as the BUILDER can determine it.
 
     Permissive public source goes to every participating family. Copyleft is
     withheld pending an explicit policy decision (`--allow-copyleft`), and an
     unresolved license is withheld outright rather than quietly defaulting to open.
+
+    That conservatism is correct here and has a consequence worth knowing: a
+    rebuild RESETS any grant made later. Providers are added after the fact by
+    `check_packet_gates.py grant`, once the six egress gates pass on the generated
+    packet -- which is the only place that can see what would actually be
+    transmitted. Regenerate the corpus and four S3 items go back to an empty
+    allowlist; re-run the grant, and let the audit tell you if you forgot.
     """
     cls = license_class(license_id)
     if cls == "permissive" or (cls == "copyleft" and allow_copyleft):

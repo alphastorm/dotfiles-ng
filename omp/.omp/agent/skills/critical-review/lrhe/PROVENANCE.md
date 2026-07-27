@@ -213,11 +213,16 @@ across three runs under `PYTHONHASHSEED=random`.
 All 47 items built, validated, scrubbed, and dispatched as reviewer-safe packets.
 85 labels, 37 critical, 5 executable, 12 traps, 11 controls.
 
-The four S3 items with an unresolved licence — ImageMagick, KDE kimageformats,
-libheif, freetype2 — are authorized for `anthropic` and `opencode` by explicit
-operator decision and denied to everyone else. Gemini and grok therefore cannot
-review them, which leaves the core three-family panel with four holes in the
-executable stratum. `check_packet_gates.py audit` names them on every run.
+All 47 items authorize all five provider vendors; no family has a coverage hole in
+any stratum.
+
+The four S3 items with an unclassifiable licence — ImageMagick, KDE
+kimageformats, libheif, freetype2 — got there by explicit operator decision, not
+automatically. `_allowlist()` withholds every provider when the detector returns
+`NOASSERTION` or `UNDECLARED`, which is the right default and also means a rebuild
+silently narrows them again: re-run `check_packet_gates.py grant` after any
+corpus regeneration. The audit names them on every run regardless, because an
+unresolved licence stays worth seeing after it has been decided.
 
 ### Sweep results
 

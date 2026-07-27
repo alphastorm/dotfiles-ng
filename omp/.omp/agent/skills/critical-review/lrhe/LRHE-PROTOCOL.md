@@ -508,3 +508,37 @@ injected lens main effect, and the injected family × lens interaction (permutat
 correctly reporting zero unique contribution for the lane that had been given none.
 
 The corpus builder needs network access and provider credentials, so it has not been executed here.
+
+---
+
+## Addendum, 2026-07-27 — 40 items became 47
+
+Appended rather than edited in. A preregistration whose assumptions get quietly
+rewritten to match the data is no longer a preregistration, so the sections above
+stand as written and this records what changed.
+
+§2 targets 47 items and the built corpus has 47. The statistics and power sections
+(§7, §8) were computed at **40**, the earlier target, and were never recalculated.
+Everything they say about power is therefore conservative rather than wrong: the
+design got larger, not smaller.
+
+Recomputed with `power_lrhe.py --sweep-items 40,47 --effect 0.8 --reps 60`:
+
+| items | mean labeled defects | power, keep/drop |
+|---|---:|---:|
+| 40 | 84.8 | 0.883 |
+| 47 | 99.6 | 0.900 |
+
+About two points of extra power for the leave-one-family-out contrast. Nothing in
+the promotion gates moves, and no threshold in §8 needs revisiting.
+
+Two other numbers above are now stale in the same direction. The "~84 labeled
+defects" the §7 simulation assumes is 85 in the built corpus, which is close enough
+that the simulated null still describes it. The "simulated 40-item / 360-run /
+1,032-claim experiment" in §12 was the state of the simulator at the time; it now
+emits arms C, D and T rather than D alone, because arm T — the empirical null this
+protocol calls load-bearing — had never actually been generated end to end.
+
+What did NOT change: the unit of analysis is still the labeled defect clustered by
+item, recall is still never averaged across strata, and the κ ≥ 0.70 human
+calibration gate still stands and has not been met.
