@@ -108,15 +108,57 @@ python3 validate_corpus.py --corpus corpus.jsonl --plan
 python3 build_corpus.py probes --corpus corpus.jsonl --out probes/
 python3 build_corpus.py assignments --out assignments.csv --corpus corpus.jsonl --d-items 24
 
+# freeze the starting state before the first call; verify re-checks and reports drift
+python3 freeze_lock.py freeze
+python3 freeze_lock.py verify
+
 # ... run the council, collect runs.jsonl per run.schema.json ...
-python3 score_lrhe.py ...
+python3 score_lrhe.py --corpus corpus.jsonl --runs runs.jsonl --judge judge.jsonl \
+    --experiment-id lrhe-core-v1 --panel-id core-cgg-v1 --manifest assignments.manifest.json
 python3 analyze_lrhe.py --claims claims.csv --runs runs.csv --corpus corpus.jsonl \
+    --experiment-id lrhe-core-v1 --panel-id core-cgg-v1 \
     --probe probe.csv --judge-calibration calib.csv --boot 10000
+```
+
+`--experiment-id` and `--panel-id` are required on both, with no default. A mean
+taken over the core lens experiment and the OpenCode floor panel describes neither,
+and that failure has no symptom: every statistic still returns a number. The panels
+themselves live in `panels.yaml`, which is also where `build_corpus.py` reads its
+families and lenses from — a panel edited in Python is a design change with no
+artifact and no digest.
+
+```bash
+python3 build_corpus.py assignments --corpus corpus.jsonl   # default: 4x4, 762 runs
+python3 build_corpus.py assignments --corpus corpus.jsonl --experiment-id lrhe-core-v1
+python3 build_corpus.py assignments --corpus corpus.jsonl --experiment-id lrhe-opencode-v1
 ```
 
 `corpus.jsonl` is the scored corpus and carries the answer key. `packets.jsonl` is
 what a reviewer may see: no `repo`, no commits, no `labels`, no `build_notes`, and
 for a trap the assertion without its `ground_truth`. Never dispatch `corpus.jsonl`.
+
+## A run that cannot prove itself is not evidence
+
+`run.schema.json` is v2: panel-aware, nested, and every boolean hard gate is
+**required**. Absent telemetry used to default to success — `schema_valid` to
+`True`, `wrote_to_repo` to `False` — so a runner that failed to capture anything
+produced a record indistinguishable from a clean one. It now fails validation, and
+`score_lrhe.py` aborts rather than scoring the subset that happens to parse.
+
+A record that validates can still disqualify itself. Identity unverified, a served
+model that is not the requested one, a tool violation, a repository digest that
+moved, a timeout, a provider error, or an assignment-manifest digest that no longer
+matches — each marks the run `gate_failed` with its reason. Those runs stay in
+`runs.csv` so they remain auditable; `analyze_lrhe.py` is what drops them, once,
+where the estimates are actually made.
+
+`judgments.jsonl` holds one row per judge invocation, and `judge.jsonl` the
+deterministic aggregate over them. Ingest refuses a response whose judge shares the
+author's family: the pool already excludes it when prompts are generated, but
+nothing re-checked it on the way back in, so a hand-edited or mis-routed response
+file could seat a family as judge of its own claim — the single-family-judge
+problem `LRHE-PROTOCOL.md` §5.2 calls disqualifying.
+
 
 ## The council is asymmetric
 
@@ -177,7 +219,7 @@ only from container execution. `judge_lrhe.py` closes both with the same plumbin
 python3 judge_lrhe.py prompts --corpus corpus.jsonl --runs runs.jsonl \
     --claims claims.csv --families gpt claude gemini grok kimi glm --out jp.jsonl
 python3 judge_lrhe.py ingest --prompts jp.jsonl --responses jr.jsonl \
-    --out judge.jsonl --human-queue human_queue.jsonl \
+    --out judge.jsonl --out-judgments judgments.jsonl --human-queue human_queue.jsonl \
     --tiebreak-out tb.jsonl --families gpt claude gemini grok kimi glm
 
 # cold refutation: one cheap family, disputed P0/P1 only -> exec.jsonl -> REFUTED

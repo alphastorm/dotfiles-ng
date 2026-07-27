@@ -495,6 +495,61 @@ def apply_contamination_mask(defects: pd.DataFrame, probe: pd.DataFrame) -> pd.D
     return defects[pd.Series(mask, index=defects.index)]
 
 
+def select_panel(claims: pd.DataFrame, runs: pd.DataFrame, args) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Narrow to one experiment and panel, and drop runs that failed a hard gate.
+
+    Refusing rather than inferring is the point. A file holding one experiment
+    today holds two the first time someone appends to it, and every statistic
+    below would go on producing numbers -- pooling the three-family core lens
+    experiment with the OpenCode floor panel into a mean that describes neither.
+    """
+    for name, df in (("claims", claims), ("runs", runs)):
+        missing = {"experiment_id", "panel_id"} - set(df.columns)
+        if missing:
+            raise SystemExit(
+                f"{name} is missing {sorted(missing)}; it predates panel-aware scoring. "
+                f"Re-run score_lrhe.py rather than analysing it as though it belonged "
+                f"to one panel."
+            )
+
+    def narrow(df: pd.DataFrame) -> pd.DataFrame:
+        return df[(df["experiment_id"] == args.experiment_id)
+                  & (df["panel_id"] == args.panel_id)]
+
+    present = sorted(set(map(tuple, runs[["experiment_id", "panel_id"]].dropna().values)))
+    claims, runs = narrow(claims), narrow(runs)
+    if runs.empty:
+        raise SystemExit(
+            f"no runs for experiment_id={args.experiment_id!r} panel_id={args.panel_id!r}; "
+            f"the file contains {present}"
+        )
+
+    selection = {"experiment_id": args.experiment_id, "panel_id": args.panel_id,
+                 "other_panels_in_file": [p for p in present
+                                          if p != (args.experiment_id, args.panel_id)]}
+
+    if args.arms:
+        claims = claims[claims["arm"].isin(args.arms)]
+        runs = runs[runs["arm"].isin(args.arms)]
+        selection["arms"] = list(args.arms)
+
+    # A run that mutated the repository, ran the wrong model, or lost its telemetry
+    # is not evidence about its family. score_lrhe records it rather than deleting
+    # it, so the exclusion happens here, once, where the estimates are made.
+    if "gate_failed" in runs.columns:
+        failed = set(runs.loc[runs["gate_failed"].fillna(False).astype(bool), "run_id"])
+        selection["gate_failed_runs_dropped"] = len(failed)
+        if failed and not args.keep_gate_failed:
+            runs = runs[~runs["run_id"].isin(failed)]
+            claims = claims[~claims["run_id"].isin(failed)]
+        elif failed:
+            selection["gate_failed_runs_dropped"] = 0
+            selection["gate_failed_runs_kept"] = len(failed)
+    if runs.empty:
+        raise SystemExit("every run in the selected panel failed a hard gate; nothing to analyse")
+    return claims, runs, selection
+
+
 # ----------------------------------------------------------------- driver
 
 def main(argv: list[str] | None = None) -> int:
@@ -509,12 +564,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--boot", type=int, default=2000)
     ap.add_argument("--perm", type=int, default=2000)
     ap.add_argument("--out", type=Path, default=Path("analysis.json"))
+    ap.add_argument("--experiment-id", required=True,
+                    help="required, not inferred. Two experiments pooled into one mean "
+                         "is a number with no referent")
+    ap.add_argument("--panel-id", required=True)
+    ap.add_argument("--arms", nargs="*", default=None, metavar="ARM",
+                    help=f"restrict to these arms (default: every arm present). Per-family "
+                         f"statistics always use {' '.join(COUNCIL_ARMS)} regardless")
+    ap.add_argument("--keep-gate-failed", action="store_true",
+                    help="score runs that failed a hard gate. For diagnosing the gate "
+                         "itself; never for a headline number")
     args = ap.parse_args(argv)
 
     claims = pd.read_csv(args.claims)
     runs = pd.read_csv(args.runs)
     corpus = read_jsonl(args.corpus)
     probe = pd.read_csv(args.probe) if args.probe and args.probe.exists() else None
+
+    claims, runs, selection = select_panel(claims, runs, args)
 
     defects = build_defect_table(claims, corpus)
     if defects.empty:
@@ -531,6 +598,7 @@ def main(argv: list[str] | None = None) -> int:
     families = sorted(f for f in council["family"].unique() if f)
 
     result: dict = {
+        "selection": selection,
         "n_items": len(corpus),
         "n_runs": int(len(runs)),
         "n_claims": int(len(claims)),

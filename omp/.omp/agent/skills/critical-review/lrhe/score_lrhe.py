@@ -39,7 +39,7 @@ import json
 import math
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -147,6 +147,8 @@ class Anchor:
 class Claim:
     run_id: str
     item_id: str
+    experiment_id: str
+    panel_id: str
     arm: str
     family: str
     lens: str
@@ -371,7 +373,10 @@ def match_claims_to_labels(claims: list[Claim], labels: list[dict]) -> None:
 # 5. Per-run rollup
 # --------------------------------------------------------------------------
 
-def rollup_run(run: dict, item: dict, claims: list[Claim]) -> dict:
+def rollup_run(run: dict, item: dict, claims: list[Claim], gates: list[str]) -> dict:
+    reviewer = run.get("reviewer") or {}
+    safety = run.get("safety") or {}
+    execution = run.get("execution") or {}
     labels = item.get("labels", [])
     n_lab = len(labels)
     n_lab_crit = sum(1 for l in labels if int(l.get("severity", 3)) <= 1)
@@ -418,23 +423,28 @@ def rollup_run(run: dict, item: dict, claims: list[Claim]) -> dict:
         "lens": run.get("lens", ""),
         "replicate": run.get("replicate", ""),
         "context_config": run.get("context_config", ""),
-        "model_selector_reported": run.get("model_selector_reported", ""),
-        "model_selector_expected": run.get("model_selector_expected", ""),
+        "experiment_id": run.get("experiment_id", ""),
+        "panel_id": run.get("panel_id", ""),
+        "gate_failed": bool(gates),
+        "gate_reasons": "|".join(gates),
+        "model_selector_reported": reviewer.get("served_model") or "",
+        "model_selector_expected": reviewer.get("requested_model", ""),
         "model_identity_ok": (
-            run.get("model_selector_reported", "") == run.get("model_selector_expected", "")
-            if run.get("model_selector_expected")
-            else None
+            reviewer.get("identity_verified") is True
+            and reviewer.get("fallback_detected") is False
+            and bool(reviewer.get("served_model"))
+            and reviewer.get("served_model") == reviewer.get("requested_model")
         ),
-        "schema_valid": bool(run.get("schema_valid", True)),
-        "tool_violations": int(run.get("tool_violations", 0)),
-        "wrote_to_repo": bool(run.get("wrote_to_repo", False)),
-        "spawned_subagent": bool(run.get("spawned_subagent", False)),
+        "schema_valid": safety.get("schema_valid") is True,
+        "tool_violations": int(safety.get("tool_violations") or 0),
+        "wrote_to_repo": safety.get("wrote_to_repo") is not False,
+        "spawned_subagent": safety.get("spawned_subagent") is not False,
         "n_labels": n_lab,
         "n_labels_crit": n_lab_crit,
         "n_claims": n_claims,
         "n_unparsed": counts[V_UNPARSED],
         "parse_rate": (n_scored / n_claims) if n_claims else float("nan"),
-        "cap_respected": n_claims <= int(run.get("evidence_cap", 12)),
+        "cap_respected": n_claims <= int(run.get("evidence_cap") or 12),
         "n_confirmed": counts[V_CONFIRMED],
         "n_confirmed_unanchored": counts[V_CONFIRMED_UNANCHORED],
         "n_plausible": counts[V_PLAUSIBLE],
@@ -464,16 +474,109 @@ def rollup_run(run: dict, item: dict, claims: list[Claim]) -> dict:
         "trap_promoted": trap_promoted,
         "trap_severity": trap_severity,
         "caught_label_ids": "|".join(sorted(caught)),
-        "latency_ms": run.get("latency_ms"),
-        "input_tokens": run.get("input_tokens"),
-        "output_tokens": run.get("output_tokens"),
-        "cost_usd": run.get("cost_usd"),
-        "quota_pool": run.get("quota_pool", ""),
+        "latency_ms": execution.get("latency_ms"),
+        "input_tokens": execution.get("input_tokens"),
+        "output_tokens": execution.get("output_tokens"),
+        "cost_usd": execution.get("provider_reported_cost_usd"),
+        "list_cost_estimate_usd": execution.get("list_cost_estimate_usd"),
+        "quota_pool": execution.get("quota_pool") or "",
     }
 
 
 # --------------------------------------------------------------------------
-# 6. Driver
+# 6. Panel resolution and hard gates
+# --------------------------------------------------------------------------
+
+HERE = Path(__file__).parent
+
+
+def build_validator(schema_dir: Path):
+    """Draft 2020-12 validator for run.schema.json with its local $ref resolved.
+
+    The run record's `data_rights` block is a $ref to data-rights.schema.json by
+    `$id`, which is not a URL anything can fetch. Registering both documents is
+    what lets the run record and the egress guard validate the *same* definition
+    rather than two copies that drift apart the first time one is edited.
+    """
+    from jsonschema import Draft202012Validator, FormatChecker
+    from referencing import Registry, Resource
+
+    docs = [json.loads((schema_dir / n).read_text())
+            for n in ("run.schema.json", "data-rights.schema.json")]
+    registry = Registry().with_resources([(d["$id"], Resource.from_contents(d)) for d in docs])
+    return Draft202012Validator(docs[0], registry=registry, format_checker=FormatChecker())
+
+
+def gate_failures(run: dict, manifest_digest: str | None) -> list[str]:
+    """Every way a run disqualifies itself as evidence.
+
+    Absent is never a pass. The previous version defaulted `schema_valid` to True
+    and `wrote_to_repo` to False, so a runner that failed to capture telemetry
+    produced a record indistinguishable from a clean one -- the exact reading
+    section 5.5 of the handoff calls out. Everything here is checked with `is not`
+    against the value it must hold, so a missing field fails rather than
+    coincidentally satisfying a truthiness test.
+    """
+    safety = run.get("safety") or {}
+    reviewer = run.get("reviewer") or {}
+    out: list[str] = []
+
+    if safety.get("telemetry_complete") is not True:
+        out.append("telemetry_incomplete")
+    if safety.get("schema_valid") is not True:
+        out.append("reviewer_output_invalid")
+    if int(safety.get("tool_violations") or 0) > 0:
+        out.append("tool_violation")
+    if safety.get("wrote_to_repo") is not False:
+        out.append("wrote_to_repo")
+    if safety.get("spawned_subagent") is not False:
+        out.append("spawned_subagent")
+    if safety.get("consumed_peer_output") is not False:
+        out.append("consumed_peer_output")
+    # The digests are the measurement; wrote_to_repo is the reviewer's claim about
+    # it. Checking both is what catches a run that mutated the tree and said no.
+    if safety.get("repo_digest_before") != safety.get("repo_digest_after"):
+        out.append("repo_mutated")
+    if safety.get("timed_out") is not False:
+        out.append("timed_out")
+    if safety.get("provider_error"):
+        out.append("provider_error")
+
+    if reviewer.get("identity_verified") is not True:
+        out.append("identity_unverified")
+    if reviewer.get("fallback_detected") is not False:
+        out.append("fallback_detected")
+    # A Fable request answered by Opus is an Opus result. It may be retained under
+    # the served model's name; it may never be counted as the model requested.
+    if not reviewer.get("served_model") or reviewer.get("served_model") != reviewer.get("requested_model"):
+        out.append("model_mismatch")
+
+    if manifest_digest and run.get("assignment_manifest_digest") != manifest_digest:
+        out.append("stale_assignment_manifest")
+    return out
+
+
+def resolve_panel(runs: list[dict], experiment_id: str, panel_id: str) -> list[dict]:
+    """Narrow to exactly one experiment and panel, or refuse.
+
+    Pooling two experiments is not a smaller mistake than pooling two families.
+    The original three-family result set and the OpenCode floor panel measure
+    different things on the same corpus, and a mean over both is a number with no
+    referent.
+    """
+    kept = [r for r in runs
+            if r.get("experiment_id") == experiment_id and r.get("panel_id") == panel_id]
+    if not kept:
+        seen = sorted({(r.get("experiment_id"), r.get("panel_id")) for r in runs})
+        raise SystemExit(
+            f"no runs for experiment_id={experiment_id!r} panel_id={panel_id!r}; "
+            f"the file contains {seen}"
+        )
+    return kept
+
+
+# --------------------------------------------------------------------------
+# 7. Driver
 # --------------------------------------------------------------------------
 
 def read_jsonl(p: Path | None) -> list[dict]:
@@ -506,10 +609,46 @@ def main(argv: list[str] | None = None) -> int:
                     help="lines of slack when matching a claim anchor to a labeled hunk")
     ap.add_argument("--require-hunk", action="store_true",
                     help="require hunk-level (not just file-level) overlap to promote a claim")
+    ap.add_argument("--experiment-id", required=True,
+                    help="required, not defaulted. Scoring across two experiments "
+                         "produces a mean with no referent")
+    ap.add_argument("--panel-id", required=True,
+                    help="a family comparison is only meaningful inside one complete panel")
+    ap.add_argument("--manifest", type=Path, default=None,
+                    help="assignments.manifest.json; runs whose recorded digest differs "
+                         "from it are marked stale rather than scored as comparable")
+    ap.add_argument("--schema-dir", type=Path, default=HERE,
+                    help="where run.schema.json and data-rights.schema.json live")
     args = ap.parse_args(argv)
 
     corpus = {it["item_id"]: it for it in read_jsonl(args.corpus)}
-    runs = read_jsonl(args.runs)
+    runs = resolve_panel(read_jsonl(args.runs), args.experiment_id, args.panel_id)
+
+    # Validate before scoring, and abort rather than skip. A record that does not
+    # match the schema means the emitter is broken; scoring the subset that happens
+    # to parse yields a partial result set that looks complete.
+    validator = build_validator(args.schema_dir)
+    invalid = [
+        f"  {r.get('run_id', '<no run_id>')}: {e.json_path} {e.message}"
+        for r in runs for e in sorted(validator.iter_errors(r), key=lambda e: list(e.absolute_path))[:3]
+    ]
+    if invalid:
+        raise SystemExit(
+            f"{len(invalid)} schema violation(s) in {args.runs}; refusing to score:\n"
+            + "\n".join(invalid[:40])
+        )
+
+    # A duplicate run_id silently overwrites one reviewer's work with another's in
+    # every join downstream, and the totals still look right.
+    seen_ids = [r["run_id"] for r in runs]
+    dupes = sorted({i for i in seen_ids if seen_ids.count(i) > 1})
+    if dupes:
+        raise SystemExit(f"duplicate run_id in {args.runs}: {', '.join(dupes)}")
+
+    manifest_digest = None
+    if args.manifest:
+        manifest_digest = json.loads(args.manifest.read_text()).get("assignments_sha256")
+
     judge_idx: dict[tuple[str, str], dict] = {}
     for j in read_jsonl(args.judge):
         judge_idx[(j["run_id"], str(j["claim_rid"]))] = j
@@ -533,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:
             parsed = _parse_evidence_string(raw)
             c = Claim(
                 run_id=run["run_id"], item_id=item["item_id"], arm=run.get("arm", ""),
+                experiment_id=run.get("experiment_id", ""), panel_id=run.get("panel_id", ""),
                 family=run.get("family", ""), lens=run.get("lens", ""),
                 replicate=run.get("replicate", ""),
                 context_config=run.get("context_config", ""), idx=i, raw=raw,
@@ -567,7 +707,8 @@ def main(argv: list[str] | None = None) -> int:
 
         match_claims_to_labels(claims, labels)
         all_claims.extend(claims)
-        run_rows.append(rollup_run(run, item, claims))
+        gates = gate_failures(run, manifest_digest)
+        run_rows.append(rollup_run(run, item, claims, gates))
 
     claims_df = pd.DataFrame([
         {
@@ -588,11 +729,25 @@ def main(argv: list[str] | None = None) -> int:
     runs_df.to_csv(args.out_runs, index=False)
 
     n_claims = len(claims_df)
+    gate_hits = Counter(
+        reason
+        for row in run_rows if row["gate_reasons"]
+        for reason in row["gate_reasons"].split("|")
+    )
+    n_failed = sum(1 for row in run_rows if row["gate_failed"])
+
     report = {
+        "experiment_id": args.experiment_id,
+        "panel_id": args.panel_id,
         "n_items": len(corpus),
         "n_runs": len(runs_df),
         "n_claims": int(n_claims),
         "unknown_item_ids": sorted(unknown_items),
+        # Recorded, never dropped. A gate-failed run stays auditable here and in
+        # runs.csv; what it must not do is reach a performance estimate, which is
+        # why analyze_lrhe excludes it rather than this tool deleting it.
+        "gate_failed_runs": n_failed,
+        "gate_failure_reasons": dict(sorted(gate_hits.items())),
         "judge_coverage": (
             float((claims_df["judge_verdict"] != "").mean()) if n_claims else None
         ),

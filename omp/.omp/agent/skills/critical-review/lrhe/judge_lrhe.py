@@ -50,6 +50,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 VERDICTS = ("CONFIRMED", "PLAUSIBLE", "FABRICATED")
+VERDICT_TIE_ORDER = {v: i for i, v in enumerate(VERDICTS)}
 REFUTE_OUTCOMES = ("confirmed", "falsified", "unresolved")
 
 # Verbatim from SWE-PRBench `dataset/rubric.md` section 1. Reused rather than
@@ -252,29 +253,93 @@ def _render_judge(item: dict, claim: dict) -> str:
         impact=claim.get("impact_text", ""))
 
 
+def _top_with_tiebreak(
+    counter: Counter[str], tie_priority: dict[str, int] | None = None
+) -> tuple[str, int]:
+    """Return a deterministic majority-style winner and frequency from a Counter.
+
+    Counter.most_common() breaks ties by insertion order, and ingest may be replayed
+    with response shards concatenated in a different order. Those reorders must never
+    change the aggregate outcome, so ties are sorted explicitly with a fixed priority.
+    """
+    max_count = max(counter.values())
+    winners = [v for v, c in counter.items() if c == max_count]
+    if tie_priority is None:
+        winners.sort(key=str)
+    else:
+        fallback = len(tie_priority)
+        winners.sort(key=lambda v: (tie_priority.get(v, fallback), str(v)))
+    return winners[0], max_count
+
+
+def _coerce_int(value: object, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_float(value: object, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def cmd_ingest(args) -> int:
     prompts = {p["judge_id"]: p for p in _read_jsonl(args.prompts)}
     responses = _read_jsonl(args.responses)
 
     by_claim: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    judgments: list[dict] = []
     unmatched = 0
+    cross_family_claims: set[tuple[str, str]] = set()
+
     for r in responses:
         p = prompts.get(r.get("judge_id", ""))
         verdict = str(r.get("verdict", "")).strip().upper()
         if not p or verdict not in VERDICTS:
             unmatched += 1
             continue
-        by_claim[(p["run_id"], str(p["claim_rid"]))].append({
-            "family": p["judge_family"], "round": p.get("round", 1), "verdict": verdict,
+        key = (str(p["run_id"]), str(p["claim_rid"]))
+        judgment = {
+            "judge_id": p["judge_id"],
+            "run_id": key[0],
+            "claim_rid": key[1],
+            "item_id": str(p.get("item_id", "")),
+            "author_family": str(p.get("author_family", "")).strip(),
+            "judge_family": str(r.get("judge_family", p.get("judge_family", ""))).strip(),
+            "round": _coerce_int(r.get("round", p.get("round", 1)), 1),
+            "verdict": verdict,
             "label_id": r.get("label_id") or "",
-            "confidence": float(r.get("confidence") or 0.0),
+            "confidence": _coerce_float(r.get("confidence"), 0.0),
             "rationale": (r.get("rationale") or "")[:400],
-        })
+        }
+        if judgment["judge_family"] == judgment["author_family"]:
+            cross_family_claims.add(key)
+
+        by_claim[key].append(judgment)
+        judgments.append(judgment)
+
+    # Persist raw per-invocation records first, then aggregate deterministically
+    # from those rows (plus the explicit constraint checks below).
+    _write_jsonl(args.out_judgments, sorted(
+        judgments,
+        key=lambda r: (r["run_id"], r["claim_rid"], r["judge_family"], r["round"], r["judge_id"])
+    ))
+
+    scorable_by_claim: dict[tuple[str, str], list[dict]] = {}
+    for key, rows in by_claim.items():
+        if key in cross_family_claims:
+            continue
+        scorable_by_claim[key] = sorted(
+            rows, key=lambda r: (r["round"], r["judge_family"], r["judge_id"], r["verdict"])
+        )
 
     judged, queue, stats = [], [], Counter()
-    for (run_id, rid), votes in sorted(by_claim.items()):
+    for (run_id, rid), votes in sorted(scorable_by_claim.items()):
         tally = Counter(v["verdict"] for v in votes)
-        top, n_top = tally.most_common(1)[0]
+        top, n_top = _top_with_tiebreak(tally, tie_priority=VERDICT_TIE_ORDER)
         if n_top > len(votes) / 2:
             winners = [v for v in votes if v["verdict"] == top]
             stats["unanimous" if len(tally) == 1 else "majority"] += 1
@@ -291,54 +356,66 @@ def cmd_ingest(args) -> int:
         # defect was found. That is a different error and it corrupts the 1:1
         # matching, so it escalates too.
         label_votes = Counter(v["label_id"] for v in winners if v["label_id"])
-        label_id = label_votes.most_common(1)[0][0] if label_votes else ""
+        label_id = _top_with_tiebreak(label_votes)[0] if label_votes else ""
         if verdict == "CONFIRMED" and len(label_votes) > 1:
             stats["label_disagreement_to_human"] += 1
             needs_human = True
 
-        rec = {"run_id": run_id, "claim_rid": rid, "verdict": verdict, "label_id": label_id,
-               "affinity": round(sum(v["confidence"] for v in winners) / max(len(winners), 1), 3),
-               "panel": [v["family"] for v in votes], "unanimous": len(tally) == 1,
-               "needs_human": needs_human,
-               "votes": {v["family"]: v["verdict"] for v in votes}}
+        rec = {
+            "run_id": run_id,
+            "claim_rid": rid,
+            "verdict": verdict,
+            "label_id": label_id,
+            "affinity": round(sum(v["confidence"] for v in winners) / max(len(winners), 1), 3),
+            "panel": [v["judge_family"] for v in votes],
+            "unanimous": len(tally) == 1,
+            "needs_human": needs_human,
+            "votes": {v["judge_family"]: v["verdict"] for v in votes},
+        }
         judged.append(rec)
         if needs_human:
-            queue.append({**rec, "rationales": {v["family"]: v["rationale"] for v in votes}})
+            queue.append({**rec, "rationales": {v["judge_family"]: v["rationale"] for v in votes}})
 
     _write_jsonl(args.out, judged)
     if args.human_queue:
         _write_jsonl(args.human_queue, queue)
 
     n = len(judged)
-    print(f"adjudicated {n} claims from {len(responses)} responses")
+    print(f"adjudicated {n} claims from {len(judgments)} judge invocations")
     for k, v in sorted(stats.items()):
         print(f"  {k:<28} {v:>5}  ({v / max(n, 1):.0%})")
     if unmatched:
         print(f"  {'unmatched/invalid responses':<28} {unmatched:>5}")
+    if cross_family_claims:
+        print(f"  {'cross-family violations':<28} {len(cross_family_claims):>5}")
+        print(f"  Refusing {len(cross_family_claims)} claims with same-family judging")
+        print(f"  Fix responses and re-run to score only safe claims")
     print(f"\nwrote {args.out}")
+    print(f"wrote {args.out_judgments}")
     if args.human_queue:
         print(f"human queue: {len(queue)} claims -> {args.human_queue} "
               f"({len(queue) / max(n, 1):.0%})")
     if stats["split_to_human"] and args.tiebreak_out:
-        _emit_tiebreak(prompts, by_claim, args)
+        _emit_tiebreak(prompts, scorable_by_claim, args)
     elif stats["split_to_human"]:
         print(f"\n{stats['split_to_human']} claims split with no majority. Pass "
               f"--tiebreak-out to spend one extra non-authoring judge on those claims\n"
               f"instead of your own time; re-ingest the combined responses afterwards.")
-    return 0
+    return 1 if cross_family_claims else 0
 
 
 def _emit_tiebreak(prompts: dict, by_claim: dict, args) -> None:
     """One more non-authoring judge for split claims. A call, not a person."""
-    seen = {k: {v["family"] for v in votes} for k, votes in by_claim.items()}
+    seen = {k: {v["judge_family"] for v in votes} for k, votes in by_claim.items()}
     by_key: dict[tuple[str, str], dict] = {}
     for p in prompts.values():
         by_key.setdefault((p["run_id"], str(p["claim_rid"])), p)
 
     extra = []
-    for key, votes in by_claim.items():
-        tally = Counter(v["verdict"] for v in votes)
-        if tally.most_common(1)[0][1] > len(votes) / 2:
+    for key in sorted(by_claim):
+        votes = sorted(by_claim[key], key=lambda v: (v["round"], v["judge_family"], v["judge_id"]))
+        top, n_top = _top_with_tiebreak(Counter(v["verdict"] for v in votes), tie_priority=VERDICT_TIE_ORDER)
+        if n_top > len(votes) / 2:
             continue
         base = by_key.get(key)
         if not base:
@@ -353,6 +430,8 @@ def _emit_tiebreak(prompts: dict, by_claim: dict, args) -> None:
     _write_jsonl(args.tiebreak_out, extra)
     print(f"\ntiebreak: {len(extra)} extra judge calls -> {args.tiebreak_out}")
     print("  concatenate their responses with round 1 and re-run ingest.")
+
+
 
 
 # ---------------------------------------------------------------- refutation
@@ -574,6 +653,8 @@ def main() -> int:
     i.add_argument("--responses", type=Path, required=True)
     i.add_argument("--out", type=Path, default=Path("judge.jsonl"))
     i.add_argument("--human-queue", type=Path, default=Path("human_queue.jsonl"))
+    i.add_argument("--out-judgments", type=Path, default=Path("judgments.jsonl"),
+                   help="raw per-judge records; one row per invocation")
     i.add_argument("--tiebreak-out", type=Path, default=None,
                    help="emit one extra non-authoring judge for split claims")
     i.add_argument("--families", nargs="*", default=None, help="pool for tiebreak selection")

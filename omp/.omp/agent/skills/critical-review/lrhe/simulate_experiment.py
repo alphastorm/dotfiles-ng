@@ -29,6 +29,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).parent))
+from make_fixtures import to_v2  # noqa: E402  -- needs the path above
+
 HERE = Path(__file__).parent
 # The repository is flat; the protocol's Files section describes a scripts/ layout.
 # Resolve either, so the simulation runs from a checkout of either shape.
@@ -36,6 +39,12 @@ SCRIPTS = HERE.parent / "scripts" if (HERE.parent / "scripts" / "score_lrhe.py")
 
 FAMILIES = ["claude", "gemini", "grok"]
 LENSES = ["architecture", "whole_repo", "adversarial"]
+
+# Its own experiment, never pooled with a real one. The scorer and the analysis
+# both refuse to mix panels, and synthetic runs sharing an id with real ones is
+# exactly the mistake that refusal exists to catch.
+EXPERIMENT_ID = "lrhe-sim-v1"
+PANEL_ID = "sim-cgg-v1"
 
 # Latin square: item index mod 3 selects the rotation set.
 LENS_SETS = [
@@ -207,7 +216,9 @@ def simulate(
                                   "label_id": "", "affinity": 0.0 if fab else 0.25,
                                   "panel": [x for x in FAMILIES if x != fam],
                                   "unanimous": True})
-                runs.append({
+                # Same envelope the fixtures use, so the simulation exercises the
+                # schema the scorer enforces rather than a shape only it produces.
+                runs.append(to_v2({
                     "run_id": run_id, "item_id": iid, "arm": arm, "family": fam,
                     "lens": lens, "replicate": replicate, "context_config": "retrieval",
                     "model_selector_expected": f"{fam}/pinned",
@@ -220,7 +231,7 @@ def simulate(
                     "cost_usd": round(float(rng.uniform(.02, .25)), 4),
                     "quota_pool": f"{fam}-pool",
                     "evidence": evidence,
-                })
+                }, experiment_id=EXPERIMENT_ID, panel_id=PANEL_ID))
 
             # Arm C: one floor-lens run per family. This is the like-for-like partner
             # of arm T -- same lens, same one-run-per-column cardinality -- and it is
@@ -258,6 +269,7 @@ def run_pipeline(d: Path, boot=400, perm=400) -> dict:
         [sys.executable, str(SCRIPTS / "score_lrhe.py"),
          "--corpus", str(d / "corpus.jsonl"), "--runs", str(d / "runs.jsonl"),
          "--judge", str(d / "judge.jsonl"), "--exec", str(d / "exec.jsonl"),
+         "--experiment-id", EXPERIMENT_ID, "--panel-id", PANEL_ID,
          "--out-claims", str(d / "claims.csv"), "--out-runs", str(d / "runs.csv"),
          "--out-report", str(d / "report.json")],
         check=True, capture_output=True,
@@ -266,6 +278,7 @@ def run_pipeline(d: Path, boot=400, perm=400) -> dict:
         [sys.executable, str(SCRIPTS / "analyze_lrhe.py"),
          "--claims", str(d / "claims.csv"), "--runs", str(d / "runs.csv"),
          "--corpus", str(d / "corpus.jsonl"), "--boot", str(boot), "--perm", str(perm),
+         "--experiment-id", EXPERIMENT_ID, "--panel-id", PANEL_ID,
          "--out", str(d / "analysis.json")],
         check=True, capture_output=True, text=True,
     )

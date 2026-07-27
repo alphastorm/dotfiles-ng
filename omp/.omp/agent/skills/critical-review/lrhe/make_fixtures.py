@@ -256,6 +256,121 @@ execres = [
 ]
 
 
+# --------------------------------------------------------------- v2 envelope
+
+EXPERIMENT_ID = "lrhe-fixture-v1"
+PANEL_ID = "fixture-cgg-v1"
+PROMPT_VERSION = "fixture-v1"
+ASSIGNMENT_DIGEST = "sha256:fixture-assignment-manifest"
+
+
+def _rights(item_id: str) -> dict:
+    """A data-rights decision for a synthetic item.
+
+    Fixtures carry a real one rather than a stub because run.schema.json $refs the
+    same definition the egress guard emits. If the two shapes ever drift, the
+    fixture run is what notices, and it notices before a provider request does.
+    """
+    return {
+        "record_id": f"rights-{item_id}-fixture",
+        "item_id": item_id,
+        "classification": "public_corpus",
+        "input_owner": "synthetic_fixture_no_upstream_owner",
+        "rights_basis": ["synthetic fixture content; no third-party material"],
+        "explicit_authorization": True,
+        "policy_id": "fixture-no-egress",
+        "terms_snapshot_id": "fixture-no-egress",
+        "provider_route": "fixture",
+        "provider_authorized": True,
+        "customer_data_allowed": False,
+        "third_party_confidential_allowed": False,
+        "provider_training_use": "prohibited_by_provider_documentation",
+        "provider_retention": "zero_retention_by_provider_documentation",
+        "raw_output_capture_status": "allowed",
+        "internal_evaluation_allowed": True,
+        "router_training_allowed": False,
+        "model_training_allowed": False,
+        "egress_decision": "allow",
+        "decision_reason": "Synthetic fixture; nothing leaves the machine.",
+        "checked_at": "2026-07-27T00:00:00Z",
+        "checked_by": "make_fixtures.py",
+    }
+
+
+def to_v2(run: dict, experiment_id: str = EXPERIMENT_ID, panel_id: str = PANEL_ID,
+          prompt_version: str = PROMPT_VERSION) -> dict:
+    """Wrap a flat fixture literal in the v2 run record.
+
+    The literals above stay flat deliberately: a fixture earns its keep by putting
+    the one interesting field on a line you can see, and burying `tool_violations`
+    three levels down hides the only thing that run exists to test. This fills in
+    the surrounding envelope so they still validate -- which they must, because the
+    scorer now refuses to score anything that does not.
+    """
+    requested, served = run["model_selector_expected"], run["model_selector_reported"]
+    digest = f"sha256:fixture-repo-{run['item_id']}"
+    return {
+        "schema_version": 2,
+        "experiment_id": experiment_id,
+        "panel_id": panel_id,
+        "run_id": run["run_id"],
+        "item_id": run["item_id"],
+        "arm": run["arm"],
+        "family": run["family"],
+        "lens": run["lens"],
+        "replicate": run.get("replicate", ""),
+        "context_config": run["context_config"],
+        "role": "critic",
+        "prompt_version": prompt_version,
+        "artifact_digest": f"sha256:fixture-packet-{run['item_id']}",
+        "assignment_manifest_digest": ASSIGNMENT_DIGEST,
+        "evidence_cap": run.get("evidence_cap", 12),
+        "reviewer": {
+            "provider_route": "fixture",
+            "account_type": "fixture",
+            "requested_model": requested,
+            "served_model": served,
+            # r-s5-grok-arch reports a different model than it asked for. That run
+            # exists to make the identity gate fire; do not "fix" it.
+            "identity_verified": served == requested,
+            "fallback_detected": served != requested,
+            "omp_version": "fixture",
+            "provider_client_version": "fixture",
+        },
+        "execution": {
+            "started_at": "2026-07-27T00:00:00Z",
+            "completed_at": "2026-07-27T00:00:01Z",
+            "latency_ms": run["latency_ms"],
+            "input_tokens": run["input_tokens"],
+            "cached_input_tokens": 0,
+            "output_tokens": run["output_tokens"],
+            "list_cost_estimate_usd": run["cost_usd"],
+            "provider_reported_cost_usd": run["cost_usd"],
+            "quota_pool": run["quota_pool"],
+            "allowance_before": None,
+            "allowance_after": None,
+            "zen_balance_before": None,
+            "zen_balance_after": None,
+        },
+        "safety": {
+            "telemetry_complete": True,
+            "schema_valid": run["schema_valid"],
+            "tool_violations": run["tool_violations"],
+            "wrote_to_repo": run["wrote_to_repo"],
+            "spawned_subagent": run["spawned_subagent"],
+            "consumed_peer_output": False,
+            "repo_digest_before": digest,
+            "repo_digest_after": digest,
+            "timed_out": False,
+            "provider_error": None,
+        },
+        "data_rights": _rights(run["item_id"]),
+        "summary": run.get("summary", ""),
+        "evidence": run["evidence"],
+        "unresolved": run.get("unresolved", []),
+    }
+
+
 def write(outdir, name, rows):
     p = outdir / name
     p.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
@@ -275,6 +390,6 @@ if __name__ == "__main__":
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     write(args.out_dir, "corpus.jsonl", corpus)
-    write(args.out_dir, "runs.jsonl", runs)
+    write(args.out_dir, "runs.jsonl", [to_v2(r) for r in runs])
     write(args.out_dir, "judge.jsonl", judge)
     write(args.out_dir, "exec.jsonl", execres)

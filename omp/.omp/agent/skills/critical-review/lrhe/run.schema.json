@@ -2,56 +2,186 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "lrhe/run.schema.json",
   "title": "LRHE reviewer run record",
-  "description": "One record per reviewer invocation. The OMP task batch must emit these; several fields exist purely so a promotion gate can be measured rather than asserted.",
+  "description": "One record per reviewer invocation. Several fields exist purely so a promotion gate can be measured rather than asserted. Every boolean hard gate is REQUIRED: absent telemetry is a failure, not a pass, and `unknown` is not `false`. Adopted before the first real run, so there is no v1 data to migrate -- do not re-loosen this to accommodate a generator that has not been updated.",
   "type": "object",
-  "required": ["run_id", "item_id", "arm", "family", "evidence"],
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "panel_id",
+    "run_id",
+    "item_id",
+    "arm",
+    "family",
+    "lens",
+    "replicate",
+    "context_config",
+    "prompt_version",
+    "artifact_digest",
+    "assignment_manifest_digest",
+    "reviewer",
+    "execution",
+    "safety",
+    "data_rights",
+    "evidence"
+  ],
   "properties": {
-    "run_id": {"type": "string"},
-    "item_id": {"type": "string"},
-    "arm": {"type": "string", "enum": ["A", "B", "C", "D", "T", "R", "probe", "smoke"],
-      "description": "R = cold refutation. Unlike A-D it is scheduled per disputed claim, not per item, so it costs nothing on reviews where nothing is disputed"},
+    "schema_version": {"type": "integer", "const": 2},
+
+    "experiment_id": {"type": "string", "minLength": 1,
+      "description": "scoring and analysis refuse to run across more than one. The original three-family result set is a different experiment from the OpenCode floor panel and must never be silently pooled with it"},
+    "panel_id": {"type": "string", "minLength": 1,
+      "description": "a family comparison is only meaningful within one complete, declared panel"},
+
+    "run_id": {"type": "string", "minLength": 1},
+    "item_id": {"type": "string", "minLength": 1},
+    "arm": {"type": "string", "minLength": 1,
+      "description": "defined in panels.yaml, not here. R = cold refutation: unlike A-D it is scheduled per disputed claim rather than per item, so it costs nothing on reviews where nothing is disputed"},
     "family": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$",
-      "description": "model family id. Open by design: gpt, claude, gemini, grok, kimi, glm, qwen, deepseek, mistral, llama. Adding families scales arms C/D linearly and makes the cross-family judge panel cheaper, but it also inflates 'unique verified findings' by pure arithmetic -- grow arm T with the council or section 7's warning bites harder"},
-    "lens": {"type": "string",
-      "enum": ["", "floor", "architecture", "whole_repo", "adversarial", "independent", "refuter"],
-      "description": "`independent` is a fourth first-pass lens, not a relabelling: reconstruct the system and its invariants from primary evidence instead of checking the author's framing, so it can surface what the other three lenses were never designed to look for"},
+      "description": "stable lineage id, deliberately short: gpt, claude, gemini, grok, kimi, glm, minimax, deepseek. The vendor prefix adds nothing a lineage id needs; route and model identity are separate fields under `reviewer`, which is the distinction that actually matters. Adding families scales arms C/D linearly and inflates 'unique verified findings' by pure arithmetic -- grow arm T with the council or section 7's warning bites harder"},
+    "lens": {"type": "string", "pattern": "^[a-z0-9_]*$",
+      "description": "vocabulary lives in panels.yaml. A closed enum here silently drops whatever a later panel adds -- the handoff's own draft dropped `independent` and `refuter`, both of which this harness schedules"},
     "role": {"type": "string", "enum": ["author", "critic", "refuter", "judge"],
-      "description": "the council is asymmetric. Conflating roles is what makes six families look like six votes when it is four first-pass critics, one conditional refuter and one accountable integrator"},
-    "replicate": {"type": "string", "description": "set1..set3 for arm D, rep1..rep3 for arm T"},
+      "description": "derivable from arm via panels.yaml; recorded when the emitter knows it. The council is asymmetric, and conflating roles is what makes six families look like six votes when it is four first-pass critics, one conditional refuter and one accountable integrator"},
+    "replicate": {"type": "string",
+      "description": "set1..setN for arm D, rep1..repN for arm T. Part of the condition key: drop it and N independent runs of one family collapse into a single cell, which deletes the empirical null while still printing a number"},
     "context_config": {"type": "string", "enum": ["minimal", "expanded", "retrieval"],
-      "description": "the context cross-cut; 'retrieval' = minimal packet + read/grep/glob/lsp/ast_grep"},
+      "description": "'retrieval' = minimal packet plus read/grep/glob/lsp/ast_grep"},
 
-    "model_selector_expected": {"type": "string",
-      "description": "the pinned selector from task.agentModelOverrides"},
-    "model_selector_reported": {"type": "string",
-      "description": "what the provider actually reported. Mismatch = silent fallback = hard gate failure"},
+    "prompt_version": {"type": "string", "minLength": 1},
+    "artifact_digest": {"type": "string", "minLength": 1,
+      "description": "what the reviewer actually saw. A run whose digest no longer matches the packet is stale, not comparable"},
+    "assignment_manifest_digest": {"type": "string", "minLength": 1,
+      "description": "ties the run to the frozen matrix that scheduled it"},
+    "evidence_cap": {"type": "integer", "minimum": 1, "default": 12},
 
-    "schema_valid": {"type": "boolean"},
-    "evidence_cap": {"type": "integer", "default": 12},
-    "tool_violations": {"type": "integer", "minimum": 0,
-      "description": "attempted calls outside the allowlist. Headless task agents run at approval mode yolo, so a prompt saying 'do not edit' is not a control -- this counter is"},
-    "wrote_to_repo": {"type": "boolean"},
-    "spawned_subagent": {"type": "boolean"},
-    "consumed_peer_output": {"type": "boolean",
-      "description": "independence violation; round one must be blind"},
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_route",
+        "account_type",
+        "requested_model",
+        "served_model",
+        "identity_verified",
+        "fallback_detected",
+        "omp_version",
+        "provider_client_version"
+      ],
+      "properties": {
+        "provider_route": {"type": "string", "minLength": 1},
+        "account_type": {"type": "string", "minLength": 1},
+        "requested_model": {"type": "string", "minLength": 1,
+          "description": "the pinned selector that was asked for"},
+        "served_model": {"type": ["string", "null"],
+          "description": "what the provider reported serving. Mismatch or absence is a silent fallback and a hard gate failure; a Fable request answered by Opus is an Opus result"},
+        "identity_verified": {"type": "boolean"},
+        "fallback_detected": {"type": "boolean"},
+        "omp_version": {"type": "string", "minLength": 1},
+        "provider_client_version": {"type": "string", "minLength": 1}
+      }
+    },
+
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "started_at",
+        "completed_at",
+        "latency_ms",
+        "input_tokens",
+        "cached_input_tokens",
+        "output_tokens",
+        "list_cost_estimate_usd",
+        "provider_reported_cost_usd",
+        "quota_pool",
+        "allowance_before",
+        "allowance_after",
+        "zen_balance_before",
+        "zen_balance_after"
+      ],
+      "properties": {
+        "started_at": {"type": "string", "format": "date-time"},
+        "completed_at": {"type": "string", "format": "date-time"},
+        "latency_ms": {"type": "integer", "minimum": 0},
+        "input_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "cached_input_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "output_tokens": {"type": ["integer", "null"], "minimum": 0},
+        "list_cost_estimate_usd": {"type": ["number", "null"], "minimum": 0,
+          "description": "token-derived list price. Record alongside the observed allowance delta, never instead of it: they disagree, and only one of them is billing"},
+        "provider_reported_cost_usd": {"type": ["number", "null"], "minimum": 0},
+        "quota_pool": {"type": ["string", "null"],
+          "description": "which allowance the call was charged to. Capture both dashboards around a canary before trusting this"},
+        "allowance_before": {"type": ["number", "string", "null"]},
+        "allowance_after": {"type": ["number", "string", "null"]},
+        "zen_balance_before": {"type": ["number", "null"], "minimum": 0},
+        "zen_balance_after": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "telemetry_complete",
+        "schema_valid",
+        "tool_violations",
+        "wrote_to_repo",
+        "spawned_subagent",
+        "consumed_peer_output",
+        "repo_digest_before",
+        "repo_digest_after",
+        "timed_out",
+        "provider_error"
+      ],
+      "properties": {
+        "telemetry_complete": {"type": "boolean",
+          "description": "the emitter asserting it captured every field below. False means the run is unscoreable, not that it passed the parts that were captured"},
+        "schema_valid": {"type": "boolean"},
+        "tool_violations": {"type": "integer", "minimum": 0,
+          "description": "attempted calls outside the allowlist. Headless task agents run at approval mode yolo, so a prompt saying 'do not edit' is not a control -- this counter is"},
+        "wrote_to_repo": {"type": "boolean"},
+        "spawned_subagent": {"type": "boolean"},
+        "consumed_peer_output": {"type": "boolean",
+          "description": "independence violation; round one must be blind"},
+        "repo_digest_before": {"type": "string", "minLength": 1},
+        "repo_digest_after": {"type": "string", "minLength": 1,
+          "description": "the measurement behind wrote_to_repo. A reviewer that mutated the tree and reported otherwise is caught here and nowhere else"},
+        "timed_out": {"type": "boolean",
+          "description": "a timed-out reviewer is MISSING, never APPROVED"},
+        "provider_error": {"type": ["string", "null"]}
+      }
+    },
+
+    "data_rights": {"$ref": "lrhe/data-rights.schema.json"},
 
     "summary": {"type": "string"},
     "evidence": {
       "type": "array",
       "items": {"type": "string"},
-      "description": "raw contract strings: R<ID>|P<0-3>|conf=..|claim=..|evidence=..|impact=..|verify=.. -- an empty array is a legitimate result"
+      "description": "raw contract strings: R<ID>|P<0-3>|conf=..|claim=..|evidence=..|impact=..|verify=.. -- an empty array is a legitimate result, and on an S5 null item it is the correct one"
     },
-    "unresolved": {"type": "array", "items": {"type": "string"}},
+    "unresolved": {"type": "array", "items": {"type": "string"}}
+  },
 
-    "latency_ms": {"type": "integer"},
-    "input_tokens": {"type": "integer"},
-    "output_tokens": {"type": "integer"},
-    "cost_usd": {"type": "number"},
-    "quota_pool": {"type": "string",
-      "description": "which allowance the call was charged to. Required for the Grok Build vs xAI API question -- record both dashboards around a canary before trusting this field"},
-
-    "timed_out": {"type": "boolean",
-      "description": "a timed-out reviewer is MISSING, never APPROVED"},
-    "provider_error": {"type": "string"}
-  }
+  "allOf": [
+    {
+      "$comment": "Claiming verified identity commits you to the evidence for it.",
+      "if": {"required": ["reviewer"],
+             "properties": {"reviewer": {"properties": {"identity_verified": {"const": true}}}}},
+      "then": {"properties": {"reviewer": {"properties": {
+        "served_model": {"type": "string", "minLength": 1},
+        "fallback_detected": {"const": false}
+      }}}}
+    },
+    {
+      "$comment": "Incomplete telemetry cannot also be a clean run. This is the fail-closed rule expressed in the schema rather than left to the scorer, so a record that lies about itself does not validate.",
+      "if": {"required": ["safety"],
+             "properties": {"safety": {"properties": {"telemetry_complete": {"const": true}}}}},
+      "then": {"properties": {"safety": {"properties": {
+        "provider_error": {"type": "null"},
+        "timed_out": {"const": false}
+      }}}}
+    }
+  ]
 }

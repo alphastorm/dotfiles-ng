@@ -32,6 +32,11 @@ PY = sys.executable
 sys.path.insert(0, str(HERE))
 import analyze_lrhe  # noqa: E402
 import build_corpus  # noqa: E402
+import make_fixtures  # noqa: E402
+import score_lrhe  # noqa: E402
+
+EXPERIMENT_ID = "lrhe-test-v1"
+PANEL_ID = "test-panel-v1"
 
 
 # --------------------------------------------------------------- helpers
@@ -119,7 +124,7 @@ def _runs(items: list[dict], path: Path, judge_path: Path,
             judge.append({"run_id": run_id, "claim_rid": rid, "verdict": "CONFIRMED",
                           "label_id": lab["label_id"], "affinity": 0.9,
                           "panel": [f for f in families if f != family], "unanimous": True})
-        runs.append({
+        runs.append(make_fixtures.to_v2({
             "run_id": run_id, "item_id": item["item_id"], "arm": arm, "family": family,
             "lens": lens, "replicate": replicate, "context_config": "retrieval",
             "model_selector_expected": f"{family}/pinned",
@@ -128,7 +133,7 @@ def _runs(items: list[dict], path: Path, judge_path: Path,
             "spawned_subagent": False, "evidence_cap": 12, "evidence": evidence,
             "latency_ms": 1000, "input_tokens": 10, "output_tokens": 10,
             "cost_usd": 0.01, "quota_pool": "test",
-        })
+        }, experiment_id=EXPERIMENT_ID, panel_id=PANEL_ID))
 
     lenses = ["architecture", "whole_repo", "adversarial"]
     for it in items:
@@ -159,12 +164,14 @@ def scored(tmp_path: Path):
 
     claims_csv, runs_csv = tmp_path / "claims.csv", tmp_path / "runs.csv"
     _run(["score_lrhe.py", "--corpus", str(corpus), "--runs", str(runs),
-          "--judge", str(judge), "--out-claims", str(claims_csv),
+          "--judge", str(judge), "--experiment-id", EXPERIMENT_ID, "--panel-id", PANEL_ID,
+          "--out-claims", str(claims_csv),
           "--out-runs", str(runs_csv), "--out-report", str(tmp_path / "report.json")])
 
     analysis = tmp_path / "analysis.json"
     _run(["analyze_lrhe.py", "--claims", str(claims_csv), "--runs", str(runs_csv),
-          "--corpus", str(corpus), "--boot", "40", "--perm", "40", "--out", str(analysis)])
+          "--corpus", str(corpus), "--boot", "40", "--perm", "40",
+          "--experiment-id", EXPERIMENT_ID, "--panel-id", PANEL_ID, "--out", str(analysis)])
     return {
         "claims": pd.read_csv(claims_csv),
         "runs": pd.read_csv(runs_csv),
@@ -356,3 +363,161 @@ def test_empty_lens_is_not_dropped_by_groupby(scored):
     norm = analyze_lrhe.normalize_conditions(claims)
     assert not norm["replicate"].isna().any()
     assert (norm.loc[norm["arm"] == "C", "replicate"] == "").all()
+
+
+# ------------------------------------------------------- 6. panel hygiene
+
+def _one_run(**over) -> dict:
+    """A single valid v2 run record, with overrides applied after the envelope."""
+    base = make_fixtures.to_v2({
+        "run_id": "r1", "item_id": "S1-0001", "arm": "C", "family": "claude",
+        "lens": "floor", "replicate": "", "context_config": "retrieval",
+        "model_selector_expected": "claude/pinned", "model_selector_reported": "claude/pinned",
+        "schema_valid": True, "tool_violations": 0, "wrote_to_repo": False,
+        "spawned_subagent": False, "evidence_cap": 12, "evidence": [],
+        "latency_ms": 1, "input_tokens": 1, "output_tokens": 1,
+        "cost_usd": 0.0, "quota_pool": "test",
+    }, experiment_id=EXPERIMENT_ID, panel_id=PANEL_ID)
+    for path, value in over.items():
+        head, _, tail = path.partition(".")
+        if tail:
+            base[head][tail] = value
+        else:
+            base[head] = value
+    return base
+
+
+def _score(tmp_path: Path, runs: list[dict], *extra: str, corpus=None):
+    corpus_path = tmp_path / "corpus.jsonl"
+    if corpus is None:
+        _corpus(corpus_path)
+    else:
+        corpus_path.write_text("\n".join(json.dumps(i) for i in corpus) + "\n")
+    runs_path = tmp_path / "r.jsonl"
+    runs_path.write_text("\n".join(json.dumps(r) for r in runs) + "\n")
+    import os
+    return subprocess.run(
+        [PY, "score_lrhe.py", "--corpus", str(corpus_path), "--runs", str(runs_path),
+         "--experiment-id", EXPERIMENT_ID, "--panel-id", PANEL_ID,
+         "--out-claims", str(tmp_path / "c.csv"), "--out-runs", str(tmp_path / "r.csv"),
+         "--out-report", str(tmp_path / "rep.json"), *extra],
+        cwd=HERE, capture_output=True, text=True, env=dict(os.environ))
+
+
+def test_analysis_refuses_mixed_panels(scored, tmp_path: Path):
+    """Two experiments in one file must stop the analysis, not be averaged.
+
+    A mean over the core lens experiment and the OpenCode floor panel describes
+    neither. This is the failure that has no symptom: every statistic still
+    produces a number.
+    """
+    claims, runs = scored["claims"].copy(), scored["runs"].copy()
+    other_c, other_r = claims.copy(), runs.copy()
+    other_c["experiment_id"] = other_r["experiment_id"] = "lrhe-other-v1"
+    other_c["run_id"] = other_c["run_id"] + "-x"
+    other_r["run_id"] = other_r["run_id"] + "-x"
+
+    cpath, rpath = tmp_path / "mixed-claims.csv", tmp_path / "mixed-runs.csv"
+    pd.concat([claims, other_c]).to_csv(cpath, index=False)
+    pd.concat([runs, other_r]).to_csv(rpath, index=False)
+
+    import os
+    p = subprocess.run(
+        [PY, "analyze_lrhe.py", "--claims", str(cpath), "--runs", str(rpath),
+         "--corpus", str(scored["corpus"]), "--boot", "20", "--perm", "20",
+         "--experiment-id", "lrhe-nonexistent-v1", "--panel-id", PANEL_ID,
+         "--out", str(tmp_path / "a.json")],
+        cwd=HERE, capture_output=True, text=True, env=dict(os.environ))
+    assert p.returncode != 0
+    assert "no runs for experiment_id" in (p.stdout + p.stderr)
+
+    # And the legitimate selection must take only its own half.
+    ok = subprocess.run(
+        [PY, "analyze_lrhe.py", "--claims", str(cpath), "--runs", str(rpath),
+         "--corpus", str(scored["corpus"]), "--boot", "20", "--perm", "20",
+         "--experiment-id", EXPERIMENT_ID, "--panel-id", PANEL_ID,
+         "--out", str(tmp_path / "b.json")],
+        cwd=HERE, capture_output=True, text=True, env=dict(os.environ))
+    assert ok.returncode == 0, ok.stderr
+    sel = json.loads((tmp_path / "b.json").read_text())["selection"]
+    assert sel["other_panels_in_file"], "the discarded panel was not even noticed"
+
+
+# --------------------------------------------------------- 7. fail closed
+
+def test_missing_hard_gate_field_is_refused(tmp_path: Path):
+    """Absent telemetry must not validate. It used to default to success."""
+    run = _one_run()
+    del run["safety"]["wrote_to_repo"]
+    p = _score(tmp_path, [run])
+    assert p.returncode != 0
+    assert "wrote_to_repo" in (p.stdout + p.stderr)
+
+
+def test_model_mismatch_fails_identity(tmp_path: Path):
+    """A Fable request answered by Opus is an Opus result, never a Fable one."""
+    ok = _score(tmp_path, [_one_run()])
+    assert ok.returncode == 0, ok.stderr
+    assert json.loads((tmp_path / "rep.json").read_text())["gate_failed_runs"] == 0
+
+    bad = _score(tmp_path, [_one_run(**{
+        "reviewer.served_model": "someone-else/model",
+        "reviewer.fallback_detected": True,
+        "reviewer.identity_verified": False,
+    })])
+    assert bad.returncode == 0, bad.stderr
+    report = json.loads((tmp_path / "rep.json").read_text())
+    assert report["gate_failed_runs"] == 1
+    assert {"model_mismatch", "fallback_detected", "identity_unverified"} <= set(
+        report["gate_failure_reasons"])
+
+
+def test_duplicate_run_id_is_refused(tmp_path: Path):
+    """Two runs sharing an id overwrite each other in every join downstream, and
+    the totals still look right."""
+    p = _score(tmp_path, [_one_run(), _one_run(item_id="S2-0011")])
+    assert p.returncode != 0
+    assert "duplicate run_id" in (p.stdout + p.stderr)
+
+
+def test_stale_assignment_manifest_is_flagged(tmp_path: Path):
+    """A run scheduled by a superseded matrix is not comparable to one that was not."""
+    manifest = tmp_path / "m.json"
+    manifest.write_text(json.dumps({"assignments_sha256": "sha256:the-real-one"}))
+    p = _score(tmp_path, [_one_run()], "--manifest", str(manifest))
+    assert p.returncode == 0, p.stderr
+    report = json.loads((tmp_path / "rep.json").read_text())
+    assert report["gate_failure_reasons"].get("stale_assignment_manifest") == 1
+
+
+# ------------------------------------------------ 8. legitimate emptiness
+
+def test_s5_empty_evidence_is_valid_not_a_failure(tmp_path: Path):
+    """Finding nothing on a null item is the CORRECT answer, not a broken run.
+
+    An S5 item has no defect to find. A reviewer that returns an empty evidence
+    list has passed, and anything that converts that into a gate failure or a
+    parse failure inverts the one stratum built to measure false positives.
+    """
+    null_item = [{"item_id": "S5-9001", "stratum": "S5_NULL", "difficulty": "control",
+                  "source": "test", "labels": [], "repo_files": ["src/x.py"]}]
+    p = _score(tmp_path, [_one_run(item_id="S5-9001", evidence=[])], corpus=null_item)
+    assert p.returncode == 0, p.stderr
+    report = json.loads((tmp_path / "rep.json").read_text())
+    assert report["gate_failed_runs"] == 0, report["gate_failure_reasons"]
+    assert report["n_claims"] == 0
+
+    runs = pd.read_csv(tmp_path / "r.csv")
+    assert bool(runs.loc[0, "cap_respected"])
+    assert runs.loc[0, "null_item_fp"] == 0
+
+
+def test_unanchored_claims_are_never_promoted(scored):
+    """Promotion requires an anchor. The gate is section 8's anchor-rate metric,
+    and a promoted claim without one would make that metric measure the regex
+    rather than the reviewer."""
+    claims = scored["claims"]
+    promoted = claims[claims["promoted"].fillna(False).astype(bool)]
+    assert len(promoted) > 0, "fixture promotes nothing, so this proves nothing"
+    assert promoted["has_anchor"].all()
+    assert (promoted["verdict"] != "CONFIRMED_UNANCHORED").all()

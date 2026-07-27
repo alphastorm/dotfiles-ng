@@ -60,16 +60,34 @@ from pathlib import Path
 #
 # Adding a critic scales arms C and D linearly. Adding a refuter costs nothing per
 # item, because it is invoked per disputed claim rather than per review.
-FAMILIES = ["claude", "gemini", "grok", "kimi"]
-AUTHOR_FAMILY = "gpt"
-REFUTER_FAMILY = "glm"
+# These are read from panels.yaml, not declared here. A panel edited in source is
+# a design change with no artifact and no digest; section 5.6 of the OpenCode
+# handoff asks for exactly this move. There is deliberately no fallback constant:
+# a second definition that only appears when the config is missing is how the two
+# come to disagree, silently, in whichever direction nobody checked.
+PANELS_PATH = Path(__file__).parent / "panels.yaml"
+DEFAULT_EXPERIMENT = "lrhe-core-expanded-v1"
 
-# `independent` is a real fourth lens, not a relabelling of the other three. Its
-# assignment is deliberately broader -- reconstruct the system and its invariants
-# from primary evidence rather than checking the author's framing -- so it can
-# surface defects the hand-designed taxonomy itself omits. That is exactly the
-# blind spot a fixed three-lens council cannot measure from the inside.
-LENSES = ["architecture", "whole_repo", "adversarial", "independent"]
+
+def load_panels(path: Path = PANELS_PATH) -> dict:
+    import yaml
+    return yaml.safe_load(path.read_text())
+
+
+def panel(experiment_id: str, panels: dict | None = None) -> dict:
+    panels = panels or load_panels()
+    for exp in panels["experiments"]:
+        if exp["experimentId"] == experiment_id:
+            return exp
+    known = ", ".join(e["experimentId"] for e in panels["experiments"])
+    raise SystemExit(f"unknown experiment {experiment_id!r}; panels.yaml defines: {known}")
+
+
+_DEFAULT = panel(DEFAULT_EXPERIMENT)
+FAMILIES = [f["family"] for f in _DEFAULT["families"]]
+AUTHOR_FAMILY = _DEFAULT["authorFamily"]
+REFUTER_FAMILY = _DEFAULT["refuterFamily"]
+LENSES = _DEFAULT["lenses"]
 
 
 def lens_sets(families: list[str], lenses: list[str] | None = None) -> list[dict[str, str]]:
@@ -292,12 +310,16 @@ def cmd_assignments(args) -> int:
         args.d_items, args.assignment_salt,
     )
 
-    families = args.families or FAMILIES
-    sets = lens_sets(families, args.lenses or LENSES)
+    exp = panel(args.experiment_id)
+    families = args.families or [f["family"] for f in exp["families"]]
+    lenses = args.lenses or exp["lenses"]
+    author_family = args.author_family or exp["authorFamily"]
+    null_family = args.triplicate_family or exp.get("nullFamily") or families[0]
+    sets = lens_sets(families, lenses)
     rows = []
     for iid, stratum in items:
         rows.append({"item_id": iid, "stratum": stratum, "arm": "A",
-                     "family": args.author_family, "lens": "", "replicate": ""})
+                     "family": author_family, "lens": "", "replicate": ""})
         # Arm B rotates the single critic so no family is confounded with item.
         # Built-in hash() is salted per process, so the same corpus would produce
         # a different matrix on every run and the design would not be replicable.
@@ -317,7 +339,7 @@ def cmd_assignments(args) -> int:
             # 3-run triplicate is not the null for a 6-family council.
             for r in range(args.triplicate_n or len(families)):
                 rows.append({"item_id": iid, "stratum": stratum, "arm": "T",
-                             "family": args.triplicate_family, "lens": "floor",
+                             "family": null_family, "lens": "floor",
                              "replicate": f"rep{r+1}"})
         # Contamination probe: no repository, no tools, title+description only.
         for f in families:
@@ -338,14 +360,17 @@ def cmd_assignments(args) -> int:
     # this machine reproduce the matrix -- which is the entire point of freezing it
     # before any output exists.
     manifest = {
+        "experiment_id": exp["experimentId"],
+        "panel_id": exp["panelId"],
+        "prompt_version": exp["promptVersion"],
         "subset_policy": "stratified",
         "assignment_salt": args.assignment_salt,
         "d_items_requested": args.d_items,
         "d_subset": sorted(d_subset),
         "families": families,
-        "lenses": args.lenses or LENSES,
-        "author_family": args.author_family,
-        "triplicate_family": args.triplicate_family,
+        "lenses": lenses,
+        "author_family": author_family,
+        "triplicate_family": null_family,
         "triplicate_n": args.triplicate_n or len(families),
         "n_items": len(items),
         "n_rows": len(rows),
@@ -940,8 +965,15 @@ def main() -> int:
     a.add_argument("--out", type=Path, default=Path("assignments.csv"))
     a.add_argument("--d-items", type=int, default=24,
                    help="items receiving the full Latin square and arm T")
-    a.add_argument("--triplicate-family", default="claude",
-                   help="family run three times for the arm-T empirical null")
+    a.add_argument("--experiment-id", default=DEFAULT_EXPERIMENT,
+                   help=f"panel definition from panels.yaml (default: {DEFAULT_EXPERIMENT}). "
+                        f"Use lrhe-core-v1 to reproduce the pre-registered 3x3 exactly, or "
+                        f"lrhe-opencode-v1 for the four-family floor panel")
+    a.add_argument("--panel-config", type=Path, default=PANELS_PATH,
+                   help="frozen panel definitions (default: %(default)s)")
+    a.add_argument("--triplicate-family", default=None,
+                   help="family repeated for the arm-T empirical null; defaults to the "
+                        "experiment's nullFamily")
     a.add_argument("--corpus", type=Path, default=Path("corpus.jsonl"),
                    help="use real item ids from this corpus; falls back to the "
                         "pre-registered plan's placeholder ids when absent")
@@ -949,7 +981,7 @@ def main() -> int:
                    help=f"council members (default: {' '.join(FAMILIES)}). Any names work "
                         f"-- kimi, glm, qwen, deepseek. Arm C and arm D scale linearly, "
                         f"and arm T scales with them so the empirical null stays comparable")
-    a.add_argument("--author-family", default=AUTHOR_FAMILY,
+    a.add_argument("--author-family", default=None,
                    help="family that runs arm A and authored the work under review")
     a.add_argument("--triplicate-n", type=int, default=None,
                    help="arm-T replicate count; defaults to the council size")

@@ -1,0 +1,117 @@
+# Frozen panel definitions. LRHE-PROTOCOL.md section 5.6 of the OpenCode handoff
+# asks for these to live in configuration rather than Python constants, because a
+# panel edited in source is a design change with no artifact and no digest.
+#
+# What this file owns: which experiment exists, which families are in its panel,
+# which lenses rotate, and which arms it schedules.
+#
+# What this file does NOT own: whether a lane is live. That is
+# `skill://critical-review/qualification.yml`, which the SKILL reads before
+# dispatch and which carries the per-lane canary results and blockers. Two files
+# claiming to answer "is this reviewer enabled" is how they come to disagree.
+#
+# Also deliberately absent: spend caps and quota balances. This package is public.
+# Budget lives with the handoff in the private package.
+#
+# `family` ids are short and stable (`claude`, not `anthropic_claude`). The vendor
+# prefix adds no information a lineage id needs, and route and model identity are
+# recorded separately per run in `reviewer.provider_route`, `requested_model` and
+# `served_model` -- which is the distinction section 5.6 actually cares about.
+
+schemaVersion: 1
+
+# Arms are shared across experiments; an arm means the same thing everywhere or
+# the cross-experiment comparisons are meaningless.
+arms:
+  A:      {role: author,  description: the integrator's own pass over its own work}
+  B:      {role: critic,  description: one rotating critic per item}
+  C:      {role: critic,  description: every family once, on the floor lens}
+  D:      {role: critic,  description: the Latin square; the only arm where lens varies}
+  T:      {role: critic,  description: one family repeated; the empirical null}
+  R:      {role: refuter, description: cold falsification, scheduled per disputed claim}
+  probe:  {role: critic,  description: contamination probe; no repository, no tools}
+  smoke:  {role: critic,  description: plumbing validation; never a benchmark observation}
+
+# Excluded from performance estimates by every analysis. Arm A is the author, R is
+# scheduled per claim rather than per item, and probe and smoke never saw the
+# repository under production conditions.
+councilArms: [C, D]
+nullArm: T
+squareArm: D
+floorArm: C
+
+experiments:
+  - experimentId: lrhe-core-v1
+    panelId: core-cgg-v1
+    promptVersion: core-lens-v1
+    contextConfig: retrieval
+    authorFamily: gpt
+    refuterFamily: glm
+    nullFamily: claude
+    lenses: [architecture, whole_repo, adversarial]
+    families:
+      - {family: claude, providerRoute: anthropic-subscription, requestedSelector: "anthropic/claude-opus-5:max"}
+      - {family: gemini, providerRoute: google-antigravity,     requestedSelector: "google-antigravity/gemini-3.6-flash:high"}
+      - {family: grok,   providerRoute: xai-oauth,              requestedSelector: "xai-oauth/grok-build"}
+
+  # The tool's DEFAULT matrix, not a preregistration. `build_corpus.py assignments`
+  # with no --experiment-id produces this: four critics over four lenses, 762
+  # reviewer runs. The preregistered 3x3 core lens experiment above is the subset,
+  # reproduced exactly with --experiment-id lrhe-core-v1 (523 + 141 probe).
+  #
+  # `independent` is a real fourth lens, not a relabelling of the other three. Its
+  # assignment is deliberately broader -- reconstruct the system and its invariants
+  # from primary evidence rather than checking the author's framing -- so it can
+  # surface defects the hand-designed taxonomy itself omits. That is exactly the
+  # blind spot a fixed three-lens council cannot measure from the inside.
+  - experimentId: lrhe-core-expanded-v1
+    panelId: core-expanded-v1
+    promptVersion: core-lens-v1
+    contextConfig: retrieval
+    authorFamily: gpt
+    refuterFamily: glm
+    nullFamily: claude
+    lenses: [architecture, whole_repo, adversarial, independent]
+    families:
+      - {family: claude, providerRoute: anthropic-subscription, requestedSelector: "anthropic/claude-opus-5:max"}
+      - {family: gemini, providerRoute: google-antigravity,     requestedSelector: "google-antigravity/gemini-3.6-flash:high"}
+      - {family: grok,   providerRoute: xai-oauth,              requestedSelector: "xai-oauth/grok-build"}
+      - {family: kimi,   providerRoute: opencode-go,            requestedSelector: opencode-go/kimi-k3}
+
+  # The floor comparison. Every family gets the SAME prompt, which is what isolates
+  # family and route behaviour from lens behaviour. Do not add a lens rotation here
+  # until the floor panel is complete -- a 4x3 role design on 47 items is
+  # underpowered, and section 6 Commit 12 defers it deliberately.
+  - experimentId: lrhe-opencode-v1
+    panelId: opencode-broad-v1
+    promptVersion: opencode-floor-v1
+    contextConfig: retrieval
+    authorFamily: gpt
+    nullFamily: kimi
+    lenses: [floor]
+    # Selectors are INTENDED, not discovered. Section 6 Commit 6 requires resolving
+    # them against the installed build and recording what the provider actually
+    # reports; nothing here has been verified to resolve.
+    families:
+      - {family: kimi,     providerRoute: opencode-go, requestedSelector: opencode-go/kimi-k3}
+      - {family: glm,      providerRoute: opencode-go, requestedSelector: opencode-go/glm-5.2}
+      - {family: minimax,  providerRoute: opencode-go, requestedSelector: opencode-go/minimax-m3}
+      - {family: deepseek, providerRoute: opencode-go, requestedSelector: opencode-go/deepseek-v4-pro}
+
+  - experimentId: live-critical-review-v1
+    panelId: opencode-broad-v1
+    promptVersion: opencode-floor-v1
+    contextConfig: retrieval
+    authorFamily: gpt
+    lenses: [floor]
+    # The baseline ledger is built from these before any shadow output is visible.
+    # Showing the lead everything first makes independent contribution and synthesis
+    # contamination indistinguishable, which is the one thing this dataset exists to
+    # separate.
+    baselineVisibleFamilies: [kimi]
+    withheldShadowFamilies: [glm, minimax, deepseek]
+    families:
+      - {family: kimi,     providerRoute: opencode-go, requestedSelector: opencode-go/kimi-k3}
+      - {family: glm,      providerRoute: opencode-go, requestedSelector: opencode-go/glm-5.2}
+      - {family: minimax,  providerRoute: opencode-go, requestedSelector: opencode-go/minimax-m3}
+      - {family: deepseek, providerRoute: opencode-go, requestedSelector: opencode-go/deepseek-v4-pro}
