@@ -22,6 +22,7 @@ import json
 import re
 import subprocess
 import datetime
+import csv
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -1134,3 +1135,168 @@ def test_scoring_refuses_two_dispatch_policies(tmp_path: Path):
     res = _score(tmp_path, [a, b])
     assert res.returncode != 0, "two dispatch policies were pooled into one estimate"
     assert "more than one dispatch policy" in (res.stdout + res.stderr)
+
+
+def test_every_experiment_resolves_its_arm_roles_to_declared_arms():
+    """An undeclared arm role selects nothing and every statistic keyed on it reads clean.
+
+    `councilArms: [C, D]` and `nullArm: T` sat in `panels.yaml` unread while
+    `analyze_lrhe.py` hardcoded the same four values, so the OpenCode panel inherited the
+    core experiment's arms. `families` came back `[]` on a three-family panel and the
+    matched null reported "was not run" with 36 runs on disk.
+    """
+    sys.path.insert(0, str(HERE))
+    import analyze_lrhe
+
+    panels = yaml.safe_load((HERE / "panels.yaml").read_text())
+    declared = set(panels["arms"])
+    for exp in panels["experiments"]:
+        roles = analyze_lrhe.resolve_arm_roles(exp["experimentId"])
+        named = [*roles["councilArms"], roles["nullArm"], roles["squareArm"], roles["floorArm"]]
+        assert all(a in declared for a in named), (exp["experimentId"], named)
+
+    oc = analyze_lrhe.resolve_arm_roles("lrhe-opencode-v1")
+    assert oc["councilArms"] == ("OC_FULL",), oc
+    assert oc["nullArm"] == "T_OC", oc
+    # The core experiment must be untouched by the new resolution path.
+    core = analyze_lrhe.resolve_arm_roles("lrhe-core-v1")
+    assert core["councilArms"] == ("C", "D") and core["nullArm"] == "T", core
+
+
+def test_a_trap_whose_sites_cover_every_file_in_scope_reports_no_promotion(tmp_path: Path):
+    """A flag that fires on any severe claim is not a measure of taking the bait.
+
+    `trap.sites` is drawn from the fix under review, so on all nine trap items in this
+    corpus it covers every file in scope. `trap_promoted` there reduces to "made a P0/P1
+    claim", which tracks claim volume -- and GLM's flagged P0 on `S4-44c75ca0` explicitly
+    said the patch *eliminated* the overflow, refuting the trap it was scored as promoting.
+    """
+    item = {
+        "item_id": "S4-trap", "stratum": "S4_TRAP", "goal": "g", "problem_statement": "p",
+        "design_or_diff": "d", "repo_files": ["src/only.c"], "license": "x",
+        "provider_data_allowlist": ["opencode"],
+        "labels": [{"label_id": "L1", "severity": 0, "kind": "memory_safety",
+                    "sites": [{"path": "src/only.c", "line_start": 1, "line_end": 2}],
+                    "rationale": "r"}],
+        "trap": {"assertion": "the patch does not close the crash",
+                 "sites": [{"path": "src/only.c", "line_start": 1, "line_end": 2}]},
+    }
+    run = _one_run(item_id="S4-trap")
+    run["evidence"] = ["R1|P0|conf=0.90|claim=the patch does close it"
+                       "|evidence=src/only.c:1 observed|impact=none|verify=test"]
+    res = _score(tmp_path, [run], corpus=[item])
+    assert res.returncode == 0, res.stderr + res.stdout
+
+    rows = list(csv.DictReader((tmp_path / "r.csv").open()))
+    assert len(rows) == 1
+    assert rows[0]["trap_sites_discriminate"] in ("False", "false"), rows[0]
+    assert rows[0]["trap_promoted"] == "", (
+        "trap_promoted was reported on an item where the flag cannot discriminate")
+    assert rows[0]["trap_site_severe_claim"] in ("True", "true"), (
+        "the observable upper bound was lost along with the misleading measurement")
+
+
+def test_an_uncomputable_decorrelation_contrast_is_not_a_negative_result():
+    """NaN must not become "the extra provider lanes are not yet justified".
+
+    `hi < 0` is false when `hi` is NaN, so the two-branch guard sent every uncomputable
+    contrast to the negative branch. The caught-set Jaccard is undefined until claims are
+    matched to labels, so before adjudication this fires on every panel -- and the
+    conclusion it produced was about provider diversity, which is a promotion criterion.
+    """
+    sys.path.insert(0, str(HERE))
+    import analyze_lrhe
+    import pandas as pd
+
+    # Two arms on one shared item, nothing caught: the pivot has no overlap to divide.
+    rows = []
+    for arm, key in (("C", "fam-a"), ("C", "fam-b"), ("T", "r1"), ("T", "r2")):
+        rows.append({"item_id": "S1-x", "label_id": "L1", "label_severity": 0,
+                     "arm": arm, "family": key if arm == "C" else "kimi",
+                     "replicate": key if arm == "T" else "", "caught": 0})
+    out = analyze_lrhe.diversity_vs_null(pd.DataFrame(rows), B=32)
+    assert "NOT MEASURABLE" in out["verdict"], out["verdict"]
+    assert "not yet justified" not in out["verdict"], (
+        "an uncomputable contrast still produced a verdict against provider diversity")
+
+
+def test_a_judge_panel_that_cannot_be_filled_is_refused_not_shrunk():
+    """One judge is not two, and two of the same family is one judge.
+
+    `panel_for` used to `return []` when the author was the only family and
+    `min(size, len(eligible))` otherwise, so a mis-specified pool produced claims with
+    one judge, or none, and said nothing -- the claim simply never appeared in the output.
+    `cmd_ingest` already refuses a judgement whose family authored the claim; the
+    assignment side had no equivalent.
+    """
+    sys.path.insert(0, str(HERE))
+    import judge_lrhe
+
+    ok = judge_lrhe.panel_for("k1", "kimi", ["claude", "gemini", "grok"], 2)
+    assert len(ok) == 2 and len(set(ok)) == 2 and "kimi" not in ok, ok
+
+    with pytest.raises(judge_lrhe.PanelUnfillable):
+        judge_lrhe.panel_for("k1", "kimi", ["kimi", "glm"], 2)
+    with pytest.raises(judge_lrhe.PanelUnfillable):
+        judge_lrhe.panel_for("k1", "kimi", ["kimi"], 1)
+
+
+def test_judge_prompts_writes_nothing_when_a_claim_cannot_be_assigned(tmp_path: Path):
+    """A partial assignment file is worse than none: the gap reads as consensus.
+
+    Claims missing from the judge file are not disputed by anybody, so downstream they
+    look like claims nobody challenged rather than claims nobody was allowed to judge.
+    """
+    corpus, runs, claims, out = (tmp_path / n for n in
+                                 ("c.jsonl", "r.jsonl", "cl.csv", "jp.jsonl"))
+    _corpus(corpus)
+    item_id = json.loads(corpus.read_text().splitlines()[0])["item_id"]
+    run = _one_run(item_id=item_id, family="kimi")
+    runs.write_text(json.dumps(run) + "\n")
+    claims.write_text(
+        "run_id,item_id,rid,parse_status,verdict,has_anchor,anchor_paths_exist,severity,"
+        "confidence,claim_text,evidence_text,impact_text,family\n"
+        f"{run['run_id']},{item_id},R1,ok,PLAUSIBLE,True,True,1,0.7,c,e,i,kimi\n")
+
+    res = subprocess.run(
+        [PY, "judge_lrhe.py", "prompts", "--corpus", str(corpus), "--runs", str(runs),
+         "--claims", str(claims), "--families", "kimi", "glm", "--panel-size", "2",
+         "--out", str(out)],
+        cwd=HERE, capture_output=True, text=True)
+    assert res.returncode != 0, res.stdout
+    assert "REFUSED" in res.stderr, res.stderr
+    assert not out.exists(), "a partial judge assignment was written anyway"
+
+
+def test_the_judge_schema_and_the_runner_agree_on_the_label_field():
+    """The archived schema said `matched_label_id`; the runner reads `label_id`.
+
+    A reply valid against the published schema would have been ingested with no label,
+    so every CONFIRMED verdict would have lost the 1:1 defect matching it exists to
+    establish -- and nothing would have failed.
+    """
+    schema = json.loads((HERE / "judge-output.schema.json").read_text())
+    assert "label_id" in schema["properties"], sorted(schema["properties"])
+    assert "matched_label_id" not in schema["properties"], (
+        "both spellings are present, which is how the divergence survives")
+    assert schema["additionalProperties"] is False
+    # The three verdicts the runner counts. REFUTED comes from the refutation pass and
+    # UNRESOLVED had no consumer: ingest dropped such replies as unmatched, silently.
+    sys.path.insert(0, str(HERE))
+    import judge_lrhe
+    assert set(schema["properties"]["verdict"]["enum"]) == set(judge_lrhe.VERDICTS)
+
+
+def test_every_judge_agent_declares_an_empty_tool_surface():
+    """A judge is shown the ground-truth labels, so it needs no repository at all.
+
+    Worse than a reviewer reaching for the tree: the corpus answer key for every OTHER
+    item is exactly what a judge with `read` would be reaching for.
+    """
+    agents = Path.home() / ".omp/agent/agents"
+    defs = sorted(agents.glob("judge-*.md"))
+    assert len(defs) >= 3, f"expected the judge definitions in {agents}"
+    for path in defs:
+        front = yaml.safe_load(path.read_text().split("---")[1])
+        assert front["tools"] == [], f"{path.name} declares {front['tools']}"
+        assert front["output"]["additionalProperties"] is False, path.name

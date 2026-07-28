@@ -438,6 +438,40 @@ def _complete_against(runs: Path, manifest: Path) -> tuple[int, int]:
     return (have, want)
 
 
+def _judgeable() -> int:
+    """Floor claims that need a judge: the ones the deterministic gates did not settle.
+
+    An unparsed claim has no content to adjudicate and a claim anchored outside the
+    item's own files is FABRICATED by construction, so both are settled without a call.
+    Everything else is the denominator.
+    """
+    try:
+        import csv as _csv
+        with (DATA / "floor/claims-floor.csv").open() as fh:
+            rows = list(_csv.DictReader(fh))
+    except OSError:
+        return 0
+    return sum(1 for r in rows
+               if r.get("parse_status") != "fail"
+               and r.get("verdict") not in ("UNPARSED", "REFUTED")
+               and not (str(r.get("has_anchor")) == "True"
+                        and str(r.get("anchor_paths_exist")) == "False"))
+
+
+def _adjudicated() -> int:
+    """Distinct floor claims carrying an aggregated judgement."""
+    seen = set()
+    for name in ("judge-floor-agg.jsonl", "judge-qual-agg.jsonl"):
+        try:
+            for line in (DATA / name).read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    row = json.loads(line)
+                    seen.add((row.get("run_id"), str(row.get("claim_rid"))))
+        except OSError:
+            continue
+    return len(seen)
+
+
 def _authorization(kind: str) -> bool:
     """Is there a recorded operator decision of this kind?
 
@@ -520,13 +554,24 @@ MANUAL_STEPS = (
      "Commit 12's lens rotation is optional and decided from this panel's analysis",
      lambda r: _complete_against(DATA / "runs-floor.jsonl",
                                  DATA / "floor-manifest.jsonl") != (105, 105)),
-    ("Fable adjudication",
-     "judge-output.schema.json and the Claude Code CLI adapter, then two "
-     "non-authoring judges per surviving claim. The kappa >= 0.70 human-calibration "
-     "gate stands: until a blinded 60-claim packet has been labelled independently, "
-     "every automated performance conclusion is labelled provisional rather than the "
-     "gate being dropped",
-     lambda r: not (HERE / "judge-output.schema.json").is_file()),
+    (f"Fable adjudication ({_adjudicated()}/{_judgeable()} floor claims adjudicated)",
+     "two non-authoring judges per surviving claim, keyed on family: the pool is "
+     "claude/gemini/grok, disjoint from the OpenCode authors, so independence holds by "
+     "construction and the routes are unaffected by the opencode-go spending limit. "
+     "judge-output.schema.json is installed and reconciled -- the archived copy named "
+     "the matched label `matched_label_id` where the runner reads `label_id`, so a reply "
+     "valid against it would have been ingested with no label at all. The kappa >= 0.70 "
+     "human-calibration gate stands: until a blinded 60-claim packet has been labelled "
+     "independently, every automated performance conclusion is labelled provisional "
+     "rather than the gate being dropped. Nothing here is quotable as a result yet -- "
+     "arm_critical_recall, unique_contribution and the decorrelation contrast are one "
+     "blockage, not three findings, and all three read zero or NaN because no claim has "
+     "been matched to a labeled defect",
+     # The schema existing is not the step being done. The first version of this
+     # predicate was `not judge-output.schema.json.is_file()`, so writing the file
+     # reported adjudication complete with 0 of 279 claims judged -- the same defect
+     # `ac4855e` fixed for the floor step, which called a panel one fifth finished done.
+     lambda r: _adjudicated() < _judgeable()),
 )
 
 

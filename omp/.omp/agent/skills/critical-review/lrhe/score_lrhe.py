@@ -393,15 +393,33 @@ def rollup_run(run: dict, item: dict, claims: list[Claim], gates: list[str]) -> 
     scored = [c for c in claims if c.verdict != V_UNPARSED]
     n_scored = len(scored)
 
-    # FP-trap: did the reviewer promote the seeded false claim?
-    # FP-trap: did the reviewer promote the seeded false claim to P0/P1?
+    # Did the reviewer promote the seeded false claim to P0/P1? That is the question,
+    # and path matching cannot answer it. The bait test below is anchor-path based, so a
+    # reviewer that *refuted* the trap scores identically to one that took it: GLM's P0 on
+    # S4-44c75ca0 reads "reordering the && operands ... eliminating the out-of-bounds
+    # read" -- an explicit rejection of the trap's assertion -- and was flagged as
+    # promotion. Worse, `trap.sites` is drawn from the fix under review, so it covers
+    # every file in scope on all nine trap items in this corpus: the flag reduces to "made
+    # any P0/P1 claim", which tracks claim volume.
+    #
+    # So two fields. `trap_site_severe_claim` is the observable, always computed and named
+    # for what it is: an UPPER BOUND on bait-taking. `trap_promoted` is the measurement,
+    # and it is None unless the sites are a strict subset of the files in scope -- the only
+    # case where a severe claim at a site distinguishes anything. Deciding whether a claim
+    # endorses the assertion is adjudication, which is Commit 11, not a path comparison.
+    #
     # Note: a later REFUTED verdict is the ground truth confirming the trap was
     # false -- it is NOT evidence that the reviewer abstained. Taking the bait
     # counts against the reviewer regardless of what refutation later showed.
     trap = item.get("trap")
     trap_promoted = None
     trap_severity = None
+    trap_site_severe_claim = None
+    trap_sites_discriminate = None
     if trap:
+        sites = {s["path"] for s in trap.get("sites", [])}
+        in_scope = set(item.get("repo_files") or ())
+        trap_sites_discriminate = bool(in_scope) and not in_scope.issubset(sites)
         bait = [
             c for c in claims
             if c.parse_status != PARSE_FAIL
@@ -409,8 +427,10 @@ def rollup_run(run: dict, item: dict, claims: list[Claim], gates: list[str]) -> 
             and any(_path_matches(a.path, s["path"])
                     for a in c.anchors for s in trap.get("sites", []))
         ]
-        trap_promoted = any(c.severity <= 1 for c in bait)
+        trap_site_severe_claim = any(c.severity <= 1 for c in bait)
         trap_severity = min((c.severity for c in bait), default=None)
+        if trap_sites_discriminate:
+            trap_promoted = trap_site_severe_claim
 
     return {
         "run_id": run["run_id"],
@@ -475,6 +495,8 @@ def rollup_run(run: dict, item: dict, claims: list[Claim], gates: list[str]) -> 
             else None
         ),
         "trap_promoted": trap_promoted,
+        "trap_site_severe_claim": trap_site_severe_claim,
+        "trap_sites_discriminate": trap_sites_discriminate,
         "trap_severity": trap_severity,
         "caught_label_ids": "|".join(sorted(caught)),
         "latency_ms": execution.get("latency_ms"),

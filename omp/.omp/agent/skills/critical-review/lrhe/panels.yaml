@@ -52,6 +52,14 @@ arms:
 # scheduled per claim rather than per item, probe and smoke never saw the repository
 # under production conditions, and OC_SCREEN is twelve items -- enough to catch a
 # lane that cannot hold a contract, nowhere near enough to rank three that can.
+#
+# These are the DEFAULTS. An experiment may override any of them, and the OpenCode
+# panel does: its arms are OC_FULL and T_OC, so inheriting `C`/`D`/`T` selected no
+# runs at all and every arm-keyed statistic returned a clean empty result --
+# `families: []` on a three-family panel, and a matched null reported as "was not
+# run" while its 36 runs sat one file over. `analyze_lrhe.resolve_arm_roles()` reads
+# these; before it existed they were documentation and the analyzer's four module
+# constants were the real configuration.
 councilArms: [C, D]
 nullArm: T
 squareArm: D
@@ -149,6 +157,26 @@ experiments:
   # underpowered, and section 6 Commit 12 defers it deliberately.
   - experimentId: lrhe-opencode-v1
     panelId: opencode-broad-v1
+    # This panel's arms, overriding the defaults above. `OC_FULL` is the primary
+    # measurement and the only council arm: there is no lens rotation here, so there is
+    # no second arm to pool with it.
+    #
+    # `floorArm` is `OC_SCREEN`, not `OC_FULL`, and that is not a typo. The decorrelation
+    # contrast needs one floor-lens run per family against one per replicate ON THE SAME
+    # ITEMS. `T_OC` was run over the twelve screen items; `OC_FULL`'s selection rule is
+    # "the 35 corpus items the twelve-item screen did not use". The two are disjoint by
+    # construction, so the contrast against `OC_FULL` is not merely unmeasured, it is
+    # unmeasurable -- and pointing `floorArm` at `OC_FULL` made the analyzer say so in
+    # words that read like a missing run rather than a design gap.
+    #
+    # So the decorrelation estimate is scoped to the twelve screen items, where both arms
+    # ran. The floor panel has NO matched null of its own. That is a real gap: closing it
+    # needs a `T_OC`-style null over floor-panel items, which is not authorized and is
+    # recorded rather than papered over.
+    councilArms: [OC_FULL]
+    nullArm: T_OC
+    floorArm: OC_SCREEN
+    squareArm: OC_FULL
     # v2 is the enforced tool surface. v1 declared `tools: [read, grep, glob, lsp,
     # ast_grep]` on every floor reviewer while the packet said the document was the
     # whole of the evidence, so the boundary was prose; 106 units ran under it and are

@@ -169,18 +169,34 @@ def _stable_hash(s: str) -> int:
     return int(hashlib.sha256(s.encode()).hexdigest()[:8], 16)
 
 
+class PanelUnfillable(Exception):
+    """No assignment exists that satisfies the independence constraint."""
+
+
 def panel_for(claim_key: str, author: str, families: list[str], size: int) -> list[str]:
-    """`size` families that did not author the claim, chosen deterministically.
+    """`size` DISTINCT families, none of them the claim's author, chosen deterministically.
 
     Rotating the offset by claim keeps any one family from judging a fixed slice of
     the corpus, which would let its idiosyncrasies load onto specific items instead
     of averaging out.
+
+    Refuses rather than under-fills. This used to `return []` when the author was the
+    only family and `min(size, len(eligible))` otherwise, so a mis-specified pool
+    produced a claim with no judges, or one judge where the protocol requires two, and
+    said nothing -- the claim simply never appeared in the output file. `cmd_ingest`
+    already refuses a judgement whose family authored the claim; the assignment side had
+    no equivalent, which is the same asymmetry that let the reviewer tool surface be
+    enforced in prose and measured nowhere.
     """
     eligible = [f for f in families if f != author]
-    if not eligible:
-        return []
+    if len(eligible) < size:
+        raise PanelUnfillable(
+            f"claim {claim_key} authored by {author!r} needs {size} distinct non-authoring "
+            f"families and the pool {sorted(families)} offers {len(eligible)}: "
+            f"{sorted(eligible)}. Two judges that are the same family are one judge, and "
+            f"one judge cannot be a majority of two.")
     start = _stable_hash(claim_key) % len(eligible)
-    return [eligible[(start + i) % len(eligible)] for i in range(min(size, len(eligible)))]
+    return [eligible[(start + i) % len(eligible)] for i in range(size)]
 
 
 # Claims the deterministic gates in section 5.1 already settled. A judge call buys
@@ -206,14 +222,19 @@ def cmd_prompts(args) -> int:
     claims = _read_csv(args.claims)
     eligible = [c for c in claims if _needs_judging(c)]
 
-    out, missing = [], 0
+    out, missing, unfillable = [], 0, []
     for c in eligible:
         run, item = runs.get(c["run_id"]), corpus.get(c["item_id"])
         if not run or not item:
             missing += 1
             continue
         key = f"{c['run_id']}|{c['rid']}"
-        for jf in panel_for(key, run.get("family", ""), families, args.panel_size):
+        try:
+            panel = panel_for(key, run.get("family", ""), families, args.panel_size)
+        except PanelUnfillable as exc:
+            unfillable.append(str(exc))
+            continue
+        for jf in panel:
             out.append({
                 "judge_id": f"{key}|{jf}", "run_id": c["run_id"], "claim_rid": c["rid"],
                 "item_id": c["item_id"], "author_family": run.get("family", ""),
@@ -221,12 +242,25 @@ def cmd_prompts(args) -> int:
                 "prompt": _render_judge(item, c),
             })
 
+    # Nothing is written when any claim cannot be assigned. A partial file would be
+    # dispatched, ingested, and scored, and the claims missing from it would read as
+    # claims nobody happened to dispute rather than claims nobody was allowed to judge.
+    if unfillable:
+        print(f"REFUSED: {len(unfillable)} of {len(eligible)} eligible claims cannot be "
+              f"assigned {args.panel_size} independent judges. No prompts written.",
+              file=sys.stderr)
+        for line in unfillable[:3]:
+            print(f"  {line}", file=sys.stderr)
+        if len(unfillable) > 3:
+            print(f"  ... and {len(unfillable) - 3} more", file=sys.stderr)
+        return 2
+
     _write_jsonl(args.out, out)
     skipped = len(claims) - len(eligible)
     print(f"claims {len(claims)} | settled deterministically, no judge needed: {skipped} "
           f"({skipped / max(len(claims), 1):.0%})")
     print(f"judge calls: {len(out)}  ({len(eligible)} claims x panel {args.panel_size})")
-    print(f"judge pool: {len(families)} families, {len(families) - 1} eligible per claim")
+    print(f"judge pool: {len(families)} families, {args.panel_size} assigned per claim")
     if missing:
         print(f"  WARNING: {missing} claims reference an unknown run or item")
     print(f"wrote {args.out}\n")

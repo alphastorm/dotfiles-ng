@@ -29,9 +29,11 @@ import json
 import sys
 import math
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
+import yaml
 
 RNG = np.random.default_rng(20260726)
 CRITICAL = {0, 1}
@@ -124,10 +126,52 @@ CONDITION_KEYS = ["item_id", "arm", "family", "lens", "replicate", "context_conf
 # with its own repeats -- inflating that family's `caught`, depressing every other
 # family's `unique_share`, and quietly rigging the leave-one-out delta in favour of
 # whichever family happened to be chosen as the null.
+# Defaults for the core lens experiment. `panels.yaml` declares these per experiment
+# under `councilArms` / `nullArm` / `squareArm` / `floorArm`, and `resolve_arm_roles()`
+# is what reads them -- until it existed the declaration was inert documentation and
+# these four constants were the real configuration. The OpenCode floor panel declares
+# arms OC_FULL and T_OC, so every arm-keyed statistic silently described an empty
+# selection: `families` came back `[]` on a three-family panel, and the matched null
+# read as "was not run" while its 36 runs sat in the next file over.
 COUNCIL_ARMS = ("C", "D")   # cross-family review
 FLOOR_ARM = "C"             # one floor-lens run per family
 SQUARE_ARM = "D"            # the Latin square: the only arm where lens varies by design
 NULL_ARM = "T"              # same-family replicates: the empirical null
+
+
+def resolve_arm_roles(experiment_id: str, panels: Path | None = None) -> dict[str, Any]:
+    """The arm playing each role in one experiment, from `panels.yaml`.
+
+    Per-experiment declaration wins; the top-level keys are the fallback; the module
+    constants are the last resort so a missing file cannot silently change what the core
+    experiment measures. An experiment that names an arm absent from `arms:` is a typo
+    that would otherwise present as a clean empty result, so it raises.
+    """
+    roles = {"councilArms": list(COUNCIL_ARMS), "nullArm": NULL_ARM,
+             "squareArm": SQUARE_ARM, "floorArm": FLOOR_ARM}
+    path = panels or (Path(__file__).parent / "panels.yaml")
+    if not path.exists():
+        return roles
+    doc = yaml.safe_load(path.read_text()) or {}
+    declared = set(doc.get("arms") or ())
+    for key in roles:
+        if key in doc:
+            roles[key] = doc[key]
+    for exp in doc.get("experiments") or ():
+        if exp.get("experimentId") != experiment_id:
+            continue
+        for key in roles:
+            if key in exp:
+                roles[key] = exp[key]
+    named = [*roles["councilArms"], roles["nullArm"], roles["squareArm"], roles["floorArm"]]
+    unknown = sorted({a for a in named if a and declared and a not in declared})
+    if unknown:
+        raise SystemExit(
+            f"panels.yaml gives experiment {experiment_id!r} arm role(s) {unknown} that "
+            f"`arms:` does not declare. An undeclared arm selects no runs and every "
+            f"statistic keyed on it returns a clean empty result.")
+    roles["councilArms"] = tuple(roles["councilArms"])
+    return roles
 
 
 def normalize_conditions(df: pd.DataFrame) -> pd.DataFrame:
@@ -269,7 +313,8 @@ def unique_contribution(defects: pd.DataFrame, families: list[str]) -> pd.DataFr
     return out
 
 
-def diversity_vs_null(defects: pd.DataFrame, B: int) -> dict:
+def diversity_vs_null(defects: pd.DataFrame, B: int, *,
+                      null_arm: str = NULL_ARM, floor_arm: str = FLOOR_ARM) -> dict:
     """Is cross-family review actually diversifying, or just three coin flips?
 
     THIS IS THE LOAD-BEARING COMPARISON. Simulation with three *statistically
@@ -300,9 +345,9 @@ def diversity_vs_null(defects: pd.DataFrame, B: int) -> dict:
     that actually works. Arm C is the like-for-like counterpart -- one floor-lens run
     per family, same lens and same cardinality as arm T.
     """
-    triplicate = defects[defects["arm"] == NULL_ARM]
+    triplicate = defects[defects["arm"] == null_arm]
     null_items = set(triplicate["item_id"])
-    council = defects[(defects["arm"] == FLOOR_ARM) & defects["item_id"].isin(null_items)]
+    council = defects[(defects["arm"] == floor_arm) & defects["item_id"].isin(null_items)]
 
     def mean_pair_jaccard(d: pd.DataFrame, key: str) -> float:
         sub = d[d["label_severity"].isin(CRITICAL)]
@@ -325,7 +370,7 @@ def diversity_vs_null(defects: pd.DataFrame, B: int) -> dict:
                  "same_family_jaccard": None, "contrast": None}
     if triplicate.empty:
         out["verdict"] = (
-            f"NOT MEASURABLE -- arm {NULL_ARM} (same-family replicates) was not run. "
+            f"NOT MEASURABLE -- arm {null_arm} (same-family replicates) was not run. "
             "Without it, unique-finding counts and leave-one-out deltas cannot be "
             "interpreted: identical reviewers generate both. Run the null arm before "
             "promoting any lane."
@@ -333,8 +378,8 @@ def diversity_vs_null(defects: pd.DataFrame, B: int) -> dict:
         return out
     if council.empty:
         out["verdict"] = (
-            f"NOT MEASURABLE -- arm {NULL_ARM} ran on {len(null_items)} item(s) but "
-            f"arm {FLOOR_ARM} did not run on any of them. The contrast needs one "
+            f"NOT MEASURABLE -- arm {null_arm} ran on {len(null_items)} item(s) but "
+            f"arm {floor_arm} did not run on any of them. The contrast needs one "
             "floor-lens run per family against one floor-lens run per replicate, on "
             "the same items. Arm D is not a substitute: its lens rotation gives each "
             "family several runs, and unioning them inflates cross-family overlap."
@@ -368,17 +413,28 @@ def diversity_vs_null(defects: pd.DataFrame, B: int) -> dict:
 
     both = pd.concat([council, triplicate], ignore_index=True)
     out["contrast"] = cluster_bootstrap(both, lambda d: (
-        mean_pair_jaccard(d[d["arm"] == FLOOR_ARM], "family")
-        - mean_pair_jaccard(d[d["arm"] == NULL_ARM], "replicate")
+        mean_pair_jaccard(d[d["arm"] == floor_arm], "family")
+        - mean_pair_jaccard(d[d["arm"] == null_arm], "replicate")
     ), B=B)
     hi = out["contrast"]["hi"]
-    out["verdict"] = (
-        "cross-family errors are less correlated than same-family: diversification supported"
-        if not math.isnan(hi) and hi < 0
-        else "no evidence that cross-family review decorrelates errors more than "
-             "resampling one family; the extra provider lanes are not yet justified "
-             "on coverage grounds"
-    )
+    # Three outcomes, not two. A NaN contrast used to fall through to the negative branch
+    # and assert "the extra provider lanes are not yet justified" -- a substantive claim
+    # about provider diversity drawn from a statistic that could not be computed. The
+    # Jaccard is undefined until claims are matched to labels, so before adjudication this
+    # arrives NaN on every panel and the conclusion was an artifact of the guard.
+    if math.isnan(hi):
+        out["verdict"] = (
+            "NOT MEASURABLE -- the caught-set Jaccard is undefined: no claim has been "
+            "matched to a labeled defect, so both sets are empty and their overlap has no "
+            "value. This is a missing adjudication pass, not a negative result about "
+            "diversification. Run the judges before reading anything into it.")
+    elif hi < 0:
+        out["verdict"] = ("cross-family errors are less correlated than same-family: "
+                          "diversification supported")
+    else:
+        out["verdict"] = ("no evidence that cross-family review decorrelates errors more "
+                          "than resampling one family; the extra provider lanes are not "
+                          "yet justified on coverage grounds")
     return out
 
 
@@ -443,7 +499,8 @@ def lens_family_decomposition(defects: pd.DataFrame, n_perm: int = 5000) -> dict
     }
 
 
-def fp_burden(runs: pd.DataFrame, claims: pd.DataFrame, B: int) -> dict:
+def fp_burden(runs: pd.DataFrame, claims: pd.DataFrame, B: int,
+              council_arms: tuple[str, ...] = COUNCIL_ARMS) -> dict:
     out = {}
     for arm, sub_df in runs.groupby("arm", observed=True):
         sub = sub_df.copy()
@@ -453,6 +510,12 @@ def fp_burden(runs: pd.DataFrame, claims: pd.DataFrame, B: int) -> dict:
             "claims_per_run": float(sub["n_claims"].mean()),
             "promoted_per_run": float(sub["n_promoted"].mean()),
         }
+    # `trap_promoted` is None wherever the trap's sites cover every file in scope, because
+    # there a severe claim at a site distinguishes nothing -- the flag reduces to "made any
+    # P0/P1 claim". That is all nine trap items in the current corpus, so this section is
+    # normally absent and the upper bound below is what there is. Publishing the bound as
+    # a promotion rate would rank families by claim volume and call it false-positive
+    # burden; naming it is the whole point.
     traps = runs[runs["trap_promoted"].notna()]
     if len(traps):
         out["trap_promotion_by_family"] = (
@@ -461,6 +524,20 @@ def fp_burden(runs: pd.DataFrame, claims: pd.DataFrame, B: int) -> dict:
             .round(4)
             .to_dict("index")
         )
+    # Council arms only. Pooled with the null this mixed arms and reported Kimi over 15
+    # runs against 8 each for GLM and DeepSeek -- the extra 7 are `T_OC`, which is
+    # Kimi-only by design, so the "per family" rate was partly per arm.
+    bound = runs[runs["arm"].isin(council_arms)] if "trap_site_severe_claim" in runs else runs.iloc[:0]
+    bound = bound[bound["trap_site_severe_claim"].notna()] if len(bound) else bound
+    if len(bound):
+        out["trap_site_severe_claim_rate"] = {
+            "note": ("UPPER BOUND on bait-taking, not a measurement of it: a severe claim "
+                     "anchored at a trap site, whether it endorses the seeded assertion or "
+                     "refutes it. Deciding which requires adjudication."),
+            "discriminating_items": int(bound["trap_sites_discriminate"].fillna(False).astype(bool).sum()),
+            "by_family": (bound.groupby("family", observed=True)["trap_site_severe_claim"]
+                          .agg(["mean", "count"]).round(4).to_dict("index")),
+        }
     nulls = runs[runs["null_item_fp"].notna()]
     if len(nulls):
         out["null_item_fp_by_family"] = (
@@ -605,8 +682,8 @@ def main(argv: list[str] | None = None) -> int:
                          "is a number with no referent")
     ap.add_argument("--panel-id", required=True)
     ap.add_argument("--arms", nargs="*", default=None, metavar="ARM",
-                    help=f"restrict to these arms (default: every arm present). Per-family "
-                         f"statistics always use {' '.join(COUNCIL_ARMS)} regardless")
+                    help="restrict to these arms (default: every arm present). Per-family "
+                         "statistics always use the experiment's councilArms regardless")
     ap.add_argument("--keep-gate-failed", action="store_true",
                     help="score runs that failed a hard gate. For diagnosing the gate "
                          "itself; never for a headline number")
@@ -629,8 +706,8 @@ def main(argv: list[str] | None = None) -> int:
     # Per-family statistics run on the council arms ONLY. `families` derived from all
     # claims would include the author (arm A), the refuter (arm R) and probe rows,
     # none of which are first-pass critics, and would then be compared against each
-    # other as though they were.
-    council = defects[defects["arm"].isin(COUNCIL_ARMS)]
+    roles = resolve_arm_roles(args.experiment_id)
+    council = defects[defects["arm"].isin(roles["councilArms"])]
     families = sorted(f for f in council["family"].unique() if f)
 
     result: dict = {
@@ -644,7 +721,8 @@ def main(argv: list[str] | None = None) -> int:
             .drop_duplicates().shape[0]
         ),
         "families": families,
-        "council_arms": list(COUNCIL_ARMS),
+        "arm_roles": {k: (list(v) if isinstance(v, tuple) else v) for k, v in roles.items()},
+        "council_arms": list(roles["councilArms"]),
         "contamination_cells_dropped": int(n_before - len(defects)),
         "bootstrap_B": args.boot,
     }
@@ -669,8 +747,8 @@ def main(argv: list[str] | None = None) -> int:
             "pairwise_jaccard": uc.attrs["jaccard"],
         }
 
-    # 2b. is the diversity real, or three coin flips?
-    result["diversity_vs_null"] = diversity_vs_null(defects, B=args.boot)
+    result["diversity_vs_null"] = diversity_vs_null(
+        defects, B=args.boot, null_arm=roles["nullArm"], floor_arm=roles["floorArm"])
 
     # 3. lens decomposition -- the Latin square only. Arm C and arm T both run the
     # floor lens, so including them adds a "floor" column that only some families
@@ -681,7 +759,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # 4. cost of being wrong
-    result["false_positive_burden"] = fp_burden(runs, claims, B=args.boot)
+    result["false_positive_burden"] = fp_burden(runs, claims, B=args.boot,
+                                                council_arms=roles["councilArms"])
 
     # 5. diagnostics
     diag: dict = {
