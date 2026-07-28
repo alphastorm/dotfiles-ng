@@ -418,6 +418,26 @@ def _has_rows(path: Path) -> bool:
         return False
 
 
+def _complete_against(runs: Path, manifest: Path) -> tuple[int, int]:
+    """(runs recorded, runs the frozen manifest calls for).
+
+    `_has_rows` is the wrong question for anything that runs in batches. The floor
+    panel is 105 reviews in five declared batches, and after the first one the runs
+    file is non-empty -- so a step asking only "does the artifact exist" reported a
+    panel one fifth finished as done. Same staleness as the static checklist, one
+    level down: the artifact answered a question nobody meant to ask.
+    """
+    try:
+        want = sum(1 for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip())
+    except OSError:
+        return (0, 0)
+    try:
+        have = sum(1 for line in runs.read_text(encoding="utf-8").splitlines() if line.strip())
+    except OSError:
+        have = 0
+    return (have, want)
+
+
 def _authorization(kind: str) -> bool:
     """Is there a recorded operator decision of this kind?
 
@@ -488,14 +508,18 @@ MANUAL_STEPS = (
      "caught-set Jaccard and union-coverage comparison unmatched. Deviation recorded "
      "in handoff/RECONCILIATION-2026-07-28.md",
      lambda r: not _has_rows(DATA / "runs-null-toc.jsonl")),
-    ("the 47-item floor panel",
+    (f"the 47-item floor panel ({_complete_against(DATA / 'runs-floor.jsonl', DATA / 'floor-manifest.jsonl')[0]}"
+     f"/{_complete_against(DATA / 'runs-floor.jsonl', DATA / 'floor-manifest.jsonl')[1]} reviews recorded)",
      "the remaining 35 items for every promoted family, arm OC_FULL, panel "
-     "opencode-broad-v1, contamination probes continuing. 105 reviews and 105 probes "
-     "at three families -- the longest window anything here runs over, which is why "
-     "provider_fingerprint exists and why OpenCode exposing none is a stated risk "
-     "rather than a closed control. Commit 12's lens rotation is optional and decided "
-     "from this panel's analysis, not before it",
-     lambda r: not _has_rows(DATA / "runs-floor.jsonl")),
+     "opencode-broad-v1, contamination probes continuing. Five declared batches of "
+     "seven, with the witness re-run at each boundary -- three replicates per family "
+     "from boundary 2 on, because one sample cannot be told apart from the run-to-run "
+     "spread the T_OC null measured. 105 reviews and 105 probes at three families, the "
+     "longest window anything here runs over, which is why provider_fingerprint exists "
+     "and why OpenCode exposing none is a stated risk rather than a closed control. "
+     "Commit 12's lens rotation is optional and decided from this panel's analysis",
+     lambda r: _complete_against(DATA / "runs-floor.jsonl",
+                                 DATA / "floor-manifest.jsonl") != (105, 105)),
     ("Fable adjudication",
      "judge-output.schema.json and the Claude Code CLI adapter, then two "
      "non-authoring judges per surviving claim. The kappa >= 0.70 human-calibration "
