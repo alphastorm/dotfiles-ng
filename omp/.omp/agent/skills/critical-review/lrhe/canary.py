@@ -131,18 +131,16 @@ def _review_only(response: dict[str, Any]) -> dict[str, Any]:
 
 
 def agent_output_schema(family: str) -> dict[str, Any] | None:
-    """The reviewer's own declared output schema, or None when unreadable."""
-    qual = SKILL / "qualification.yml"
-    if not qual.is_file():
+    """The reviewer's own declared output schema, or None when unreadable.
+
+    Family here, agent name in `run_review`. This resolves the one to the other and
+    delegates the reading, because two functions that both parse an agent's
+    frontmatter will eventually disagree about what `output` means.
+    """
+    reviewers = _reviewers()
+    if reviewers is None:
         return None
-    entry = (yaml.safe_load(qual.read_text(encoding="utf-8")).get("reviewers") or {}).get(family)
-    agent = AGENTS / f"{(entry or {}).get('agent', '')}.md"
-    if not agent.is_file():
-        return None
-    text = agent.read_text(encoding="utf-8")
-    if not text.startswith("---"):
-        return None
-    return (yaml.safe_load(text.split("---", 2)[1]) or {}).get("output")
+    return run_review.agent_output_schema(str((reviewers.get(family) or {}).get("agent", "")))
 
 
 def grade_structured_output(family: str, _packet_: dict, response: dict) -> list[str]:

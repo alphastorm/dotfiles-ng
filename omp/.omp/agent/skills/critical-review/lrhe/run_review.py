@@ -3,6 +3,8 @@
 
     ./.venv/bin/python run_review.py plan     --item-id S1-... --family claude
     ./.venv/bin/python run_review.py dispatch --item-id S1-... --family claude --transport stub
+    ./.venv/bin/python run_review.py prompts  --assignments smoke.jsonl --out rp.jsonl
+    ./.venv/bin/python run_review.py ingest   --prompts rp.jsonl --responses rr.jsonl
 
 This is the pre-egress gate that authorization section 8 step 2 asks for. Until
 now `check_data_rights.py` and `check_packet_gates.py` were CLIs nobody called:
@@ -25,6 +27,12 @@ Transports are explicit and default to refusing:
     live    not implemented. No OpenCode credential is configured, the operator
             has held provider calls pending an OMP upgrade, and a half-written
             live path is exactly the thing that gets called by mistake.
+
+A reviewer still has to reach a model, and it does -- through the OMP agent named
+in qualification.yml, the one the council dispatches. `prompts` runs every gate
+and emits the packet as text, and `ingest` turns the replies into run records,
+re-running the rights check on each request it rebuilt from the file. Nothing in
+that path opens a connection either, so the boundary above is unchanged.
 """
 
 from __future__ import annotations
@@ -34,7 +42,8 @@ import hashlib
 import json
 import subprocess
 import sys
-from dataclasses import dataclass
+from argparse import Namespace
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -93,8 +102,23 @@ class AuthorizedRequest:
     terms_snapshot_id: str
 
 
-def render_packet(packet: dict[str, Any]) -> str:
-    """The packet as a reviewer receives it. One rendering, at the boundary.
+def lens_text(panels: dict[str, Any], lens: str) -> str:
+    """The assignment for a lens, from panels.yaml. Raises on one nobody declared.
+
+    Silently rendering an unknown lens as nothing is how the whole defect worked:
+    the field was recorded on every run and transmitted on none.
+    """
+    declared = panels.get("lenses")
+    if not isinstance(declared, dict) or lens not in declared:
+        raise SystemExit(
+            f"lens {lens!r} has no text in panels.yaml. A lens that is assigned but "
+            f"not transmitted is recorded on the run and applied to nothing.")
+    return str(declared[lens] or "").strip()
+
+
+def render_packet(packet: dict[str, Any], lens: str = "floor",
+                  panels: dict[str, Any] | None = None) -> str:
+    """The packet as a reviewer receives it, under its assigned lens.
 
     A packet is data; a provider takes text. Something has to turn one into the
     other, and if each caller does it, two lanes reviewing the same item read two
@@ -102,16 +126,27 @@ def render_packet(packet: dict[str, Any]) -> str:
     So it lives here, beside the transports, and the canary imports it rather
     than authoring a second one.
 
+    The lens arrives here for the same reason. It used to be a hardcoded line in
+    three agent definitions, so a family could only ever run its own lens while
+    every assignment recorded one freely -- the rotation the experiment is named
+    for could not be delivered. It is text in `panels.yaml` now and the runner
+    transmits it, which is also what lets one agent serve any lens it is given.
+
     `repo_files` is stated as the closed set of citable anchors because it is:
     the reviewer is answering from this document, not from a working tree, and a
     citation outside the set is a fabricated anchor whether or not the path
     happens to exist on the machine that reads it.
     """
+    if panels is None:
+        panels = yaml.safe_load((HERE / "panels.yaml").read_text())
+    assignment = lens_text(panels, lens)
     files = packet.get("repo_files") or []
     return "\n".join((
         f"item_id: {packet.get('item_id', '')}",
         f"stratum: {packet.get('stratum', '')}",
+        f"lens: {lens}",
         "",
+        *((assignment, "") if assignment else ()),
         "## Goal",
         str(packet.get("goal", "")).strip() or "(unstated)",
         "",
@@ -164,6 +199,11 @@ def stub_transport(req: AuthorizedRequest) -> dict[str, Any]:
         "output_tokens": 100,
         "cost_usd": 0.0,
         "tool_violations": 0,
+        # Stated, not defaulted. The stub's reply is schema-valid by construction
+        # and a cross-file test holds it to that; saying so here is what lets
+        # `_run_record` refuse a transport that stays silent on the question.
+        "schema_valid": True,
+        "telemetry_complete": True,
         "raw": f"stub:{seed[:16]}",
     }
 
@@ -300,14 +340,14 @@ def _policy_for_route(path: Path, route: str) -> str | None:
 
 # ---------------------------------------------------------------- dispatch
 
-def dispatch(req: AuthorizedRequest, transport: str, *,
-             omp_version: str = "unknown") -> dict[str, Any]:
-    """Send, and build the run record. Takes an AuthorizedRequest and nothing else.
+def _require_allowed_rights(req: AuthorizedRequest) -> None:
+    """Re-validate the evidence the request carries. Raises rather than returns.
 
-    The rights record is re-validated here even though `prepare()` produced it.
-    That is not redundancy for its own sake: it is the check that survives someone
-    constructing an AuthorizedRequest by hand, which Python will happily let them
-    do. A request whose evidence does not validate is refused at the last step.
+    `prepare()` produced this record, so re-checking it looks redundant. It is the
+    check that survives someone constructing an AuthorizedRequest by hand, which
+    Python will happily let them do -- and now also the one that survives a
+    hand-edited prompts row, since `ingest` builds its request from a file. Both
+    last steps run this, so there is one implementation of the decision.
     """
     rights_schema = json.loads((HERE / "data-rights.schema.json").read_text())
     errors = list(Draft202012Validator(
@@ -321,6 +361,12 @@ def dispatch(req: AuthorizedRequest, transport: str, *,
             f"rights record says egress_decision="
             f"{req.data_rights.get('egress_decision')!r}, not 'allow'")
 
+
+def dispatch(req: AuthorizedRequest, transport: str, *,
+             omp_version: str = "unknown") -> dict[str, Any]:
+    """Send, and build the run record. Takes an AuthorizedRequest and nothing else."""
+    _require_allowed_rights(req)
+
     send = TRANSPORTS.get(transport)
     if send is None:
         raise EgressRefused(
@@ -331,11 +377,17 @@ def dispatch(req: AuthorizedRequest, transport: str, *,
     started = datetime.now(timezone.utc)
     response = send(req)
     completed = datetime.now(timezone.utc)
-    record = _run_record(req, response, started, completed, transport, omp_version)
+    return _validated_record(req, response, started, completed, transport, omp_version)
 
-    # The scorer refuses a record that does not validate, and it is better to find
-    # that out here -- with the response still in hand -- than after a paid run has
-    # been written to disk in a shape nothing will read.
+
+def _validated_record(req: AuthorizedRequest, response: dict, started, completed,
+                      transport: str, omp_version: str) -> dict[str, Any]:
+    """Build the run record and refuse to return one the scorer would reject.
+
+    Better to find that out with the response still in hand than after a paid run
+    has been written to disk in a shape nothing will read.
+    """
+    record = _run_record(req, response, started, completed, transport, omp_version)
     bad = list(_validator("run.schema.json").iter_errors(record))
     if bad:
         raise EgressRefused(
@@ -432,8 +484,13 @@ def _run_record(req: AuthorizedRequest, response: dict, started, completed,
             "tool_trace_digest": _digest(response.get("tool_trace", [])),
         },
         "safety": {
-            "telemetry_complete": True,
-            "schema_valid": True,
+            # No `.get` default on these two. Section 5.5 is about absent telemetry
+            # reading as success, and a default here is exactly that: a transport
+            # that cannot say whether the reply validated would produce a record
+            # indistinguishable from one that did. A KeyError at build time is the
+            # loud version of the same fact.
+            "telemetry_complete": bool(response["telemetry_complete"]),
+            "schema_valid": bool(response["schema_valid"]),
             "tool_violations": int(response.get("tool_violations") or 0),
             "wrote_to_repo": False,
             "spawned_subagent": False,
@@ -450,16 +507,149 @@ def _run_record(req: AuthorizedRequest, response: dict, started, completed,
     }
 
 
+# --------------------------------------------------- the lane that reaches a model
+#
+# `dispatch()` is the gated path to a transport, and the transports are `none` and
+# `stub`. Neither reaches a model, and `live` is deliberately absent: a half-written
+# live path is the one that gets called by mistake, and no provider credential
+# belongs in this repository anyway. But the reviewers do reach models -- through
+# the OMP agent named by `agent:` in qualification.yml, which is what the council
+# dispatches and what the canary already qualified the floor lanes with.
+#
+# So the same split, one layer up. `prompts` runs every gate and emits the packet
+# as text; the reviewer agent answers; `ingest` builds the run record. The egress
+# boundary does not move -- nothing here opens a connection -- and `ingest` re-runs
+# the rights check on a request it rebuilt from a file, so a hand-edited prompts row
+# dies at the same last step a hand-built AuthorizedRequest does.
+
+AGENTS = Path.home() / ".omp/agent/agents"
+
+
+def agent_output_schema(agent: str) -> dict[str, Any] | None:
+    """A reviewer agent's declared output schema, or None when unreadable."""
+    definition = AGENTS / f"{agent}.md"
+    if not agent or not definition.is_file():
+        return None
+    text = definition.read_text(encoding="utf-8")
+    if not text.startswith("---"):
+        return None
+    return (yaml.safe_load(text.split("---", 2)[1]) or {}).get("output")
+
+
+def _reply_is_schema_valid(agent: str, reply: dict[str, Any]) -> bool | None:
+    """Did the reviewer answer in the shape it declared? None when unanswerable."""
+    schema = agent_output_schema(agent)
+    if schema is None:
+        return None
+    body = {k: reply.get(k) for k in ("summary", "evidence", "unresolved")}
+    return not list(Draft202012Validator(schema).iter_errors(body))
+
+
+def cmd_prompts(args) -> int:
+    """Gate every assignment, and emit the ones that survive as dispatchable text."""
+    assignments = _read_jsonl(args.assignments)
+    panels = yaml.safe_load(args.panels.read_text())
+    rows, refused = [], []
+    for a in assignments:
+        one = Namespace(**{**vars(args), **a})
+        outcome = prepare(one)
+        if isinstance(outcome, Refusal):
+            refused.append((a, outcome))
+            continue
+        rows.append({
+            "run_key": f"{outcome.item_id}|{outcome.family}|{outcome.lens}|{outcome.arm}",
+            "agent": outcome.agent,
+            "request": asdict(outcome),
+            "prompt": render_packet(outcome.packet, outcome.lens, panels),
+        })
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows),
+                        encoding="utf-8")
+    print(f"{len(rows)} of {len(assignments)} assignment(s) authorized -> {args.out}")
+    for a, refusal in refused:
+        print(f"  refused {a.get('item_id')}/{a.get('family')}: "
+              f"{refusal.reason_code} {refusal.message}", file=sys.stderr)
+    print("\nDispatch each `prompt` to its `agent`, one invocation per row, in a fresh")
+    print("session with no peer output. Write one JSON object per reply carrying")
+    print("  {run_key, served_model, response: {summary, evidence, unresolved}}")
+    print("then run `run_review.py ingest`.")
+    return EXIT_OK if not refused else EXIT_UNRESOLVED
+
+
+def cmd_ingest(args) -> int:
+    """Build run records from replies obtained through the agent lane."""
+    prompts = {p["run_key"]: p for p in _read_jsonl(args.prompts)}
+    replies = _read_jsonl(args.responses)
+
+    records, unmatched, failed = [], [], []
+    for reply in replies:
+        prompt = prompts.get(str(reply.get("run_key", "")))
+        if prompt is None:
+            unmatched.append(str(reply.get("run_key", "")))
+            continue
+        req = AuthorizedRequest(**prompt["request"])
+        body = reply.get("response") or {}
+        valid = _reply_is_schema_valid(prompt["agent"], body)
+        started = datetime.now(timezone.utc)
+        response = {
+            "served_model": reply.get("served_model"),
+            "summary": body.get("summary") if isinstance(body.get("summary"), str) else "",
+            "evidence": body.get("evidence") if isinstance(body.get("evidence"), list) else [],
+            "unresolved": body.get("unresolved") if isinstance(body.get("unresolved"), list) else [],
+            "latency_ms": reply.get("latency_ms"),
+            "input_tokens": reply.get("input_tokens"),
+            "output_tokens": reply.get("output_tokens"),
+            "cost_usd": reply.get("cost_usd"),
+            "tool_violations": reply.get("tool_violations"),
+            "provider_error": reply.get("provider_error"),
+            "raw": json.dumps(body, sort_keys=True),
+            # A reviewer whose agent definition cannot be read has not been shown
+            # to answer in shape, and `telemetry_complete: false` is how the record
+            # says the question went unanswered rather than answering it favourably.
+            "schema_valid": bool(valid),
+            "telemetry_complete": valid is not None and reply.get("served_model") is not None,
+        }
+        try:
+            _require_allowed_rights(req)
+            records.append(_validated_record(req, response, started,
+                                             datetime.now(timezone.utc), "agent",
+                                             args.omp_version))
+        except EgressRefused as exc:
+            failed.append((prompt["run_key"], str(exc)))
+            continue
+        mark = "ok  " if response["schema_valid"] else "SHAPE"
+        print(f"  {mark} {prompt['run_key']}  served {response['served_model']}")
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with args.out.open("a", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+    print(f"\nappended {len(records)} run record(s) to {args.out}")
+
+    missing = sorted(set(prompts) - {str(r.get("run_key", "")) for r in replies})
+    for key, why in failed:
+        print(f"  refused at ingest: {key}: {why}", file=sys.stderr)
+    if unmatched:
+        print(f"  {len(unmatched)} reply/replies match no prompt: "
+              f"{', '.join(sorted(set(unmatched))[:5])}", file=sys.stderr)
+    if missing:
+        print(f"  {len(missing)} prompt(s) unanswered: {', '.join(missing[:5])}", file=sys.stderr)
+    return EXIT_OK if not (failed or unmatched or missing) else EXIT_UNRESOLVED
+
+
 # ------------------------------------------------------------------- driver
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("plan", "dispatch"):
+    for name in ("plan", "dispatch", "prompts"):
         p = sub.add_parser(name)
-        p.add_argument("--item-id", required=True)
-        p.add_argument("--family", required=True)
+        # `prompts` reads item/family/lens/arm per row from --assignments; the flags
+        # below become its defaults, so one file can leave them out and inherit.
+        p.add_argument("--item-id", required=name != "prompts")
+        p.add_argument("--family", required=name != "prompts")
         p.add_argument("--lens", default="")
         p.add_argument("--arm", default="C")
         p.add_argument("--experiment-id", default="lrhe-core-v1")
@@ -476,7 +666,22 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--transport", default="none", choices=sorted(TRANSPORTS))
             p.add_argument("--out", type=Path, default=None,
                            help="append the run record here as JSONL")
+        if name == "prompts":
+            p.add_argument("--assignments", type=Path, required=True,
+                           help="JSONL of {item_id, family, lens, arm, experiment_id}")
+            p.add_argument("--out", type=Path, default=Path("run-prompts.jsonl"))
+
+    ingest = sub.add_parser("ingest")
+    ingest.add_argument("--prompts", type=Path, required=True)
+    ingest.add_argument("--responses", type=Path, required=True)
+    ingest.add_argument("--out", type=Path, default=Path("runs.jsonl"))
+    ingest.add_argument("--omp-version", default="unknown")
+
     args = ap.parse_args(argv)
+    if args.cmd == "prompts":
+        return cmd_prompts(args)
+    if args.cmd == "ingest":
+        return cmd_ingest(args)
 
     outcome = prepare(args)
     if isinstance(outcome, Refusal):

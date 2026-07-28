@@ -40,6 +40,54 @@ nullArm: T
 squareArm: D
 floorArm: C
 
+# The lens assignment, as text the runner transmits.
+#
+# It used to live in the agent definitions -- one hardcoded `Primary lens:` line
+# each in review-claude, review-gemini and review-grok, and none at all in the four
+# floor agents. Family therefore determined agent determined lens, one to one,
+# while `lens_sets()` counterbalanced families over lenses, arm D was documented as
+# the only arm where lens varies, and `power_lrhe.py` tested a family x lens
+# interaction. All of that assumed a lens could be assigned at dispatch. None of it
+# could be delivered: the field was recorded on every run and transmitted on none,
+# so arm D would have carried four lens labels over reviewers that each received
+# exactly one. Moving the text here is what makes the rotation real, and it is the
+# reason the lens belongs in configuration -- a lens edited inside an agent is a
+# design change with no artifact and no digest, the same argument that put the
+# panels here.
+#
+# Wording is verbatim from the three agents it came from, so this is a move rather
+# than a rewrite and the core panel's prompts are unchanged.
+lenses:
+  architecture: >-
+    Primary lens: architectural and semantic coherence. Trace abstractions, APIs,
+    invariants, ownership boundaries, lifecycle semantics, and failure contracts.
+    Look for local patches concealing structural defects, but do not recommend a
+    rewrite unless a named invariant requires it.
+  whole_repo: >-
+    Primary lens: whole-repository and long-context coverage. Trace distant
+    callers, schemas, configuration paths, migrations, dataflow, deployment
+    assumptions, compatibility contracts, operational procedures, and omissions.
+    Expand selectively from the changed-surface map and verify important primary
+    evidence rather than trusting summaries.
+  adversarial: >-
+    Primary lens: adversarial and contrarian failure analysis. Trace hostile
+    inputs, privilege escalation, fail-open behavior, races, deadlocks, corruption,
+    partial outages, recovery failure, rollback failure, resource exhaustion, and
+    abuse. Prefer a concrete exploit path, failure schedule, or counterexample over
+    rhetorical suspicion.
+  independent: >-
+    Primary lens: independent reconstruction. Rebuild the system and its invariants
+    from primary evidence rather than checking the author's framing, and report
+    where the evidence does not support the design as stated. Deliberately broader
+    than the other lenses, so that it can surface defects the hand-designed
+    taxonomy itself omits.
+  # The floor is the absence of a lens, and saying so is not the same as saying
+  # nothing: every family gets the identical prompt, which is what isolates family
+  # and route behaviour from lens behaviour. An empty string here would read as an
+  # oversight, and a missing key would fail the check that every declared lens has
+  # text.
+  floor: ""
+
 experiments:
   - experimentId: lrhe-core-v1
     panelId: core-cgg-v1

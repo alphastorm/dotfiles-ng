@@ -242,3 +242,105 @@ def test_packet_gate_failure_blocks_dispatch(spy, tmp_path):
     assert outcome.reason_code == "packet_gate_failed"
     assert "oracle_leak" in outcome.message
     assert spy == []
+
+
+# ------------------------------------------------- the lane that reaches a model
+
+def _prompted(tmp_path, assignments: list[dict], **over):
+    out = tmp_path / "rp.jsonl"
+    (tmp_path / "a.jsonl").write_text("".join(json.dumps(a) + "\n" for a in assignments))
+    args = _args(item_id=None, family=None, assignments=tmp_path / "a.jsonl",
+                 out=out, cmd="prompts", **over)
+    code = run_review.cmd_prompts(args)
+    rows = [json.loads(x) for x in out.read_text().splitlines() if x.strip()]
+    return code, rows
+
+
+def _reply(row: dict, **over) -> dict:
+    packet_file = (row["request"]["packet"].get("repo_files") or ["src/x.py"])[0]
+    body = {"summary": "reviewed", "unresolved": [],
+            "evidence": [f"R1|P2|conf=0.60|claim=c|evidence={packet_file}:1 observed"
+                         f"|impact=i|verify=v"]}
+    return {"run_key": row["run_key"],
+            "served_model": row["request"]["requested_model"],
+            "response": body, **over}
+
+
+def test_prompts_emits_nothing_for_an_assignment_the_gates_refuse(spy, tmp_path):
+    """The batch path is the one that will actually be used, so it runs every gate.
+
+    A runner that gated single requests and waved batches through would be gated in
+    the mode nobody uses. Each row goes through the same `prepare()`, and a refusal
+    is reported and dropped rather than emitted with a warning nobody reads.
+    """
+    code, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "claude", "lens": "architecture"},
+        {"item_id": "does-not-exist", "family": "claude", "lens": "architecture"},
+    ])
+    assert code == run_review.EXIT_UNRESOLVED
+    assert [r["run_key"].split("|")[0] for r in rows] == ["S1-7e6f82f1"]
+    assert spy == [], "prompts reached a transport"
+
+
+def test_ingest_refuses_a_prompts_row_whose_rights_record_was_edited(spy, tmp_path):
+    """`ingest` builds its request from a file, so the file is now an attack surface.
+
+    `dispatch()` re-validates the rights record it was handed precisely because
+    Python cannot stop someone constructing an AuthorizedRequest by hand. Reading
+    one back off disk is that same hand, with a text editor. Both paths call the
+    same check, and this is the test that they do.
+    """
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "claude", "lens": "architecture"}])
+    rows[0]["request"]["data_rights"]["egress_decision"] = "deny"
+    prompts = tmp_path / "edited.jsonl"
+    prompts.write_text(json.dumps(rows[0]) + "\n")
+    responses = tmp_path / "rr.jsonl"
+    responses.write_text(json.dumps(_reply(rows[0])) + "\n")
+
+    out = tmp_path / "runs.jsonl"
+    code = run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses,
+                                           out=out, omp_version="test"))
+    assert code == run_review.EXIT_UNRESOLVED
+    assert out.read_text() == "", "a denied rights record produced a run record"
+    assert spy == []
+
+
+def test_a_reply_through_the_agent_lane_becomes_a_valid_run_record(tmp_path):
+    """The whole point of the path: a real reply, scored like any other run."""
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "claude", "lens": "architecture", "arm": "smoke"}])
+    prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
+    prompts.write_text(json.dumps(rows[0]) + "\n")
+    responses.write_text(json.dumps(_reply(rows[0])) + "\n")
+
+    assert run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses,
+                                           out=out, omp_version="17.1.6")) == run_review.EXIT_OK
+    record = json.loads(out.read_text().strip())
+    assert list(run_review._validator("run.schema.json").iter_errors(record)) == []
+    assert record["arm"] == "smoke", "panels.yaml excludes smoke from every estimate"
+    assert record["reviewer"]["provider_client_version"] == "transport:agent"
+    assert record["reviewer"]["identity_verified"] is True
+    assert record["safety"]["schema_valid"] is True
+
+
+def test_a_reply_that_breaks_the_reviewers_own_schema_is_recorded_as_such(tmp_path):
+    """Not dropped, and not quietly passed. The scorer needs to see the gate fail.
+
+    Absent telemetry used to default to success, so a run nobody could parse was
+    indistinguishable from a clean one. A malformed reply is a fact about the lane
+    and belongs in the record as `schema_valid: false`.
+    """
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "claude", "lens": "architecture", "arm": "smoke"}])
+    prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
+    prompts.write_text(json.dumps(rows[0]) + "\n")
+    broken = _reply(rows[0])
+    broken["response"]["evidence"] = ["R01|P2|not the contract"]
+    responses.write_text(json.dumps(broken) + "\n")
+
+    run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses,
+                                    out=out, omp_version="17.1.6"))
+    record = json.loads(out.read_text().strip())
+    assert record["safety"]["schema_valid"] is False
+    assert list(run_review._validator("run.schema.json").iter_errors(record)) == []

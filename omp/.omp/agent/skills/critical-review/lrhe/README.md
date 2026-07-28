@@ -95,7 +95,7 @@ python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
-python3 -m pytest -q                               # 138 tests; see "The test suite"
+python3 -m pytest -q                               # 146 tests; see "The test suite"
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -301,6 +301,51 @@ Transports are explicit and default to refusing:
 
 Every test that asserts a refusal spies on the transport table and asserts zero
 calls. A gate that refuses *after* sending is not a gate.
+
+### So how does a reviewer reach a model
+
+```bash
+python3 run_review.py prompts --assignments smoke-manifest.jsonl --out rp.jsonl
+# ... one agent invocation per row, fresh session, no peer output ...
+python3 run_review.py ingest --prompts rp.jsonl --responses rr.jsonl --out runs.jsonl
+```
+
+Not through a socket in this repository. Through the OMP agent named by `agent:`
+in `qualification.yml` — the one the council dispatches, and the one the canary
+qualified the floor lanes with. `prompts` runs every gate above and emits the
+packet as text; `ingest` turns the replies into run records. Nothing in that path
+opens a connection, so the table stays as it is.
+
+`ingest` builds its request from a file, which makes the file an attack surface,
+so it re-runs `_require_allowed_rights` — the same check `dispatch()` makes on a
+hand-built `AuthorizedRequest`, now shared by both. A prompts row whose rights
+record has been edited to `deny` produces no run record, and there is a test that
+edits one.
+
+`schema_valid` and `telemetry_complete` have no defaults. Section 5.5 is about
+absent telemetry reading as success, and `response.get("schema_valid", True)` is
+precisely that: a transport unable to say whether the reply validated would emit a
+record indistinguishable from a clean one. Both are now required keys, so silence
+is a `KeyError` at build time rather than a green field.
+
+### The lens was recorded on every run and transmitted on none
+
+It lived as one hardcoded `Primary lens:` line inside `review-claude`,
+`review-gemini` and `review-grok`, and not at all in the four floor agents. Family
+determined agent determined lens, one to one — while `lens_sets()` counterbalances
+families over lenses, arm D is documented as the only arm where lens varies, and
+`power_lrhe.py` tests a family × lens interaction. None of that could be
+delivered. Arm D's 216 rows would have carried four lens labels over reviewers
+that each received exactly one, and nothing would have failed: the field was
+written to every record and applied to nothing.
+
+The text is data in `panels.yaml` now, verbatim from the three agents it came
+from, and `render_packet()` transmits it. That is also what lets one agent serve
+any lens it is given, which is the premise the whole rotation rests on. A lens an
+experiment declares but `panels.yaml` has no text for is refused rather than
+rendered as nothing — rendering it as nothing is how this went unnoticed. `floor`
+is declared with empty text on purpose: the floor is the *absence* of a lens, and
+a missing key would read as an oversight.
 
 Writing this runner is what surfaced that **all three enabled reviewers routed
 through providers with no data-rights policy at all** — qualified, in use, and
@@ -547,7 +592,7 @@ Two graders were wrong, and the four lanes found both:
 ## The test suite
 
 ```bash
-python3 -m pytest -q            # 138 tests, ~60s
+python3 -m pytest -q            # 146 tests, ~60s
 ruff check .                    # rule set pinned in ruff.toml, not inherited
 ```
 

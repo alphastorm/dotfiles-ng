@@ -651,3 +651,59 @@ def test_a_commit_that_carries_more_than_the_lock_still_drifts(tmp_path):
     current = {"private_repo": {"path": str(tmp_path), "commit": after, "excludes": rel}}
     assert freeze_lock._forgive_the_locks_own_commit(stored, current) == []
     assert current["private_repo"]["commit"] == after, "the corpus edit rode in on the lock"
+
+
+def test_every_lens_an_experiment_declares_has_text_to_transmit():
+    """A lens assigned but not transmitted is recorded on the run and applied to
+    nothing, which is the shape of the defect this block exists to close.
+    """
+    declared = PANELS.get("lenses") or {}
+    for exp in PANELS["experiments"]:
+        for lens in exp.get("lenses") or []:
+            assert lens in declared, (
+                f"{exp['experimentId']} assigns lens {lens!r} and panels.yaml has no "
+                f"text for it, so every run under it records a lens nobody received")
+
+
+@needs_agents
+def test_no_agent_definition_pins_a_lens_of_its_own():
+    """The regression that made the rotation undeliverable, kept closed.
+
+    Family determined agent determined lens, one to one, while `lens_sets()`
+    counterbalanced families over lenses and arm D was documented as the only arm
+    where lens varies. A lens inside an agent is also a design change with no
+    artifact and no digest -- the same argument that put the panels in a file.
+    """
+    reviewers = yaml.safe_load(
+        (canary.SKILL / "qualification.yml").read_text())["reviewers"]
+    for family, entry in sorted(reviewers.items()):
+        definition = canary.AGENTS / f"{entry.get('agent', '')}.md"
+        if not definition.is_file():
+            continue
+        body = definition.read_text(encoding="utf-8").split("---", 2)[-1]
+        assert "Primary lens:" not in body, (
+            f"{family}'s agent pins a lens in its prompt; it comes from panels.yaml "
+            f"now, or that agent can only ever run the one lens")
+
+
+def test_the_rendered_prompt_carries_the_lens_it_was_assigned():
+    """Two lenses must produce two documents, or the rotation measures the renderer."""
+    packet = {"item_id": "X", "stratum": "S1", "goal": "g", "problem_statement": "p",
+              "design_or_diff": "d", "repo_files": ["src/a.py"]}
+    architecture = run_review.render_packet(packet, "architecture", PANELS)
+    adversarial = run_review.render_packet(packet, "adversarial", PANELS)
+    assert "lens: architecture" in architecture
+    assert PANELS["lenses"]["architecture"].strip()[:40] in architecture
+    assert architecture != adversarial
+    # The floor is the absence of a lens, and it says so by naming the lens and
+    # adding no assignment -- not by looking like a lens that failed to load.
+    floor = run_review.render_packet(packet, "floor", PANELS)
+    assert "lens: floor" in floor
+    assert "Primary lens:" not in floor
+
+
+def test_an_undeclared_lens_is_refused_rather_than_rendered_empty():
+    """Rendering it as nothing is exactly how the field went silently untransmitted."""
+    with pytest.raises(SystemExit) as refused:
+        run_review.lens_text(PANELS, "not-a-lens")
+    assert "no text in panels.yaml" in str(refused.value)
