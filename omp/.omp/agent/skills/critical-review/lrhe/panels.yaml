@@ -41,6 +41,12 @@ arms:
          four, because the four was derived from a four-family panel and MiniMax is
          held; a four-sample null against three families would leave union coverage
          partly measuring the arity gap}
+  OC_FULL: {role: critic, description: the 47-item OpenCode floor panel; the primary
+            measurement, every promoted family on the common floor prompt}
+  OC_WITNESS: {role: critic, description: one fixed item re-run at every batch boundary
+               of OC_FULL. The only available signal that a provider swapped the
+               checkpoint behind a stable selector mid-panel, since OpenCode exposes no
+               fingerprint; never a benchmark observation}
 
 # Excluded from performance estimates by every analysis. Arm A is the author, R is
 # scheduled per claim rather than per item, probe and smoke never saw the repository
