@@ -418,6 +418,20 @@ def _has_rows(path: Path) -> bool:
         return False
 
 
+def _authorization(kind: str) -> bool:
+    """Is there a recorded operator decision of this kind?
+
+    A decision that lives only in a chat log is not a decision anybody can audit six
+    months from now, and the promotion of three lanes gates every remaining run. So
+    the checklist asks the same directory the risk acceptance lives in rather than
+    trusting that someone remembers having decided.
+    """
+    directory = SKILL / "authorizations"
+    if not directory.is_dir():
+        return False
+    return any(kind in path.name for path in directory.iterdir() if path.is_file())
+
+
 # Printed after the gates. Order matters and is the reason this file exists.
 #
 # Each step carries the condition under which it is still outstanding, evaluated
@@ -459,6 +473,36 @@ MANUAL_STEPS = (
      "not one of the families. Do not prune on a 12-item recall ranking; drop a "
      "challenger only for operational failure",
      lambda r: not _has_rows(DATA / "runs-screen.jsonl")),
+    ("record the promotion decision for kimi, glm and deepseek",
+     "the screen is evidence, not a verdict, and Commits 9 and 10 both spend real "
+     "quota on whichever lanes proceed. No lane met an early-drop condition; that is a "
+     "recommendation in lrhe-data/screen/RESULTS.md and not a decision. Write it to "
+     "authorizations/ with a principal and a date, the same way the risk acceptance "
+     "is recorded -- a permissive decision nobody owns is the thing that file exists "
+     "to stop",
+     lambda r: not _authorization("promotion")),
+    ("the same-family null, three replicates",
+     "arm T_OC, family kimi, replicate rep1..rep3, lens floor, on the same twelve "
+     "screen items. Three and not the pre-registered four: the four is derived from a "
+     "four-family panel and MiniMax is held, so a four-sample null would make the "
+     "caught-set Jaccard and union-coverage comparison unmatched. Deviation recorded "
+     "in handoff/RECONCILIATION-2026-07-28.md",
+     lambda r: not _has_rows(DATA / "runs-null-toc.jsonl")),
+    ("the 47-item floor panel",
+     "the remaining 35 items for every promoted family, arm OC_FULL, panel "
+     "opencode-broad-v1, contamination probes continuing. 105 reviews and 105 probes "
+     "at three families -- the longest window anything here runs over, which is why "
+     "provider_fingerprint exists and why OpenCode exposing none is a stated risk "
+     "rather than a closed control. Commit 12's lens rotation is optional and decided "
+     "from this panel's analysis, not before it",
+     lambda r: not _has_rows(DATA / "runs-floor.jsonl")),
+    ("Fable adjudication",
+     "judge-output.schema.json and the Claude Code CLI adapter, then two "
+     "non-authoring judges per surviving claim. The kappa >= 0.70 human-calibration "
+     "gate stands: until a blinded 60-claim packet has been labelled independently, "
+     "every automated performance conclusion is labelled provisional rather than the "
+     "gate being dropped",
+     lambda r: not (HERE / "judge-output.schema.json").is_file()),
 )
 
 
