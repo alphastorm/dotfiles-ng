@@ -94,8 +94,33 @@ def _run_command_version(name: str) -> str | None:
     return None
 
 
-def _git_state(path: Path) -> dict[str, Any]:
-    """Capture commit and dirtiness for a repo that names the harness state."""
+def _repo_relpath(repo: Path, target: Path) -> str | None:
+    """`target` as a repo-relative path, or None when it lives outside the repo.
+
+    Both sides are resolved because the harness is reached through the stow
+    symlink: `lrhe-data/runs/LOCK.json` under the skill directory is the same
+    file as `omp-private/.../runs/LOCK.json` under the private repo, and only one
+    of those spellings is a path git has ever heard of.
+    """
+    try:
+        return str(target.resolve().relative_to(repo.resolve()))
+    except (ValueError, OSError):
+        return None
+
+
+def _git_state(path: Path, ignore: str | None = None) -> dict[str, Any]:
+    """Capture commit and dirtiness for a repo that names the harness state.
+
+    `ignore` is the lock's own repo-relative path, and it is why this takes an
+    argument at all. The lock records commit and dirty for both repositories and
+    lives inside one of them, so with no exclusion there is no state it can
+    describe: leave it uncommitted and `dirty` drifts, commit it and `commit`
+    drifts. Either way `verify` fails on the freeze that just succeeded, and a
+    check that always reports drift is one nobody reads. The lock is an output of
+    the experiment, not an input to it, so it is excluded from the state it
+    records -- and `excludes` says so in the record, because a hash that quietly
+    skips a file is worse than one that does not exist.
+    """
     commit_cmd = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "HEAD"],
         check=False,
@@ -106,7 +131,11 @@ def _git_state(path: Path) -> dict[str, Any]:
         raise RuntimeError(f"{path}: git rev-parse HEAD failed: {commit_cmd.stderr.strip() or commit_cmd.stdout.strip()}")
 
     status_cmd = subprocess.run(
-        ["git", "-C", str(path), "status", "--porcelain"],
+        # -uall: an untracked directory reports as `?? runs/`, and the lock is the
+        # first thing to create `runs/`. Collapsed like that it can never match the
+        # path being excluded, so the exclusion silently does nothing on the one
+        # freeze it exists for.
+        ["git", "-C", str(path), "status", "--porcelain", "-uall"],
         check=False,
         capture_output=True,
         text=True,
@@ -114,11 +143,18 @@ def _git_state(path: Path) -> dict[str, Any]:
     if status_cmd.returncode != 0:
         raise RuntimeError(f"{path}: git status failed: {status_cmd.stderr.strip() or status_cmd.stdout.strip()}")
 
-    return {
+    changed = [line for line in status_cmd.stdout.splitlines() if line.strip()]
+    if ignore is not None:
+        changed = [line for line in changed if line[3:].strip().strip('"') != ignore]
+
+    state: dict[str, Any] = {
         "path": str(path),
         "commit": commit_cmd.stdout.strip(),
-        "dirty": bool(status_cmd.stdout.strip()),
+        "dirty": bool(changed),
     }
+    if ignore is not None:
+        state["excludes"] = ignore
+    return state
 
 
 def _parse_manifest_terms(terms_dir: Path) -> tuple[str, ManifestEntry]:
@@ -152,10 +188,11 @@ def _collect_inputs(args: argparse.Namespace) -> dict[str, Any]:
     terms_manifest_sha, term_items = _parse_manifest_terms(args.terms_dir)
     corpus = args.corpus
     answer_key = args.answer_key or corpus
+    lock = args.lock or (args.data_dir / LOCK_RELPATH)
 
     return {
-        "public_repo": _git_state(args.public_repo),
-        "private_repo": _git_state(args.private_repo),
+        "public_repo": _git_state(args.public_repo, _repo_relpath(args.public_repo, lock)),
+        "private_repo": _git_state(args.private_repo, _repo_relpath(args.private_repo, lock)),
         "corpus": {
             "path": str(corpus),
             "sha256": _sha256_file(corpus),
@@ -240,6 +277,44 @@ def _collect_diffs(expected: Any, actual: Any, prefix: str = "") -> list[tuple[s
         diffs.append((prefix, expected, actual))
     return diffs
 
+
+def _only_the_lock_moved(repo: Path, relpath: str, before: str, after: str) -> bool:
+    """True when every file changed between the two commits is the lock itself."""
+    diff = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--name-only", f"{before}..{after}"],
+        check=False, capture_output=True, text=True,
+    )
+    if diff.returncode != 0:
+        return False
+    return {n.strip() for n in diff.stdout.splitlines() if n.strip()} == {relpath}
+
+
+def _forgive_the_locks_own_commit(stored: dict[str, Any],
+                                  current: dict[str, Any]) -> list[tuple[str, str]]:
+    """Let the commit that lands the lock not count as drift against the lock.
+
+    Excluding the lock from `dirty` is only half of it. Commit the lock and the
+    containing repository's HEAD advances, so the lock records a commit that
+    ceased to exist the moment it was stored properly -- and the operator's
+    choices are an uncommitted lock or one that fails its own verify.
+
+    Narrow on purpose. The commit is forgiven only when it changed nothing but
+    the lock file, so committing the lock alongside anything else still drifts,
+    and it is announced rather than absorbed. Anyone can re-derive it: the two
+    commits are both in the record.
+    """
+    forgiven: list[tuple[str, str]] = []
+    for key in ("public_repo", "private_repo"):
+        was, now = stored.get(key) or {}, current.get(key) or {}
+        relpath, before, after = was.get("excludes"), was.get("commit"), now.get("commit")
+        if not relpath or not before or not after or before == after:
+            continue
+        if _only_the_lock_moved(Path(now.get("path", "")), relpath, before, after):
+            now["commit"] = before
+            forgiven.append((key, after))
+    return forgiven
+
+
 def cmd_freeze(args: argparse.Namespace) -> int:
     args.corpus = args.corpus or (args.data_dir / "corpus.jsonl")
     args.answer_key = args.answer_key or args.corpus
@@ -301,6 +376,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if stored_inputs is None:
         print(f"lock file {args.lock} is invalid: missing lock_inputs", file=sys.stderr)
         return EXIT_ERROR
+
+    forgiven = _forgive_the_locks_own_commit(stored_inputs, current_inputs)
+    for key, commit in forgiven:
+        print(f"  {key}: commit moved to {commit[:12]} and that commit lands only the "
+              f"lock -- treated as unchanged")
 
     diffs = _collect_diffs(stored_inputs, current_inputs, "lock_inputs")
     recomputed_id = _lock_id(current_inputs)

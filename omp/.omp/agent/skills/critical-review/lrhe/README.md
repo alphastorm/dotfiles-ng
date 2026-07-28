@@ -95,7 +95,7 @@ python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
-python3 -m pytest -q                               # 136 tests; see "The test suite"
+python3 -m pytest -q                               # 138 tests; see "The test suite"
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -547,7 +547,7 @@ Two graders were wrong, and the four lanes found both:
 ## The test suite
 
 ```bash
-python3 -m pytest -q            # 136 tests, ~60s
+python3 -m pytest -q            # 138 tests, ~60s
 ruff check .                    # rule set pinned in ruff.toml, not inherited
 ```
 

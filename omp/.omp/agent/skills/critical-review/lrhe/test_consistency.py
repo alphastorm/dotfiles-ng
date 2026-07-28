@@ -575,3 +575,79 @@ def test_a_malformed_reply_fails_the_probe_it_was_answering(tmp_path):
     _, records = _graded(tmp_path, [nested])
     assert records[0]["passed"] is False
     assert any(f.startswith("schema:") for f in records[0]["failures"])
+
+
+def _git_repo(root: Path) -> None:
+    import subprocess
+    for cmd in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t"],
+                ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(root), *cmd], check=True, capture_output=True)
+
+
+def _git(root: Path, *args: str) -> str:
+    import subprocess
+    return subprocess.run(["git", "-C", str(root), *args],
+                          check=True, capture_output=True, text=True).stdout.strip()
+
+
+def test_the_lock_does_not_count_itself_as_drift(tmp_path):
+    """The lock records commit and dirty for a repository it lives inside.
+
+    With no exclusion there is no state it can describe. Leave it uncommitted and
+    `dirty` drifts; commit it and `commit` drifts. Either way `verify` fails on
+    the freeze that just succeeded, which is how a check becomes something people
+    learn to ignore. The lock is an output of the experiment, not an input to it.
+    """
+    _git_repo(tmp_path)
+    (tmp_path / "corpus.jsonl").write_text("{}\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "base")
+    base = _git(tmp_path, "rev-parse", "HEAD")
+
+    lock = tmp_path / "runs" / "LOCK.json"
+    lock.parent.mkdir()
+    lock.write_text("{}\n")
+    rel = freeze_lock._repo_relpath(tmp_path, lock)
+    assert rel == "runs/LOCK.json"
+
+    assert freeze_lock._git_state(tmp_path)["dirty"] is True, "the fixture is not dirty"
+    excluded = freeze_lock._git_state(tmp_path, rel)
+    assert excluded["dirty"] is False
+    assert excluded["excludes"] == rel, "an exclusion nobody can see is worse than none"
+
+    # ... and committing it moves HEAD, which is the other half of the same problem.
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "freeze")
+    after = _git(tmp_path, "rev-parse", "HEAD")
+    stored = {"private_repo": {"path": str(tmp_path), "commit": base, "excludes": rel}}
+    current = {"private_repo": {"path": str(tmp_path), "commit": after, "excludes": rel}}
+    assert freeze_lock._forgive_the_locks_own_commit(stored, current) == [("private_repo", after)]
+    assert current["private_repo"]["commit"] == base
+
+
+def test_a_commit_that_carries_more_than_the_lock_still_drifts(tmp_path):
+    """Narrow on purpose: this forgives the freeze ritual, not a habit of bundling.
+
+    A lock committed alongside a corpus edit would otherwise wave through the one
+    change it exists to catch.
+    """
+    _git_repo(tmp_path)
+    lock = tmp_path / "runs" / "LOCK.json"
+    lock.parent.mkdir()
+    lock.write_text("{}\n")
+    (tmp_path / "corpus.jsonl").write_text("{}\n")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "base")
+    base = _git(tmp_path, "rev-parse", "HEAD")
+
+    lock.write_text('{"lock_id": "x"}\n')
+    (tmp_path / "corpus.jsonl").write_text('{"item_id": "smuggled"}\n')
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "lock plus a corpus edit")
+    after = _git(tmp_path, "rev-parse", "HEAD")
+
+    rel = "runs/LOCK.json"
+    stored = {"private_repo": {"path": str(tmp_path), "commit": base, "excludes": rel}}
+    current = {"private_repo": {"path": str(tmp_path), "commit": after, "excludes": rel}}
+    assert freeze_lock._forgive_the_locks_own_commit(stored, current) == []
+    assert current["private_repo"]["commit"] == after, "the corpus edit rode in on the lock"
