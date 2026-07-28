@@ -707,3 +707,69 @@ def test_an_undeclared_lens_is_refused_rather_than_rendered_empty():
     with pytest.raises(SystemExit) as refused:
         run_review.lens_text(PANELS, "not-a-lens")
     assert "no text in panels.yaml" in str(refused.value)
+
+
+def test_every_item_field_is_classified_as_dispatchable_or_withheld():
+    """A field added to the item schema must be a decision, not a default.
+
+    The dispatch projection is an allowlist, so an unclassified field is withheld --
+    which is the safe direction and also indistinguishable from having thought about
+    it. This is the moment anyone is: add a property to `item.schema.json` and the
+    suite fails until it appears in `_DISPATCH_KEYS` or `_WITHHELD_KEYS`.
+    """
+    import build_corpus
+    schema = json.loads((HERE / "item.schema.json").read_text())
+    assert schema.get("additionalProperties") is False, (
+        "the item contract is open, so a stray field validates and nothing lists it here")
+    properties = set(schema["properties"])
+    dispatched, withheld = set(build_corpus._DISPATCH_KEYS), set(build_corpus._WITHHELD_KEYS)
+    assert not dispatched & withheld, sorted(dispatched & withheld)
+    assert properties - dispatched - withheld == set(), (
+        f"unclassified item field(s): {sorted(properties - dispatched - withheld)}")
+    assert (dispatched | withheld) - properties == set(), (
+        f"classified but not in the schema: {sorted((dispatched | withheld) - properties)}")
+
+
+def test_the_packet_carries_only_dispatchable_fields(tmp_path):
+    """Driven through the projection, not asserted about it.
+
+    A field nobody classified reaching a reviewer is the leak; a test that reads the
+    same tuple the code reads would pass on a projection that ignored it.
+    """
+    import build_corpus
+    item = {k: f"value-of-{k}" for k in build_corpus._DISPATCH_KEYS}
+    item["repo_files"] = ["src/a.py"]
+    item["provider_data_allowlist"] = ["opencode"]
+    item.update({"repo": "github.com/o/r", "review_commit": "deadbeef",
+                 "labels": [{"label_id": "L1"}], "build_notes": {"role": "control"},
+                 "trap": {"assertion": "bait", "ground_truth": "invalid"},
+                 "a_field_nobody_classified": "leaked"})
+    packet = build_corpus._dispatch_view(item)
+    assert "a_field_nobody_classified" not in packet
+    for withheld in build_corpus._WITHHELD_KEYS:
+        assert withheld not in packet, f"{withheld} reached the packet"
+    # The trap's assertion is the bait and belongs in the packet; its answer does not.
+    assert "bait" in packet["known_open_questions"]
+    assert "invalid" not in json.dumps(packet)
+
+
+def test_the_lock_records_the_selectors_it_cannot_pin():
+    """The lock hashes the toolchain, both repos, the corpus and the terms -- not weights.
+
+    A selector is an alias. If a provider swaps the checkpoint behind
+    `opencode-go/kimi-k3` mid-matrix, every comparison spanning the swap is a
+    pre/post comparison of two models under one name and `verify` reports no drift,
+    because nothing it hashes moved. Recording the selectors does not close that; it
+    puts the gap on the record, and makes the day a provider starts exposing a
+    fingerprint a verify failure rather than an unexplained shift in the results.
+    """
+    pins = freeze_lock._model_pins(
+        freeze_lock._build_parser().parse_args(["freeze"]))
+    if "unreadable" in pins:
+        pytest.skip("qualification.yml is not present in this checkout")
+    assert pins, "no enabled lane was recorded"
+    for lane, pin in pins.items():
+        assert pin["selector"], f"{lane} has no selector"
+        # None, not absent and not a placeholder string: the provider exposes nothing
+        # that identifies the checkpoint, and that is a fact worth stating.
+        assert pin["fingerprint"] is None

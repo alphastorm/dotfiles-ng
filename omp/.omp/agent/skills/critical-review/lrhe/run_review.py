@@ -204,6 +204,8 @@ def stub_transport(req: AuthorizedRequest) -> dict[str, Any]:
         # `_run_record` refuse a transport that stays silent on the question.
         "schema_valid": True,
         "telemetry_complete": True,
+        # The stub is this repository, and this repository has no checkpoint.
+        "provider_fingerprint": None,
         "raw": f"stub:{seed[:16]}",
     }
 
@@ -465,6 +467,12 @@ def _run_record(req: AuthorizedRequest, response: dict, started, completed,
             "fallback_detected": bool(served) and served != req.requested_model,
             "omp_version": omp_version,
             "provider_client_version": f"transport:{transport}",
+            # No `.get` default, for the same reason `schema_valid` has none: a
+            # transport that cannot say produces a record indistinguishable from one
+            # whose provider genuinely exposes nothing, and the second is a fact
+            # while the first is a gap. `None` is the honest value for a provider
+            # with no fingerprint, and it must be written deliberately.
+            "provider_fingerprint": response["provider_fingerprint"],
         },
         "execution": {
             "started_at": started.strftime(stamp),
@@ -611,6 +619,11 @@ def cmd_ingest(args) -> int:
             # out. `billing_route` stays absent -- which allowance line it billed to
             # is a further step, and section 7 permits unknown and forbids inference.
             "product_route": reply.get("product_route"),
+            # Null on every OpenCode run today: the session record carries
+            # `responseId`, `runtimeRequestId` and usage, and nothing that names the
+            # checkpoint. Recorded so the day a provider starts exposing one, the
+            # change is visible instead of arriving as an unexplained shift.
+            "provider_fingerprint": reply.get("provider_fingerprint"),
             "raw": json.dumps(body, sort_keys=True),
             # A reviewer whose agent definition cannot be read has not been shown
             # to answer in shape, and `telemetry_complete: false` is how the record

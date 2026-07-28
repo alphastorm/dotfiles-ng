@@ -478,11 +478,31 @@ def cmd_scrub(args) -> int:
 
 
 # Everything a reviewer legitimately needs, and nothing that answers the question
-# for them. Anything not listed here is provenance or answer key.
+# for them. The projection below is an allowlist, so a field nobody classified is
+# withheld by default -- but "withheld because nobody thought about it" and
+# "withheld on purpose" look identical from here, and only one of them is a
+# decision. `_WITHHELD_KEYS` names the second so a cross-file test can insist that
+# every property in `item.schema.json` appears in exactly one of these two sets.
+# Add a field to the item schema and the suite fails until you have said which it
+# is; that is the only moment anyone is thinking about it.
 _DISPATCH_KEYS = (
     "item_id", "stratum", "artifact_digest", "repo_files", "goal", "problem_statement",
     "design_or_diff", "known_open_questions", "tests_already_run",
     "provider_data_allowlist", "license",
+)
+
+# Withheld, with the reason. `repo` plus `review_commit` or `base_commit` is one
+# search away from the upstream fix, which defeats the scrub entirely. `labels` and
+# `trap` are the answer key -- the trap's assertion is projected into
+# `known_open_questions` as bait, the rest of it is the answer. `build_notes` records
+# the harness's own verdict. The remainder is provenance and sampling bookkeeping: it
+# tells a reviewer which dataset an item came from and when, which is a retrieval
+# hint and never evidence.
+_WITHHELD_KEYS = (
+    "repo", "base_commit", "review_commit", "changed_file_digests",
+    "labels", "trap", "build_notes", "difficulty",
+    "dataset_ref", "source", "source_item_id", "date_gate_cutoff", "merged_at",
+    "license_url", "scrubbed",
 )
 
 
@@ -537,9 +557,16 @@ def cmd_probes(args) -> int:
         )
         n += 1
     (outdir / "SCORING.md").write_text(
-        "probe_localized = 1 if the returned path matches any labeled site path for the item\n"
-        "(suffix match) AND the returned line range overlaps the labeled range +/- 25 lines.\n"
-        "UNKNOWN or a non-matching path scores 0.\n\n"
+        "probe_localized = 1 if the returned path matches any labeled site path for the\n"
+        "item (suffix match), AND the item's own description does not already contain\n"
+        "that path, AND the probe answered with no tools. UNKNOWN or a non-matching\n"
+        "path scores 0. `build_corpus.py probe-score` is the implementation; do not\n"
+        "score these by hand.\n\n"
+        "The two extra conditions are not pedantry. A path the description names is\n"
+        "read, not recalled, and a probe that can search a filesystem is not measuring\n"
+        "training-data recall at all -- which is the only thing this control exists to\n"
+        "measure. The first probe run scored 11 of 36 answered and 359 tool calls\n"
+        "against a prompt whose first line says there are no tools.\n\n"
         "Emit probe.csv with columns: item_id,family,probe_localized\n"
         "Any (item, family) cell scoring 1 is dropped from the primary analysis.\n"
         "Report the per-family contamination rate alongside every per-family result:\n"
@@ -547,6 +574,67 @@ def cmd_probes(args) -> int:
         "the per-family comparison this evaluation exists to produce.\n"
     )
     print(f"wrote {n} probe prompts + SCORING.md -> {outdir}")
+    return 0
+
+
+def _labeled_site_paths(item: dict) -> set[str]:
+    """Every path a defect is actually at, labels and trap sites alike."""
+    paths = {s["path"] for lab in (item.get("labels") or []) for s in (lab.get("sites") or [])}
+    return paths | {s["path"] for s in ((item.get("trap") or {}).get("sites") or [])}
+
+
+def cmd_probe_score(args) -> int:
+    """Score probe replies into the probe.csv `analyze_lrhe.py --probe` consumes.
+
+    There was no implementation of this: `SCORING.md` described the rule in prose
+    and every scoring of it was therefore by hand, against a rule that turned out
+    to be wrong in two ways. A localized hit means the model knew where the defect
+    was without being shown, so a path the description already contains is not a
+    hit, and neither is anything returned by a probe that went and looked.
+    """
+    corpus = {it["item_id"]: it for it in _read_jsonl(args.corpus)}
+    rows, skipped, tooled = [], 0, []
+    for reply in _read_jsonl(args.probes):
+        item = corpus.get(reply.get("item_id"))
+        if item is None:
+            skipped += 1
+            continue
+        body = reply.get("response") or {}
+        path = str(body.get("path") or "").strip()
+        sites = _labeled_site_paths(item)
+        description = (item.get("problem_statement") or "")[: args.max_chars]
+        # Absent means unrecorded, not zero: a probe whose tool use nobody captured
+        # cannot be shown to have answered without looking.
+        used_tools = reply.get("tool_calls")
+        clean = used_tools == 0
+        if not clean:
+            tooled.append(reply.get("probe_key") or reply.get("item_id"))
+        localized = int(bool(path) and not body.get("unknown") and clean
+                        and any(path == s or path.endswith("/" + s) or s.endswith("/" + path)
+                                for s in sites)
+                        and path not in description)
+        rows.append({"item_id": item["item_id"], "family": reply.get("family", ""),
+                     "probe_localized": localized})
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with args.out.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["item_id", "family", "probe_localized"])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    by_family: dict[str, list[int]] = {}
+    for row in rows:
+        by_family.setdefault(row["family"], []).append(row["probe_localized"])
+    print(f"scored {len(rows)} probe cell(s) -> {args.out}")
+    for family in sorted(by_family):
+        hits = sum(by_family[family])
+        print(f"  {family:<10} localized {hits}/{len(by_family[family])}")
+    if skipped:
+        print(f"  WARNING: {skipped} reply/replies name an item not in the corpus", file=sys.stderr)
+    if tooled:
+        print(f"  {len(tooled)} probe(s) used tools or did not record whether they did, and "
+              f"score 0 by rule: {', '.join(str(t) for t in tooled[:4])}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -1013,6 +1101,15 @@ def main() -> int:
     p.add_argument("--out", type=Path, default=Path("probes"))
     p.add_argument("--max-chars", type=int, default=1800)
     p.set_defaults(fn=cmd_probes)
+
+    ps = sub.add_parser("probe-score", help="score probe replies into probe.csv")
+    ps.add_argument("--probes", type=Path, required=True,
+                    help="JSONL of {item_id, family, tool_calls, response:{path,unknown}}")
+    ps.add_argument("--corpus", type=Path, required=True)
+    ps.add_argument("--out", type=Path, default=Path("probe.csv"))
+    ps.add_argument("--max-chars", type=int, default=1800,
+                    help="must match the value `probes` was generated with")
+    ps.set_defaults(fn=cmd_probe_score)
 
     f = sub.add_parser("fetch", help="build one stratum from its public source")
     f.add_argument("--stratum", required=True, help="S1 | S2 | S3 | S4 | S5")

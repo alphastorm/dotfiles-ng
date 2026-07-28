@@ -383,3 +383,33 @@ def test_a_route_the_schema_does_not_model_is_recorded_as_unknown(tmp_path):
     record = json.loads(out.read_text().strip())
     assert record["reviewer"]["product_route"] == "unknown"
     assert list(run_review._validator("run.schema.json").iter_errors(record)) == []
+
+
+def test_the_run_record_states_whether_the_checkpoint_is_identifiable(tmp_path):
+    """`provider_fingerprint` has no default, so silence cannot pass for absence.
+
+    A transport unable to say produces a record indistinguishable from one whose
+    provider genuinely exposes nothing, and only the second is a fact. Null is the
+    honest value for OpenCode today and has to be written deliberately.
+    """
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "smoke",
+         "experiment_id": "lrhe-opencode-v1"}])
+    prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
+    prompts.write_text(json.dumps(rows[0]) + "\n")
+    responses.write_text(json.dumps(_reply(rows[0], provider_fingerprint="cp-2026-07-01")) + "\n")
+
+    run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses,
+                                    out=out, omp_version="17.1.6"))
+    record = json.loads(out.read_text().strip())
+    assert record["reviewer"]["provider_fingerprint"] == "cp-2026-07-01"
+    assert list(run_review._validator("run.schema.json").iter_errors(record)) == []
+
+    # And a transport that stays silent on the question does not get a free pass.
+    with pytest.raises(KeyError):
+        run_review._run_record(
+            run_review.AuthorizedRequest(**rows[0]["request"]),
+            {"served_model": "x", "schema_valid": True, "telemetry_complete": True},
+            __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+            __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+            "agent", "17.1.6")

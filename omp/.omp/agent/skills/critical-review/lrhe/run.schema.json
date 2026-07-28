@@ -73,7 +73,8 @@
         "omp_version",
         "provider_client_version",
         "product_route",
-        "billing_route"
+        "billing_route",
+        "provider_fingerprint"
       ],
       "properties": {
         "provider_route": {"type": "string", "minLength": 1},
@@ -86,6 +87,10 @@
         "fallback_detected": {"type": "boolean"},
         "omp_version": {"type": "string", "minLength": 1},
         "provider_client_version": {"type": "string", "minLength": 1},
+        "provider_fingerprint": {
+          "type": ["string", "null"],
+          "description": "whatever the provider exposes that identifies the checkpoint behind the selector, and null when it exposes nothing. A stable alias is not a stable model: if a provider swaps the checkpoint behind `opencode-go/kimi-k3` mid-matrix, every pre/post comparison is invalid and freeze_lock.py cannot see it -- the lock pins the toolchain, both repositories, the corpus and the terms, and nothing about the weights. Recording it per run is what lets the analysis refuse to pool across a change instead of averaging over one. OpenCode returns no fingerprint today, so this is null on every OpenCode run: an unmeasured risk on the record rather than a control that looks passed"
+        },
         "product_route": {
           "type": "string",
           "enum": ["opencode-go", "opencode-zen", "anthropic-subscription",

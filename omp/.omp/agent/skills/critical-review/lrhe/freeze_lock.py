@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+import yaml
+
 
 EXIT_OK = 0
 EXIT_MISMATCH = 10
@@ -34,6 +36,8 @@ DEFAULT_DATA_DIR = Path.home() / ".omp/agent/skills/critical-review/lrhe-data"
 DEFAULT_CORPUS = DEFAULT_DATA_DIR / "corpus.jsonl"
 DEFAULT_ASSIGNMENTS_MANIFEST = DEFAULT_DATA_DIR / "assignments.manifest.json"
 DEFAULT_TERMS_DIR = DEFAULT_DATA_DIR / "terms"
+SKILL = Path.home() / ".omp/agent/skills/critical-review"
+DEFAULT_QUALIFICATION = SKILL / "qualification.yml"
 # Relative, and derived from whatever `--data-dir` is in play: a lock that stays
 # pinned to the real data root while every other input moves to a scratch dir is
 # how a rehearsal overwrites the production lock.
@@ -184,6 +188,34 @@ def _parse_manifest_terms(terms_dir: Path) -> tuple[str, ManifestEntry]:
     return _sha256_file(manifest), grouped
 
 
+def _model_pins(args: argparse.Namespace) -> dict[str, Any]:
+    """Every enabled lane's selector, and what is known about the model behind it.
+
+    This lock pins the toolchain, both repositories, the corpus and its answer key,
+    the assignment manifest and the terms snapshots -- and nothing whatsoever about
+    the weights. A selector is an alias. If a provider swaps the checkpoint behind
+    `opencode-go/kimi-k3` halfway through a 105-review matrix, every comparison
+    spanning the swap is a pre/post comparison of two models under one name, and
+    `verify` would report no drift because none of the things it hashes moved.
+
+    Recording the selectors does not close that. What it does is put the gap on the
+    record: `fingerprint: null` says the provider exposes nothing that identifies
+    the checkpoint, which is a different statement from the field being absent, and
+    it makes the day a provider starts exposing one a `verify` failure rather than
+    an unexplained shift in the results. The detector that acts on it is
+    `analyze_lrhe.py`, which refuses to pool two fingerprints under one selector.
+    """
+    qual = getattr(args, "qualification", None) or (SKILL / "qualification.yml")
+    if not Path(qual).is_file():
+        return {"unreadable": str(qual)}
+    reviewers = (yaml.safe_load(Path(qual).read_text(encoding="utf-8")) or {}).get("reviewers") or {}
+    return {
+        name: {"selector": str(entry.get("model", "")), "fingerprint": None}
+        for name, entry in sorted(reviewers.items())
+        if isinstance(entry, dict) and entry.get("councilEnabled")
+    }
+
+
 def _collect_inputs(args: argparse.Namespace) -> dict[str, Any]:
     terms_manifest_sha, term_items = _parse_manifest_terms(args.terms_dir)
     corpus = args.corpus
@@ -209,6 +241,7 @@ def _collect_inputs(args: argparse.Namespace) -> dict[str, Any]:
             "omp": _run_command_version("omp"),
             "claude_code": _run_command_version("claude"),
         },
+        "model_pins": _model_pins(args),
         "terms": {
             "manifest_path": str(args.terms_dir / MANIFEST_NAME),
             "manifest_sha256": terms_manifest_sha,
@@ -464,6 +497,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--terms-dir",
         type=Path,
         help="directory containing terms/MANIFEST.sha256 (default: data-dir/terms)",
+    )
+    common.add_argument(
+        "--qualification",
+        type=Path,
+        default=DEFAULT_QUALIFICATION,
+        help=(
+            "qualification.yml, read for the enabled lanes' model selectors. The lock "
+            "cannot pin the weights behind a selector; recording which selectors were "
+            "in play is what makes that gap visible rather than absent"
+        ),
     )
 
     freeze = sub.add_parser("freeze", help="record a new lock file")

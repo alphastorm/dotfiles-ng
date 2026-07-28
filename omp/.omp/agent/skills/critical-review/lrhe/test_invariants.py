@@ -1031,3 +1031,63 @@ def test_simulator_honours_the_per_family_trap_bait_rate():
     never, always = trap_claims(0.0), trap_claims(1.0)
     assert never == 0, f"trap_bait=0.0 still produced {never} trap claims"
     assert always > 0, "trap_bait=1.0 produced no trap claims; the bait path is dead"
+
+
+def test_two_checkpoints_behind_one_selector_are_never_pooled(scored, tmp_path: Path):
+    """A selector is an alias, not a model, and the lock cannot tell the difference.
+
+    `freeze_lock.py` pins the toolchain, both repositories, the corpus and its answer
+    key, the manifest and the terms snapshots -- and nothing about the weights. If a
+    provider swaps the checkpoint behind a selector partway through a 105-review
+    matrix, every family comparison spanning the swap compares two models under one
+    name and `verify` reports no drift, because nothing it hashes moved. Where a
+    fingerprint exists this is the detector, and it fails closed like a mixed panel.
+    """
+    import os
+    runs = scored["runs"].copy()
+    # The real column is empty, so pandas typed it float64. Cast before assigning,
+    # which is the same NaN-shaped trap the guard itself had to be fixed for.
+    runs["provider_fingerprint"] = runs["provider_fingerprint"].astype("object")
+    half = len(runs) // 2
+    runs.loc[: half - 1, "provider_fingerprint"] = "cp-2026-06-01"
+    runs.loc[half:, "provider_fingerprint"] = "cp-2026-07-15"
+    rpath, cpath = tmp_path / "r.csv", tmp_path / "c.csv"
+    runs.to_csv(rpath, index=False)
+    scored["claims"].to_csv(cpath, index=False)
+
+    p = subprocess.run(
+        [PY, "analyze_lrhe.py", "--claims", str(cpath), "--runs", str(rpath),
+         "--corpus", str(scored["corpus"]), "--boot", "20", "--perm", "20",
+         "--experiment-id", EXPERIMENT_ID, "--panel-id", PANEL_ID,
+         "--out", str(tmp_path / "a.json")],
+        cwd=HERE, capture_output=True, text=True, env=dict(os.environ))
+    assert p.returncode != 0
+    assert "more than one checkpoint behind one selector" in (p.stdout + p.stderr)
+
+
+def test_a_provider_that_exposes_no_fingerprint_still_analyses(scored, tmp_path: Path):
+    """Absence is one state, not one per run, and the first version got that wrong.
+
+    An unpopulated column reads back as NaN, NaN never equals itself, and a set of
+    them has one member per row -- so the guard above refused every analysis of every
+    provider that exposes no fingerprint, which today is all of them. A detector that
+    fires on absence is worse than the gap it closes, and the unmeasured risk belongs
+    in the selection record where the operator report will find it.
+    """
+    import os
+    runs = scored["runs"].copy()
+    runs["provider_fingerprint"] = ""
+    rpath, cpath = tmp_path / "r.csv", tmp_path / "c.csv"
+    runs.to_csv(rpath, index=False)
+    scored["claims"].to_csv(cpath, index=False)
+
+    out = tmp_path / "a.json"
+    p = subprocess.run(
+        [PY, "analyze_lrhe.py", "--claims", str(cpath), "--runs", str(rpath),
+         "--corpus", str(scored["corpus"]), "--boot", "20", "--perm", "20",
+         "--experiment-id", EXPERIMENT_ID, "--panel-id", PANEL_ID, "--out", str(out)],
+        cwd=HERE, capture_output=True, text=True, env=dict(os.environ))
+    assert p.returncode == 0, p.stdout + p.stderr
+    selection = json.loads(out.read_text())["selection"]
+    assert selection["selectors_without_a_fingerprint"], (
+        "the unmeasured checkpoint risk is absent from the record rather than named")

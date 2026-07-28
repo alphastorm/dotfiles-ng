@@ -4,6 +4,7 @@
   "title": "LRHE corpus item",
   "type": "object",
   "required": ["item_id", "stratum", "source", "labels"],
+  "additionalProperties": false,
   "properties": {
     "item_id": {"type": "string", "pattern": "^S[1-6]-[A-Za-z0-9][A-Za-z0-9_.-]*$"},
     "source_item_id": {"type": "string", "description": "pre-scrub id, kept for provenance"},

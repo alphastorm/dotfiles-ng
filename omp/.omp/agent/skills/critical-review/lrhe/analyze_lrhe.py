@@ -547,6 +547,40 @@ def select_panel(claims: pd.DataFrame, runs: pd.DataFrame, args) -> tuple[pd.Dat
         elif failed:
             selection["gate_failed_runs_dropped"] = 0
             selection["gate_failed_runs_kept"] = len(failed)
+
+    # A selector is an alias, not a model. If a provider swaps the checkpoint behind
+    # `opencode-go/kimi-k3` partway through a 105-review matrix, every family
+    # comparison spanning the swap is a pre/post comparison of two models under one
+    # name -- and the lock cannot see it, because it pins the toolchain, both
+    # repositories, the corpus and the terms, and nothing about the weights. Where a
+    # provider does expose a fingerprint, this is the detector: refuse to pool, the
+    # same fail-closed posture as a mixed panel, rather than average over a change.
+    #
+    # Empty means the provider exposes none, which is every OpenCode run today. That
+    # cannot be distinguished from agreement and must not be reported as it: the
+    # selection records the risk as unmeasured so it reaches the operator report
+    # instead of being silently absent from it.
+    if "provider_fingerprint" in runs.columns:
+        # `dropna` before the set, and str before both. An unpopulated column reads
+        # back as NaN, NaN never equals itself, and a set of them therefore has one
+        # member per row -- so the first version of this guard refused every analysis
+        # of a provider that exposes no fingerprint, which is all of them today. A
+        # detector that fires on absence is worse than the gap it was built to close.
+        seen = {
+            str(selector): sorted({str(v) for v in group.dropna()} - {""})
+            for selector, group in runs.groupby("model_selector_expected")["provider_fingerprint"]
+        }
+        split = {selector: prints for selector, prints in seen.items() if len(prints) > 1}
+        if split:
+            raise SystemExit(
+                "refusing to pool runs from more than one checkpoint behind one selector: "
+                + "; ".join(f"{selector} served by {prints}" for selector, prints in split.items())
+                + ". Split the analysis by fingerprint; a mean over a checkpoint change "
+                  "describes neither model.")
+        selection["provider_fingerprints"] = {k: v for k, v in seen.items() if v}
+        selection["selectors_without_a_fingerprint"] = sorted(
+            selector for selector, prints in seen.items() if not prints)
+
     if runs.empty:
         raise SystemExit("every run in the selected panel failed a hard gate; nothing to analyse")
     return claims, runs, selection

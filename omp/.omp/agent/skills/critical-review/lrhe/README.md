@@ -95,7 +95,7 @@ python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
-python3 -m pytest -q                               # 148 tests; see "The test suite"
+python3 -m pytest -q                               # 160 tests; see "The test suite"
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -175,6 +175,44 @@ author's family: the pool already excludes it when prompts are generated, but
 nothing re-checked it on the way back in, so a hand-edited or mis-routed response
 file could seat a family as judge of its own claim — the single-family-judge
 problem `LRHE-PROTOCOL.md` §5.2 calls disqualifying.
+
+### A selector is an alias, not a model
+
+The lock pins the toolchain, both repository commits, the corpus and its answer key,
+the assignment manifest and every terms snapshot. It pins **nothing about the
+weights**. If OpenCode swaps the checkpoint behind `opencode-go/kimi-k3` partway
+through the 105-review floor matrix, every family comparison spanning the swap
+compares two models under one name — and `freeze_lock.py verify` reports no drift,
+because none of the things it hashes moved. That is the drifted-trial failure the
+lock exists to prevent, in the one dimension it does not cover.
+
+`reviewer.provider_fingerprint` is required on every run record and carries whatever
+the provider exposes that identifies the checkpoint. `analyze_lrhe.py` refuses to
+pool two fingerprints under one selector, failing closed exactly as it does on a
+mixed panel. `freeze_lock.py` records each enabled lane's selector under
+`model_pins`, with `fingerprint: null`.
+
+**OpenCode exposes no fingerprint.** The session record carries `responseId`,
+`runtimeRequestId`, usage and cost, and nothing that names the checkpoint — so this
+is `null` on every OpenCode run today, and the control is a detector for later plus
+an unmeasured risk on the record. It is deliberately not a solved problem: a field
+that reads `null` is a stated gap, where an absent field is one nobody has noticed.
+
+The guard's own first version refused every analysis it touched. An unpopulated
+column reads back as `NaN`, `NaN` never equals itself, and a set of them has one
+member per row — so "no fingerprint anywhere" looked like one checkpoint per run.
+A detector that fires on absence is worse than the gap it closes.
+
+### Every item field is classified, or the suite fails
+
+`item.schema.json` is closed (`additionalProperties: false`) and every property in it
+appears in exactly one of `_DISPATCH_KEYS` or `_WITHHELD_KEYS`. The projection was
+already an allowlist, so an unclassified field was withheld by default — the safe
+direction, and indistinguishable from having thought about it. Adding a property now
+fails `test_consistency.py` until someone says which it is, which is the only moment
+anyone is thinking about it. `_WITHHELD_KEYS` carries the reason per group: provenance
+one search from the upstream fix, the answer key, the harness's own verdict, sampling
+bookkeeping that is a retrieval hint and never evidence.
 
 
 ## The council is asymmetric
@@ -632,7 +670,7 @@ Two graders were wrong, and the four lanes found both:
 ## The test suite
 
 ```bash
-python3 -m pytest -q            # 148 tests, ~60s
+python3 -m pytest -q            # 160 tests, ~75s
 ruff check .                    # rule set pinned in ruff.toml, not inherited
 ```
 

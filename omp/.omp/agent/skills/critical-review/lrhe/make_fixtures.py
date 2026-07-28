@@ -337,6 +337,11 @@ def to_v2(run: dict, experiment_id: str = EXPERIMENT_ID, panel_id: str = PANEL_I
             "provider_client_version": "fixture",
             "product_route": run.get("product_route", "opencode-go"),
             "billing_route": run.get("billing_route", "unknown"),
+            # A fixture has no checkpoint, and `null` is what a provider exposing no
+            # fingerprint yields. Stated rather than omitted, because synthetic
+            # evidence that cannot satisfy the schema governing the real thing is how
+            # the stub came to emit evidence ids no reviewer is permitted to return.
+            "provider_fingerprint": run.get("provider_fingerprint"),
         },
         "execution": {
             "started_at": "2026-07-27T00:00:00Z",

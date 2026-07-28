@@ -555,3 +555,91 @@ def test_validate_corpus_plan_aligned_counts_round_trip(tmp_path: Path):
     assert p.returncode == 0
     assert p.stdout == "\n47 items, 0 errors, 0 warnings\n"
     assert "WARN  <plan>:" not in p.stdout
+
+
+# ---------------------------------------------------------------------------
+# probe scoring
+
+
+def _probe_score(tmp_path: Path, item: dict, replies: list[dict]):
+    corpus, probes, out = (tmp_path / n for n in ("c.jsonl", "p.jsonl", "probe.csv"))
+    _write_jsonl(corpus, [item])
+    _write_jsonl(probes, replies)
+    proc = subprocess.run(
+        [PY, "build_corpus.py", "probe-score", "--corpus", str(corpus),
+         "--probes", str(probes), "--out", str(out)],
+        cwd=HERE, capture_output=True, text=True, check=False)
+    import csv as _csv
+    rows = list(_csv.DictReader(out.open())) if out.exists() else []
+    return proc, rows
+
+
+def _probe_item(description: str) -> dict:
+    return {"item_id": "S1-probe", "stratum": "S1_REVIEW_HUMAN",
+            "problem_statement": description,
+            "labels": [{"label_id": "L1", "sites": [{"path": "src/pkg/thing.py"}]}]}
+
+
+def _probe_reply(path, tool_calls=0, unknown=False):
+    return {"probe_key": "S1-probe|kimi", "item_id": "S1-probe", "family": "kimi",
+            "tool_calls": tool_calls,
+            "response": {"path": path, "lines": "10-20", "unknown": unknown}}
+
+
+def test_a_probe_that_names_the_labeled_path_from_memory_is_a_hit(tmp_path):
+    """The one case that is contamination: it knew, and nothing told it."""
+    _, rows = _probe_score(tmp_path, _probe_item("something is broken"),
+                           [_probe_reply("src/pkg/thing.py")])
+    assert rows[0]["probe_localized"] == "1"
+
+
+def test_a_path_the_description_already_names_is_reading_not_recall(tmp_path):
+    """Half of the first run's hits were this, and the prose rule could not tell.
+
+    Scoring it as contamination drops an (item, family) cell from the primary
+    analysis on the strength of the model having read its own prompt.
+    """
+    _, rows = _probe_score(tmp_path,
+                           _probe_item("the bug is in src/pkg/thing.py near the top"),
+                           [_probe_reply("src/pkg/thing.py")])
+    assert rows[0]["probe_localized"] == "0"
+
+
+def test_a_probe_that_used_tools_scores_zero_and_says_so(tmp_path):
+    """The probe's premise is no repository and no tools, and prose does not enforce it.
+
+    The first run put that prompt through agents carrying read, grep and glob, and
+    they made 359 tool calls across 36 cells. A probe that can search a filesystem
+    is not measuring recall from training data. The probe agents have an empty tool
+    surface now; this is the second guard, so a dispatch through a tooled agent is
+    caught here rather than scored.
+    """
+    proc, rows = _probe_score(tmp_path, _probe_item("something is broken"),
+                              [_probe_reply("src/pkg/thing.py", tool_calls=4)])
+    assert rows[0]["probe_localized"] == "0"
+    assert proc.returncode == 1
+    assert "used tools" in proc.stderr
+
+
+def test_unrecorded_tool_use_is_not_treated_as_none(tmp_path):
+    """Absent is unrecorded, not zero. A probe nobody watched cannot be shown clean."""
+    reply = _probe_reply("src/pkg/thing.py")
+    del reply["tool_calls"]
+    proc, rows = _probe_score(tmp_path, _probe_item("something is broken"), [reply])
+    assert rows[0]["probe_localized"] == "0"
+    assert proc.returncode == 1
+
+
+def test_unknown_and_a_wrong_path_both_score_zero(tmp_path):
+    """UNKNOWN is the correct answer to a probe about a project you have not seen."""
+    _, rows = _probe_score(tmp_path, _probe_item("something is broken"),
+                           [_probe_reply(None, unknown=True),
+                            {**_probe_reply("src/other/elsewhere.py"),
+                             "probe_key": "S1-probe|glm", "family": "glm"}])
+    assert [r["probe_localized"] for r in rows] == ["0", "0"]
+
+
+def test_the_scored_columns_are_the_ones_the_analysis_consumes(tmp_path):
+    """`apply_contamination_mask` reads item_id, family and probe_localized by name."""
+    _, rows = _probe_score(tmp_path, _probe_item("x"), [_probe_reply("src/pkg/thing.py")])
+    assert set(rows[0]) == {"item_id", "family", "probe_localized"}

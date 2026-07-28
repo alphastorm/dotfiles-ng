@@ -428,6 +428,10 @@ def rollup_run(run: dict, item: dict, claims: list[Claim], gates: list[str]) -> 
         "gate_reasons": "|".join(gates),
         "model_selector_reported": reviewer.get("served_model") or "",
         "model_selector_expected": reviewer.get("requested_model", ""),
+        # Carried so the analysis can refuse to pool across a checkpoint change. A
+        # selector is an alias; this is the only column that could ever distinguish
+        # two different models answering to the same one.
+        "provider_fingerprint": reviewer.get("provider_fingerprint") or "",
         "model_identity_ok": (
             reviewer.get("identity_verified") is True
             and reviewer.get("fallback_detected") is False

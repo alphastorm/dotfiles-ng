@@ -33,6 +33,9 @@ arms:
   smoke:  {role: critic,  description: plumbing validation; never a benchmark observation}
   OC_SCREEN: {role: critic, description: the twelve-item promotion screen; a go/no-go on
               operational failure, never a recall ranking}
+  OC_SCREEN_NULL: {role: critic, description: the screen's null stratum extended to the
+                   corpus's other two S5 items; a targeted follow-up on one result,
+                   outside the frozen twelve and never merged into them}
 
 # Excluded from performance estimates by every analysis. Arm A is the author, R is
 # scheduled per claim rather than per item, probe and smoke never saw the repository
