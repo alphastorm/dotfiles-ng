@@ -344,3 +344,42 @@ def test_a_reply_that_breaks_the_reviewers_own_schema_is_recorded_as_such(tmp_pa
     record = json.loads(out.read_text().strip())
     assert record["safety"]["schema_valid"] is False
     assert list(run_review._validator("run.schema.json").iter_errors(record)) == []
+
+
+def test_the_route_that_answered_is_recorded_when_the_lane_can_tell(tmp_path):
+    """`PRODUCT_ROUTE` omits OpenCode on purpose, so the lane has to supply it.
+
+    A request can land on the Go allowance or spill to Zen and only telemetry knows
+    which, so the table refuses to guess and every OpenCode run would otherwise be
+    `unknown` forever -- including the quota check the smoke pass exists to make.
+    Nothing is inferred: `billing_route` stays unknown, because which allowance line
+    was billed is a step past what the route tells you.
+    """
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "smoke",
+         "experiment_id": "lrhe-opencode-v1"}])
+    prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
+    prompts.write_text(json.dumps(rows[0]) + "\n")
+    responses.write_text(json.dumps(_reply(rows[0], product_route="opencode-go")) + "\n")
+
+    run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses,
+                                    out=out, omp_version="17.1.6"))
+    reviewer = json.loads(out.read_text().strip())["reviewer"]
+    assert reviewer["product_route"] == "opencode-go"
+    assert reviewer["billing_route"] == "unknown"
+
+
+def test_a_route_the_schema_does_not_model_is_recorded_as_unknown(tmp_path):
+    """Recording it verbatim fails validation at the last step and loses the run."""
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "smoke",
+         "experiment_id": "lrhe-opencode-v1"}])
+    prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
+    prompts.write_text(json.dumps(rows[0]) + "\n")
+    responses.write_text(json.dumps(_reply(rows[0], product_route="a-route-nobody-modelled")) + "\n")
+
+    run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses,
+                                    out=out, omp_version="17.1.6"))
+    record = json.loads(out.read_text().strip())
+    assert record["reviewer"]["product_route"] == "unknown"
+    assert list(run_review._validator("run.schema.json").iter_errors(record)) == []

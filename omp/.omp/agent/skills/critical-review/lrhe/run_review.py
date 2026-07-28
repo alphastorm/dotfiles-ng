@@ -603,6 +603,14 @@ def cmd_ingest(args) -> int:
             "cost_usd": reply.get("cost_usd"),
             "tool_violations": reply.get("tool_violations"),
             "provider_error": reply.get("provider_error"),
+            # The one field `PRODUCT_ROUTE` deliberately cannot supply. A request
+            # can land on the Go allowance or spill to Zen, and only telemetry knows
+            # which, so the table omits the OpenCode route entirely. The agent lane
+            # does know: the session record names the provider that answered. Passed
+            # through, `_enum_or_unknown` keeps anything the schema has not modelled
+            # out. `billing_route` stays absent -- which allowance line it billed to
+            # is a further step, and section 7 permits unknown and forbids inference.
+            "product_route": reply.get("product_route"),
             "raw": json.dumps(body, sort_keys=True),
             # A reviewer whose agent definition cannot be read has not been shown
             # to answer in shape, and `telemetry_complete: false` is how the record

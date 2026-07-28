@@ -95,7 +95,7 @@ python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
-python3 -m pytest -q                               # 146 tests; see "The test suite"
+python3 -m pytest -q                               # 148 tests; see "The test suite"
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -347,6 +347,46 @@ rendered as nothing — rendering it as nothing is how this went unnoticed. `flo
 is declared with empty text on purpose: the floor is the *absence* of a lens, and
 a missing key would read as an oversight.
 
+### The seven-item smoke pass, 2026-07-28
+
+2×S1 + 2×S2 + 2×S3 from the frozen calibration subset plus the 1×S5 null, Kimi K3,
+lens `architecture` for the six and `floor` for the null, arm `smoke`. Scored as
+two experiments because it is two panels, and a mean over both describes neither.
+All seven checks pass; the record is in the private package under `lrhe-data/smoke/`.
+
+| | |
+|---|---|
+| contract parse | 17/17 claims, rate 1.0 |
+| anchor resolution | **fired** — 1 of 17 FABRICATED, no judge, no person |
+| model pinning | `identity_verified` 7/7, no fallback |
+| tool allowlist | 0 violations, no write, no subagent |
+| ARVO build/PoC | 4 containers, both pairs reproduce as recorded |
+| S5 empty evidence | 0 claims |
+| quota / Zen | `product_route: opencode-go` 7/7, no overflow |
+
+On `S3-0019a556` Kimi cited `pdf-font.c:299` against a packet whose `repo_files` is
+`["thirdparty/freetype"]`. The claim parses cleanly and reads well. §5.1 refused it
+deterministically, which is the gate doing on real output exactly what it exists
+for — and the reason "PLAUSIBLE" in that report means parsed and anchored, not
+correct. No judge ran; `judge_coverage` is 0.
+
+The quota check needed a fix to be answerable at all. `PRODUCT_ROUTE` omits the
+OpenCode route deliberately, because a request can land on the Go allowance or
+spill to Zen and only telemetry knows which — so every OpenCode run recorded
+`unknown`, permanently, including the check that was supposed to establish it. The
+agent lane does know: the session record names the provider that answered. It is
+passed through and validated against the enum. `billing_route` stays `unknown`,
+because which allowance line was billed is a step past what the route tells you.
+
+One expectation of ours was wrong and the harness was right. A `superseded_fix`
+item whose fixed image comes back clean looks like an inverted label; it is not.
+`cmd_arvo_build` draws gold from the *clean* sweeps and establishes incompleteness
+from ARVO's own correction history, because 124 faithful paired runs produced zero
+fixed images that still crash. The incomplete patch is `review_commit`, which is
+what the reviewer reviews; the `-fix` image is the later replacement. At the
+container level `superseded_fix` and `correct_fix_control` are indistinguishable,
+by design.
+
 Writing this runner is what surfaced that **all three enabled reviewers routed
 through providers with no data-rights policy at all** — qualified, in use, and
 ungoverned, because `provider-policies.yaml` had only been written for the two
@@ -592,7 +632,7 @@ Two graders were wrong, and the four lanes found both:
 ## The test suite
 
 ```bash
-python3 -m pytest -q            # 146 tests, ~60s
+python3 -m pytest -q            # 148 tests, ~60s
 ruff check .                    # rule set pinned in ruff.toml, not inherited
 ```
 
