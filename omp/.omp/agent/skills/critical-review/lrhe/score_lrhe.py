@@ -560,12 +560,19 @@ def gate_failures(run: dict, manifest_digest: str | None) -> list[str]:
 
 
 def resolve_panel(runs: list[dict], experiment_id: str, panel_id: str) -> list[dict]:
-    """Narrow to exactly one experiment and panel, or refuse.
+    """Narrow to exactly one experiment, panel, and dispatch condition, or refuse.
 
     Pooling two experiments is not a smaller mistake than pooling two families.
     The original three-family result set and the OpenCode floor panel measure
     different things on the same corpus, and a mean over both is a number with no
     referent.
+
+    A dispatch policy is the same kind of boundary. The pre-2026-07-28 cohort ran with
+    `tools: [read, grep, glob, lsp, ast_grep]` on every floor reviewer against a packet
+    that said it was the whole of the evidence; one of those runs fetched its item's own
+    upstream fix commit. Those runs are kept as evidence about the apparatus and are
+    never scored, so the filter belongs here, where every caller passes, rather than in
+    each caller.
     """
     kept = [r for r in runs
             if r.get("experiment_id") == experiment_id and r.get("panel_id") == panel_id]
@@ -575,6 +582,27 @@ def resolve_panel(runs: list[dict], experiment_id: str, panel_id: str) -> list[d
             f"no runs for experiment_id={experiment_id!r} panel_id={panel_id!r}; "
             f"the file contains {seen}"
         )
+
+    def eligible(run: dict) -> bool:
+        return bool((run.get("measurement_status") or {}).get("eligible_for_primary_scoring", True))
+
+    dropped = Counter((r.get("measurement_status") or {}).get("invalidation_reason")
+                      for r in kept if not eligible(r))
+    kept = [r for r in kept if eligible(r)]
+    if dropped:
+        print(f"  excluded {sum(dropped.values())} run(s) not eligible for primary "
+              f"scoring: {dict(dropped)}", file=sys.stderr)
+    if not kept:
+        raise SystemExit(
+            f"every run for experiment_id={experiment_id!r} panel_id={panel_id!r} is "
+            f"ineligible for primary scoring. Nothing to score is not a score of zero.")
+
+    digests = {(r.get("measurement_status") or {}).get("dispatch_policy_digest") for r in kept}
+    if len(digests) > 1:
+        raise SystemExit(
+            "these runs span more than one dispatch policy and do not pool: "
+            + ", ".join(sorted(str(d) for d in digests))
+            + ". Score each cohort on its own.")
     return kept
 
 

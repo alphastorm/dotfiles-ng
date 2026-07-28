@@ -149,7 +149,12 @@ experiments:
   # underpowered, and section 6 Commit 12 defers it deliberately.
   - experimentId: lrhe-opencode-v1
     panelId: opencode-broad-v1
-    promptVersion: opencode-floor-v1
+    # v2 is the enforced tool surface. v1 declared `tools: [read, grep, glob, lsp,
+    # ast_grep]` on every floor reviewer while the packet said the document was the
+    # whole of the evidence, so the boundary was prose; 106 units ran under it and are
+    # invalidated. v2 is `tools: []` and says so in the prompt. The version is what
+    # keeps the two cohorts from pooling by accident.
+    promptVersion: opencode-floor-v2
     contextConfig: retrieval
     authorFamily: gpt
     nullFamily: kimi
@@ -165,7 +170,7 @@ experiments:
 
   - experimentId: live-critical-review-v1
     panelId: opencode-broad-v1
-    promptVersion: opencode-floor-v1
+    promptVersion: opencode-floor-v2
     contextConfig: retrieval
     authorFamily: gpt
     lenses: [floor]

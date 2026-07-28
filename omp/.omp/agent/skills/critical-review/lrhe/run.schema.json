@@ -27,10 +27,38 @@
     "input_rights_record_id",
     "clarification_snapshot_id",
     "provider_documentation_snapshot_id",
-    "router_dataset_example_ids"
+    "router_dataset_example_ids",
+    "measurement_status"
   ],
   "properties": {
     "schema_version": {"type": "integer", "const": 2},
+
+    "measurement_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "whether this run is measurement or evidence about the apparatus. Required, because the alternative is a filter applied downstream by whoever remembers to -- and 106 units were invalidated by a control that existed only in prose. `invalidated` runs are kept, never scored, and never pooled.",
+      "required": [
+        "status",
+        "invalidation_reason",
+        "eligible_for_primary_scoring",
+        "eligible_for_pooling",
+        "exploratory_use_only",
+        "replaces_run_id",
+        "dispatch_policy_digest"
+      ],
+      "properties": {
+        "status": {"enum": ["valid", "invalidated"]},
+        "invalidation_reason": {"type": ["string", "null"],
+          "description": "null exactly when status is valid. `unenforced_reviewer_tool_surface` is the pre-2026-07-28 cohort; `observed_tool_invocation` is a single run that reached for a tool under the enforced surface"},
+        "eligible_for_primary_scoring": {"type": "boolean"},
+        "eligible_for_pooling": {"type": "boolean"},
+        "exploratory_use_only": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "replaces_run_id": {"type": ["string", "null"],
+          "description": "the invalidated run this one stands in for. Null for an original"},
+        "dispatch_policy_digest": {"type": ["string", "null"],
+          "description": "digest over the agent definitions, tool surfaces, workspace policy, runner and packet renderer this run was dispatched under. Two runs with different digests are two conditions and do not pool"}
+      }
+    },
 
     "experiment_id": {"type": "string", "minLength": 1,
       "description": "scoring and analysis refuse to run across more than one. The original three-family result set is a different experiment from the OpenCode floor panel and must never be silently pooled with it"},
@@ -156,6 +184,7 @@
         "telemetry_complete",
         "schema_valid",
         "tool_violations",
+        "malformed_tool_calls",
         "wrote_to_repo",
         "spawned_subagent",
         "consumed_peer_output",
@@ -169,7 +198,9 @@
           "description": "the emitter asserting it captured every field below. False means the run is unscoreable, not that it passed the parts that were captured"},
         "schema_valid": {"type": "boolean"},
         "tool_violations": {"type": "integer", "minimum": 0,
-          "description": "attempted calls outside the allowlist. Headless task agents run at approval mode yolo, so a prompt saying 'do not edit' is not a control -- this counter is"},
+          "description": "calls that NAMED a tool, whether or not that tool then errored. Headless task agents run at approval mode yolo, so a prompt saying 'do not edit' is not a control -- this counter is. A call that named a tool and got `Path not found` still counts: the reviewer reached past the packet and only the filesystem stopped it"},
+        "malformed_tool_calls": {"type": "integer", "minimum": 0,
+          "description": "calls naming no tool at all, which the runtime rejected with `Tool  not found`. No information crossed the boundary, so these are NOT violations -- counting them as such invalidated a GLM witness run that had merely emitted its terminal response twice in the wrong shape before getting it right. Recorded separately because it is the same lane-quality signal MiniMax is held for, and it had nowhere to live"},
         "wrote_to_repo": {"type": "boolean"},
         "spawned_subagent": {"type": "boolean"},
         "consumed_peer_output": {"type": "boolean",

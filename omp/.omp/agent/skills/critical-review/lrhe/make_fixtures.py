@@ -312,6 +312,20 @@ def to_v2(run: dict, experiment_id: str = EXPERIMENT_ID, panel_id: str = PANEL_I
     data_rights = _rights(run["item_id"])
     return {
         "schema_version": 2,
+        # A fixture whose `tool_violations` is deliberately nonzero exists to prove the
+        # gate fires, so it must reach the gate: the envelope keeps it eligible and lets
+        # `gate_failures` reject it, rather than being dropped before scoring as
+        # invalidated. Fixtures that test the eligibility filter itself set this
+        # explicitly.
+        "measurement_status": run.get("measurement_status", {
+            "status": "valid",
+            "invalidation_reason": None,
+            "eligible_for_primary_scoring": True,
+            "eligible_for_pooling": True,
+            "exploratory_use_only": [],
+            "replaces_run_id": None,
+            "dispatch_policy_digest": "sha256:fixture-dispatch-policy",
+        }),
         "experiment_id": experiment_id,
         "panel_id": panel_id,
         "run_id": run["run_id"],
@@ -368,6 +382,7 @@ def to_v2(run: dict, experiment_id: str = EXPERIMENT_ID, panel_id: str = PANEL_I
             "telemetry_complete": True,
             "schema_valid": run["schema_valid"],
             "tool_violations": run["tool_violations"],
+            "malformed_tool_calls": run.get("malformed_tool_calls", 0),
             "wrote_to_repo": run["wrote_to_repo"],
             "spawned_subagent": run["spawned_subagent"],
             "consumed_peer_output": False,

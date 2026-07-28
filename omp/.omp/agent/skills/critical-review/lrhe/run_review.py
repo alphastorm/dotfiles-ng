@@ -206,6 +206,13 @@ def stub_transport(req: AuthorizedRequest) -> dict[str, Any]:
         "output_tokens": 100,
         "cost_usd": 0.0,
         "tool_violations": 0,
+        # `tool_violations` is what the run record carries; `tool_calls` is what the
+        # canary's tool-surface grader reads, and it grades the reply rather than the
+        # record. The stub opens no socket and calls no tool, so zero here is a fact
+        # about this function -- and stating it keeps the apparatus answerable to the
+        # same probe the real lanes are.
+        "tool_calls": 0,
+        "malformed_tool_calls": 0,
         # Stated, not defaulted. The stub's reply is schema-valid by construction
         # and a cross-file test holds it to that; saying so here is what lets
         # `_run_record` refuse a transport that stays silent on the question.
@@ -431,12 +438,51 @@ def _enum_or_unknown(value: Any, field: str) -> str:
     return value if value in allowed else "unknown"
 
 
+def _tool_counts(response: dict) -> tuple[int, int]:
+    """(named tool calls, malformed calls), or no record at all.
+
+    `int(response.get("tool_violations") or 0)` is what this used to be, and it is the
+    exact shape section 5.5 forbids: a dispatcher that never measured the tool surface
+    produced a record indistinguishable from one whose reviewer demonstrably touched
+    nothing. 106 units were invalidated over that default. The counters must be derived
+    from the session transcript by the caller; absence is a gap, not a zero.
+
+    The split matters in both directions. A call that named a tool and got
+    `Path not found` is a breach -- the reviewer reached past the packet and only the
+    filesystem stopped it. A call naming no tool is a malformed terminal response the
+    runtime rejected, and counting it as a breach invalidated a GLM witness run that had
+    reached nothing at all.
+    """
+    named, malformed = response.get("tool_violations"), response.get("malformed_tool_calls")
+    if named is None or malformed is None:
+        raise EgressRefused(
+            "tool_violations and malformed_tool_calls must both be present. The reviewer "
+            "tool surface is a control only if something counts it, and run.schema.json "
+            "says so: a prompt saying 'do not edit' is not a control, this counter is. "
+            "Derive both from the OMP session record -- named calls are breaches, "
+            "nameless ones are malformed output.")
+    return int(named), int(malformed)
+
+
 def _run_record(req: AuthorizedRequest, response: dict, started, completed,
                 transport: str, omp_version: str) -> dict[str, Any]:
     served = response.get("served_model")
     stamp = "%Y-%m-%dT%H:%M:%SZ"
+    violations, malformed = _tool_counts(response)
     return {
         "schema_version": 2,
+        # A run that reached for a tool is not a review of a closed packet, and the
+        # honest place to say so is the record rather than a downstream filter that a
+        # later analysis might forget to apply.
+        "measurement_status": {
+            "status": "invalidated" if violations else "valid",
+            "invalidation_reason": "observed_tool_invocation" if violations else None,
+            "eligible_for_primary_scoring": not violations,
+            "eligible_for_pooling": not violations,
+            "exploratory_use_only": ["tool_boundary_diagnostics"] if violations else [],
+            "replaces_run_id": response.get("replaces_run_id"),
+            "dispatch_policy_digest": response.get("dispatch_policy_digest"),
+        },
         "experiment_id": req.experiment_id,
         "panel_id": req.panel_id,
         # The replicate belongs in the id, not only in its own column. Three
@@ -512,7 +558,8 @@ def _run_record(req: AuthorizedRequest, response: dict, started, completed,
             # loud version of the same fact.
             "telemetry_complete": bool(response["telemetry_complete"]),
             "schema_valid": bool(response["schema_valid"]),
-            "tool_violations": int(response.get("tool_violations") or 0),
+            "tool_violations": violations,
+            "malformed_tool_calls": malformed,
             "wrote_to_repo": False,
             "spawned_subagent": False,
             "consumed_peer_output": False,
@@ -624,6 +671,7 @@ def cmd_ingest(args) -> int:
             "output_tokens": reply.get("output_tokens"),
             "cost_usd": reply.get("cost_usd"),
             "tool_violations": reply.get("tool_violations"),
+            "malformed_tool_calls": reply.get("malformed_tool_calls"),
             "provider_error": reply.get("provider_error"),
             # The one field `PRODUCT_ROUTE` deliberately cannot supply. A request
             # can land on the Go allowance or spill to Zen, and only telemetry knows
@@ -642,8 +690,19 @@ def cmd_ingest(args) -> int:
             # A reviewer whose agent definition cannot be read has not been shown
             # to answer in shape, and `telemetry_complete: false` is how the record
             # says the question went unanswered rather than answering it favourably.
+            # The tool counter joins that list: a run whose tool surface went
+            # unobserved is a run whose central control went unobserved.
             "schema_valid": bool(valid),
-            "telemetry_complete": valid is not None and reply.get("served_model") is not None,
+            "telemetry_complete": (valid is not None
+                                   and reply.get("served_model") is not None
+                                   and reply.get("tool_violations") is not None
+                                   and reply.get("malformed_tool_calls") is not None),
+            # Provenance for the replacement cohort. `replaces_run_id` ties a
+            # replacement to the invalidated unit it stands in for; the policy digest
+            # names the condition it ran under, which is what makes "never pool the two
+            # cohorts" checkable rather than remembered.
+            "replaces_run_id": reply.get("replaces_run_id"),
+            "dispatch_policy_digest": reply.get("dispatch_policy_digest"),
         }
         try:
             _require_allowed_rights(req)

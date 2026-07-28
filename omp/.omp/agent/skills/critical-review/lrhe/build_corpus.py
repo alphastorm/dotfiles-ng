@@ -121,6 +121,15 @@ def _read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
 
 
+
+# Absolute, and outside any directory a reviewer could be dispatched from. The old
+# default was `.cache`, CWD-relative, so it materialised 705 MB of ARVO upstream
+# patches -- the fix for every S3 and S4 item -- inside the working tree that subagents
+# inherit. `tools: []` is the control; this is why one relative `read` is no longer
+# enough to reach ground truth.
+CACHE_DEFAULT = Path.home() / "Library/Caches/lrhe"
+
+
 def _write_jsonl(path: Path, items: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(it, sort_keys=True) + "\n" for it in items))
@@ -1114,7 +1123,7 @@ def main() -> int:
     f = sub.add_parser("fetch", help="build one stratum from its public source")
     f.add_argument("--stratum", required=True, help="S1 | S2 | S3 | S4 | S5")
     f.add_argument("--out", type=Path, default=Path("raw.jsonl"))
-    f.add_argument("--cache", type=Path, default=Path(".cache"),
+    f.add_argument("--cache", type=Path, default=CACHE_DEFAULT,
                    help="downloaded upstream artifacts; makes a rebuild free and reproducible")
     f.add_argument("--date-gate", default=None, metavar="YYYY-MM-DD",
                    help="require merge/fix date strictly after this. Use the LATEST cutoff "
@@ -1149,7 +1158,7 @@ def main() -> int:
                        help="turn sweep results into S3 items and S4 traps")
     b.add_argument("--candidates", type=Path, required=True)
     b.add_argument("--sweep", type=Path, required=True)
-    b.add_argument("--cache", type=Path, default=Path(".cache"))
+    b.add_argument("--cache", type=Path, default=CACHE_DEFAULT)
     b.add_argument("--out-s3", type=Path, default=Path("raw/S3.jsonl"))
     b.add_argument("--out-s4", type=Path, default=Path("raw/S4.jsonl"))
     b.add_argument("--n-s3-gold", type=int, default=5, help="incomplete-fix items")

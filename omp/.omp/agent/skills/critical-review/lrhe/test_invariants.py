@@ -1091,3 +1091,46 @@ def test_a_provider_that_exposes_no_fingerprint_still_analyses(scored, tmp_path:
     selection = json.loads(out.read_text())["selection"]
     assert selection["selectors_without_a_fingerprint"], (
         "the unmeasured checkpoint risk is absent from the record rather than named")
+
+
+def test_scoring_excludes_an_invalidated_run(tmp_path: Path):
+    """A run kept as apparatus evidence must not reach a statistic.
+
+    The pre-2026-07-28 cohort is preserved verbatim and stamped
+    `eligible_for_primary_scoring: false`. Preservation is only safe if scoring refuses
+    it; otherwise the quarantine is a naming convention.
+    """
+    good = _one_run()
+    bad = _one_run(run_id=good["run_id"] + "-old")
+    bad["measurement_status"] = {
+        "status": "invalidated",
+        "invalidation_reason": "unenforced_reviewer_tool_surface",
+        "eligible_for_primary_scoring": False, "eligible_for_pooling": False,
+        "exploratory_use_only": ["tool_boundary_diagnostics"],
+        "replaces_run_id": None, "dispatch_policy_digest": "sha256:pre-enforcement"}
+
+    res = _score(tmp_path, [good, bad])
+    assert res.returncode == 0, res.stderr
+    report = json.loads((tmp_path / "rep.json").read_text())
+    assert report["n_runs"] == 1, "the invalidated run was scored"
+    assert "unenforced_reviewer_tool_surface" in res.stderr, (
+        "the exclusion happened silently")
+
+
+def test_scoring_refuses_two_dispatch_policies(tmp_path: Path):
+    """Two conditions under one panel id do not pool, and the digest is what says so.
+
+    The invalidated cohort and its replacements share `experiment_id`, `panel_id`, item,
+    family and lens. Everything that distinguishes them lives in the policy digest, so
+    that is the field the refusal has to read.
+    """
+    a = _one_run()
+    b = _one_run(run_id=a["run_id"] + "-b")
+    a["measurement_status"] = dict(a["measurement_status"],
+                                   dispatch_policy_digest="sha256:enforced-v1")
+    b["measurement_status"] = dict(b["measurement_status"],
+                                   dispatch_policy_digest="sha256:enforced-v2")
+
+    res = _score(tmp_path, [a, b])
+    assert res.returncode != 0, "two dispatch policies were pooled into one estimate"
+    assert "more than one dispatch policy" in (res.stdout + res.stderr)

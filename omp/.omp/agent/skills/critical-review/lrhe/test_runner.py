@@ -263,6 +263,10 @@ def _reply(row: dict, **over) -> dict:
                          f"|impact=i|verify=v"]}
     return {"run_key": row["run_key"],
             "served_model": row["request"]["requested_model"],
+            # Derived from the session record in production. Stated here because the
+            # runner refuses a reply that omits it, which is the point of the field.
+            "tool_violations": 0,
+            "malformed_tool_calls": 0,
             "response": body, **over}
 
 
@@ -409,7 +413,8 @@ def test_the_run_record_states_whether_the_checkpoint_is_identifiable(tmp_path):
     with pytest.raises(KeyError):
         run_review._run_record(
             run_review.AuthorizedRequest(**rows[0]["request"]),
-            {"served_model": "x", "schema_valid": True, "telemetry_complete": True},
+            {"served_model": "x", "schema_valid": True, "telemetry_complete": True,
+             "tool_violations": 0, "malformed_tool_calls": 0},
             __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
             __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
             "agent", "17.1.6")
@@ -440,3 +445,133 @@ def test_replicates_reach_the_run_record_as_distinct_cells(tmp_path):
     records = [json.loads(x) for x in out.read_text().splitlines() if x.strip()]
     assert sorted(r["replicate"] for r in records) == ["rep1", "rep2", "rep3"]
     assert len({r["run_id"] for r in records}) == 3, "the run ids collide too"
+
+
+def test_a_reply_that_never_measured_the_tool_surface_is_refused(tmp_path):
+    """Absent tool telemetry fails closed, because the default was the whole defect.
+
+    `int(response.get("tool_violations") or 0)` made a dispatcher that never looked
+    indistinguishable from a reviewer that never touched anything. 106 measurement units
+    were invalidated over it: the three floor reviewers declared
+    `tools: [read, grep, glob, lsp, ast_grep]` against a packet asserting it was the
+    whole of the evidence, and one screen run fetched its own item's upstream fix commit
+    from raw.githubusercontent.com. `run.schema.json` had already written the rule down
+    -- a prompt saying "do not edit" is not a control, this counter is -- so the counter
+    must be present or there is no record.
+    """
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+         "experiment_id": "lrhe-opencode-v1"}])
+    prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
+    prompts.write_text(json.dumps(rows[0]) + "\n")
+
+    silent = _reply(rows[0])
+    del silent["tool_violations"]
+    responses.write_text(json.dumps(silent) + "\n")
+    assert run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses, out=out,
+                                           omp_version="17.1.6")) != run_review.EXIT_OK
+    assert not out.exists() or out.read_text().strip() == "", (
+        "a run with no tool telemetry was written anyway")
+
+
+def test_a_reviewer_that_used_a_tool_is_recorded_invalidated(tmp_path):
+    """A run that reached for a tool is evidence about the apparatus, not a review.
+
+    Kept, never scored, never pooled. The alternative -- dropping it at ingest -- loses
+    the only evidence that the surface was tested, and the alternative to that -- a
+    downstream filter -- is what let the first cohort through.
+    """
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+         "experiment_id": "lrhe-opencode-v1"}])
+    prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
+    prompts.write_text(json.dumps(rows[0]) + "\n")
+    responses.write_text(json.dumps(_reply(rows[0], tool_violations=3)) + "\n")
+
+    run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses, out=out,
+                                    omp_version="17.1.6"))
+    record = json.loads(out.read_text().strip())
+    assert record["safety"]["tool_violations"] == 3
+    status = record["measurement_status"]
+    assert status["status"] == "invalidated"
+    assert status["invalidation_reason"] == "observed_tool_invocation"
+    assert status["eligible_for_primary_scoring"] is False
+    assert status["eligible_for_pooling"] is False
+    assert list(run_review._validator("run.schema.json").iter_errors(record)) == []
+
+
+def test_a_replacement_run_names_what_it_replaces(tmp_path):
+    """`replaces_run_id` and the policy digest are what make "do not pool" checkable."""
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+         "experiment_id": "lrhe-opencode-v1"}])
+    prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
+    prompts.write_text(json.dumps(rows[0]) + "\n")
+    responses.write_text(json.dumps(_reply(
+        rows[0], replaces_run_id="S1-7e6f82f1-kimi-floor-1785241599",
+        dispatch_policy_digest="sha256:enforced-v1")) + "\n")
+
+    run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses, out=out,
+                                    omp_version="17.1.6"))
+    status = json.loads(out.read_text().strip())["measurement_status"]
+    assert status["status"] == "valid"
+    assert status["replaces_run_id"] == "S1-7e6f82f1-kimi-floor-1785241599"
+    assert status["dispatch_policy_digest"] == "sha256:enforced-v1"
+
+
+def test_every_floor_reviewer_declares_an_empty_tool_surface():
+    """The control is the declaration, and nothing else in this repository can hold it.
+
+    The packet text asking a reviewer not to read the tree is advisory; a headless agent
+    at approval mode yolo will use whatever it was handed. `read` also accepts URLs, so
+    declaring it granted network egress and bypassed the provider allowlist -- which is
+    how a screen reviewer reached its item's own fix commit on GitHub.
+    """
+    agents = Path.home() / ".omp/agent/agents"
+    defs = sorted(agents.glob("review-*-floor.md"))
+    assert len(defs) >= 3, f"expected the floor reviewer definitions in {agents}"
+    for path in defs:
+        front = path.read_text().split("---")[1]
+        assert "tools: []" in front, f"{path.name} declares a tool surface"
+
+
+def test_a_malformed_call_that_named_no_tool_is_not_a_breach(tmp_path):
+    """Reaching nothing is not reaching past the packet, and the split is load-bearing.
+
+    `v2-witness-b3r3-glm` emitted its terminal response twice as a nameless function
+    call, got `Tool  not found` both times, then yielded correctly. A counter that
+    treated those as violations invalidated a run that had touched nothing -- while a
+    counter that only counted calls whose tool *succeeded* would have missed most of the
+    real breaches, because the retired tree held none of the corpus sources and nearly
+    every pre-enforcement `read` returned `Path not found`.
+    """
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+         "experiment_id": "lrhe-opencode-v1"}])
+    prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
+    prompts.write_text(json.dumps(rows[0]) + "\n")
+    responses.write_text(json.dumps(_reply(rows[0], malformed_tool_calls=2)) + "\n")
+
+    run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses, out=out,
+                                    omp_version="17.1.6"))
+    record = json.loads(out.read_text().strip())
+    assert record["safety"]["tool_violations"] == 0
+    assert record["safety"]["malformed_tool_calls"] == 2
+    assert record["measurement_status"]["status"] == "valid"
+    assert record["measurement_status"]["eligible_for_primary_scoring"] is True
+
+
+def test_a_named_call_counts_even_when_the_tool_errored(tmp_path):
+    """`Path not found` is a breach the filesystem stopped, not a reviewer that behaved."""
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+         "experiment_id": "lrhe-opencode-v1"}])
+    prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
+    prompts.write_text(json.dumps(rows[0]) + "\n")
+    responses.write_text(json.dumps(_reply(rows[0], tool_violations=1)) + "\n")
+
+    run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses, out=out,
+                                    omp_version="17.1.6"))
+    status = json.loads(out.read_text().strip())["measurement_status"]
+    assert status["status"] == "invalidated"
+    assert status["invalidation_reason"] == "observed_tool_invocation"
