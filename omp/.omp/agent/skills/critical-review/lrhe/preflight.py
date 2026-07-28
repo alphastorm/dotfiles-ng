@@ -171,6 +171,28 @@ def check_agent_definitions() -> Result:
     return Result(PASS, f"{len(reviewers)} reviewer definitions parse")
 
 
+def _uncanaried_lanes() -> list[str] | None:
+    """Held lanes whose canary has not been run, or None when the record is unreadable.
+
+    Read from qualification.yml rather than parsed back out of a gate's prose, so
+    the manual checklist below and the gate above cannot disagree.
+
+    A lane that was canaried and failed is not awaiting a canary -- it is parked,
+    with a recorded reason, and re-running its probes is the specific thing not to
+    do. MiniMax M3 is the case: it failed 0/3 on repeated schema noncompliance and
+    is deliberately held, so a checklist counting it as outstanding work would ask
+    for a rerun the operator ruled out.
+    """
+    qual = SKILL / "qualification.yml"
+    if not qual.is_file():
+        return None
+    doc = yaml.safe_load(qual.read_text(encoding="utf-8"))
+    reviewers = doc.get("reviewers", {}) if isinstance(doc, dict) else {}
+    return sorted(n for n, e in reviewers.items()
+                  if isinstance(e, dict) and not e.get("councilEnabled")
+                  and e.get("providerCanary") not in ("passed", "failed"))
+
+
 def check_lanes_held() -> Result:
     """An enabled lane must have earned it, and the record must say how.
 
@@ -367,7 +389,7 @@ def check_lock_state() -> Result:
         note = f"{', '.join(dirty)} uncommitted, and freeze refuses a dirty tree"
     else:
         note = "both repos committed"
-    return Result(PASS, f"no {LOCK.name} yet -- it is the last manual step below; {note}")
+    return Result(PASS, f"no {LOCK.name} yet -- it is listed below; {note}")
 
 
 GATES = (
@@ -383,21 +405,38 @@ GATES = (
 )
 
 # Printed after the gates. Order matters and is the reason this file exists.
+#
+# Each step carries the condition under which it is still outstanding, evaluated
+# against the gate results above, because a static checklist is exactly the kind
+# of claim this file exists to stop trusting. This one went stale in the obvious
+# way: it went on naming the OMP upgrade and the canaries after both were done,
+# so the only way to learn what actually remained was to read the gates and
+# reconstruct it. A step whose completion is visible to a gate should be asked,
+# not remembered.
 MANUAL_STEPS = (
     ("upgrade OMP and restart the session",
      "the reviewer definitions are version-sensitive and the lock must name the "
-     "version that actually runs"),
-    ("run the three canaries",
-     "one cheap request per lane -- structured output, read-only anchor lookup, "
-     "empty-evidence abstention -- to prove the request path before the council runs. "
-     "The credential itself is no longer a step: the `model selectors` gate above "
-     "fails with 'authenticate it first' when a provider has no cached catalogue"),
-    ("enable a lane and smoke it",
-     "flip councilEnabled only for a lane whose canary passed"),
+     "version that actually runs",
+     lambda r: r["omp version"].state != PASS),
+    ("run the three canaries on every lane that has not had them",
+     "canary.py prompts, answered through the reviewer agent, then canary.py grade -- "
+     "structured output, real citations, empty-evidence abstention. A lane stays held "
+     "until all three pass, and `run` cannot qualify one: it refuses every transport "
+     "that could leave the machine, so its verdict is always `apparatus`. A lane that "
+     "was canaried and failed is parked, not outstanding: see its blockers",
+     lambda r: _uncanaried_lanes() != []),
     ("freeze runs/LOCK.json, then run",
-     "freeze_lock.py freeze -- last, and from committed trees. Qualification edits "
+     "freeze_lock.py freeze -- from committed trees, after everything that edits what "
+     "it hashes and before anything it has to vouch for. Qualification edits "
      "qualification.yml and the terms snapshots, both of which the lock hashes, so a "
-     "lock taken before the steps above drifts before the first measured run"),
+     "lock taken before the steps above drifts before the first measured run",
+     lambda r: not LOCK.is_file()),
+    ("the seven-item smoke pass",
+     "2xS1 + 2xS2 + 2xS3 + 1xS5, calibration items only, on an enabled lane. It is "
+     "the first thing to exercise ARVO build/PoC wiring and a real packet end to end, "
+     "and it is not a blind observation: do not score it unless the same condition is "
+     "rerun cold later",
+     lambda r: True),
 )
 
 
@@ -427,8 +466,12 @@ def main() -> int:
         print(f"unresolved: {', '.join(unknown)}", file=sys.stderr)
         return EXIT_UNRESOLVED
 
+    outstanding = [(s, why) for s, why, todo in MANUAL_STEPS if todo(dict(results))]
+    if not outstanding:
+        print("nothing manual remains.")
+        return EXIT_OK
     print("remaining, in order -- none of these are automatic:")
-    for i, (step, why) in enumerate(MANUAL_STEPS, 1):
+    for i, (step, why) in enumerate(outstanding, 1):
         print(f"  {i}. {step}\n     {why}")
     return EXIT_OK
 

@@ -46,6 +46,15 @@ def _args(**over) -> Namespace:
     return Namespace(**base)
 
 
+def _declaring_experiment(family: str) -> tuple[str, str] | None:
+    """The first experiment that declares this family, and a lens it runs there."""
+    import yaml
+    for exp in yaml.safe_load((HERE / "panels.yaml").read_text())["experiments"]:
+        if any(f["family"] == family for f in exp["families"]):
+            return exp["experimentId"], exp["lenses"][0]
+    return None
+
+
 @pytest.fixture
 def spy(monkeypatch):
     """Replace every transport with a counter. Nothing can send without incrementing it."""
@@ -63,7 +72,6 @@ def spy(monkeypatch):
 # ------------------------------------------------------- refusals never send
 
 @pytest.mark.parametrize("over,expect_reason", [
-    ({"family": "kimi", "experiment_id": "lrhe-opencode-v1"}, "lane_not_qualified"),
     ({"classification": "customer_confidential"}, None),
     ({"classification": "secrets_or_credentials"}, None),
     ({"item_id": "does-not-exist"}, "unknown_item"),
@@ -72,9 +80,9 @@ def spy(monkeypatch):
 def test_refusal_never_reaches_a_transport(spy, over, expect_reason):
     """The whole point. A refused request must not be sent, not merely reported.
 
-    Each case here is a different gate: an unqualified lane, a blocked
-    classification, an unknown item, a family outside the declared panel. They
-    fail at different depths, and none of them may leave the machine.
+    Each case here is a different gate: a blocked classification, an unknown
+    item, a family outside the declared panel. They fail at different depths,
+    and none of them may leave the machine.
     """
     outcome = run_review.prepare(_args(**over))
     assert isinstance(outcome, run_review.Refusal), f"{over} was not refused"
@@ -82,6 +90,32 @@ def test_refusal_never_reaches_a_transport(spy, over, expect_reason):
         assert outcome.reason_code == expect_reason
     assert outcome.exit_code in (run_review.EXIT_DENY, run_review.EXIT_UNRESOLVED)
     assert spy == [], "a refused request reached a transport"
+
+
+def test_an_unqualified_lane_never_reaches_a_transport(spy):
+    """The qualification gate, proved on whichever lane is actually held.
+
+    This case used to name kimi, and passed until kimi was canaried and enabled
+    -- at which point it asserted that a qualified lane is refused. The held lane
+    is a fact in qualification.yml, so read it there. When nothing is held the
+    gate has nothing to demonstrate on and this skips saying so, rather than
+    going quietly green on an assertion it can no longer make.
+    """
+    import yaml
+    qual = yaml.safe_load((SKILL / "qualification.yml").read_text())["reviewers"]
+    held = [f for f, e in qual.items() if not e.get("councilEnabled")]
+    if not held:
+        pytest.skip("every lane is enabled; no unqualified lane to refuse")
+
+    for family in held:
+        declared = _declaring_experiment(family)
+        assert declared, f"{family} is held but no experiment declares it either"
+        experiment, lens = declared
+        outcome = run_review.prepare(
+            _args(family=family, lens=lens, experiment_id=experiment))
+        assert isinstance(outcome, run_review.Refusal), f"{family} is not qualified but was not refused"
+        assert outcome.reason_code == "lane_not_qualified"
+        assert spy == [], "a refused request reached a transport"
 
 
 def test_default_transport_refuses_to_send(spy):
@@ -168,6 +202,13 @@ def test_every_enabled_lane_can_be_planned():
     The three enabled reviewers routed through providers with no policy entry at
     all for a while: qualified, in use, and ungoverned. Nothing surfaced it until
     a runner tried to assemble a request, because no other code path asked.
+
+    Each lane is planned in the experiment that declares it, not in a fixed one.
+    Hardcoding the core panel made this pass only while every enabled lane
+    happened to be a core lane: enabling the floor panel turned a real invariant
+    into `family_not_in_panel`, which is the runner correctly refusing a question
+    nobody meant to ask. A lane declared by no experiment is the actual defect,
+    and it now fails as one.
     """
     import yaml
     qual = yaml.safe_load((SKILL / "qualification.yml").read_text())["reviewers"]
@@ -175,9 +216,13 @@ def test_every_enabled_lane_can_be_planned():
     assert enabled, "no lane is enabled; this test would be vacuous"
 
     for family in enabled:
-        outcome = run_review.prepare(_args(family=family, lens="floor"))
+        declared = _declaring_experiment(family)
+        assert declared, f"{family} is councilEnabled but no experiment in panels.yaml declares it"
+        experiment, lens = declared
+        outcome = run_review.prepare(
+            _args(family=family, lens=lens, experiment_id=experiment))
         assert isinstance(outcome, run_review.Refusal) is False, (
-            f"{family} is councilEnabled but cannot be dispatched: "
+            f"{family} is councilEnabled but cannot be dispatched in {experiment}: "
             f"{getattr(outcome, 'reason_code', '')} {getattr(outcome, 'message', '')}")
 
 

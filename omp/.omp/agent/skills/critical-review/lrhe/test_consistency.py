@@ -279,13 +279,31 @@ def test_the_freeze_is_ordered_after_the_steps_that_change_what_it_hashes():
     whose commit the lock records. A lock frozen before them reports
     `drift: lock_inputs.private_repo.commit` before the first measured run, which
     is the one ordering mistake that cannot be corrected after the fact.
+
+    It is squeezed from the other side too: the smoke pass is the first thing to
+    spend a measured run, and a run made before the freeze is a run the lock
+    cannot vouch for. So the freeze is not last -- it is exactly between them.
     """
-    steps = [step for step, _why in preflight.MANUAL_STEPS]
+    steps = [step for step, _why, _todo in preflight.MANUAL_STEPS]
     freeze_at = next(i for i, s in enumerate(steps) if "freeze" in s)
-    for earlier in ("canaries", "enable a lane"):
-        at = next(i for i, s in enumerate(steps) if earlier in s)
-        assert at < freeze_at, f"{steps[at]!r} must precede the freeze, not follow it"
-    assert freeze_at == len(steps) - 1, "the freeze is the last manual step"
+    canaries_at = next(i for i, s in enumerate(steps) if "canaries" in s)
+    smoke_at = next(i for i, s in enumerate(steps) if "smoke" in s)
+    assert canaries_at < freeze_at, "the canaries edit qualification.yml, which the lock hashes"
+    assert freeze_at < smoke_at, "the smoke pass is a measured run and needs a lock to name"
+
+
+def test_a_finished_step_stops_being_printed():
+    """The checklist went stale in the obvious way, so it is derived now.
+
+    It named the OMP upgrade and the canaries for a session after both were done,
+    and the only way to learn what actually remained was to read the gates and
+    reconstruct it by hand. Every step whose completion a gate can see now
+    answers for itself.
+    """
+    done = {"omp version": preflight.Result(preflight.PASS, "omp 17.1.6")}
+    upgrade = next(todo for step, _why, todo in preflight.MANUAL_STEPS if "upgrade" in step)
+    assert upgrade(done) is False
+    assert upgrade({"omp version": preflight.Result(preflight.FAIL, "17.1.4")}) is True
 
 
 def _fake_catalogue(path: Path, provider_id: str, models: list[dict]) -> None:
@@ -405,3 +423,149 @@ def test_the_canary_refuses_a_transport_that_could_leave_the_machine(monkeypatch
     assert "refuses transport" in str(refused.value)
     assert sent == [], "the canary reached a transport it had just refused"
     assert "pretend_live" not in canary.NON_EGRESS
+
+
+def _canary_reply(canary_id: str, model: str, evidence: list[str]) -> dict:
+    return {"canary_id": canary_id, "served_model": model,
+            "response": {"summary": "reviewed", "evidence": evidence, "unresolved": []}}
+
+
+def _graded(tmp_path, replies: list[dict], family: str = "kimi"):
+    """Emit that lane's prompts, grade the supplied replies, return (exit, records)."""
+    prompts, responses, out = (tmp_path / n for n in ("cp.jsonl", "cr.jsonl", "canary.jsonl"))
+    assert canary.main(["prompts", "--family", family, "--out", str(prompts)]) == canary.EXIT_OK
+    responses.write_text("".join(json.dumps(r) + "\n" for r in replies), encoding="utf-8")
+    code = canary.main(["grade", "--prompts", str(prompts),
+                        "--responses", str(responses), "--out", str(out)])
+    records = [json.loads(x) for x in out.read_text().splitlines() if x.strip()]
+    return code, records
+
+
+@needs_agents
+def test_a_clean_reply_through_the_agent_lane_passes_every_probe(tmp_path):
+    """`run` can only ever return `apparatus`, so something else must qualify a lane.
+
+    The path to a model is the reviewer agent, not a socket in this repository.
+    This is the round trip that uses it: prompts out, replies back, same graders.
+    The judgement probe is graded here and skipped on a stub, which is the whole
+    point -- a canned reply cannot answer what a model chose to say.
+    """
+    model = yaml.safe_load(
+        (canary.SKILL / "qualification.yml").read_text())["reviewers"]["kimi"]["model"]
+    code, records = _graded(tmp_path, [
+        _canary_reply("kimi|structured_output", model,
+                      ["R1|P2|conf=0.60|claim=retry budget grew tenfold"
+                       "|evidence=src/canary/retry.py:1 loop bound|impact=latency|verify=inspect"]),
+        _canary_reply("kimi|anchor_lookup", model,
+                      ["R1|P1|conf=0.70|claim=no deny path"
+                       "|evidence=src/canary/authz.py:10 returns a bool|impact=authz|verify=test"]),
+        _canary_reply("kimi|empty_abstention", model, []),
+    ])
+    assert code == canary.EXIT_OK
+    assert len(records) == len(canary.PROBES)
+    assert all(r["passed"] and r["verdict"] == "provider" for r in records)
+    assert {r["probe_id"] for r in records} == {p.probe_id for p in canary.PROBES}
+    # It graded a reply; it did not watch the request leave. A record that claimed
+    # otherwise would be the strongest evidence in the file and the least earned.
+    assert all(r["request_observed"] is False for r in records)
+
+
+@needs_agents
+def test_a_reply_from_a_model_nobody_requested_fails_however_good_it_is(tmp_path):
+    """Zen overflow is a different route, and this canary is about a named lane.
+
+    `run.schema.json` gate-fails a measured run whose served model is not the
+    requested one. Qualification has to hold the same line or the lane is
+    qualified on evidence about somewhere else -- and Go-vs-Zen is exactly the
+    substitution `quotaPath: unknown` is waiting to find out about.
+    """
+    code, records = _graded(tmp_path, [
+        _canary_reply("kimi|structured_output", "opencode-zen/kimi-k3",
+                      ["R1|P2|conf=0.60|claim=retry budget grew tenfold"
+                       "|evidence=src/canary/retry.py:1 loop bound|impact=latency|verify=inspect"]),
+    ])
+    assert code == canary.EXIT_UNRESOLVED          # two probes also went unanswered
+    assert records[0]["passed"] is False
+    assert any("identity: served" in f for f in records[0]["failures"])
+
+
+@needs_agents
+def test_a_lane_is_not_qualified_by_the_probes_that_happened_to_answer(tmp_path):
+    """Two green probes and a silence is not a passed canary.
+
+    The probe most likely to go missing is the one a lane is worst at: a family
+    that always finds something has nothing to return for `empty_abstention`, so
+    dropping unanswered prompts would qualify precisely the lanes that failed.
+    """
+    model = yaml.safe_load(
+        (canary.SKILL / "qualification.yml").read_text())["reviewers"]["kimi"]["model"]
+    code, records = _graded(tmp_path, [
+        _canary_reply("kimi|structured_output", model,
+                      ["R1|P2|conf=0.60|claim=retry budget grew tenfold"
+                       "|evidence=src/canary/retry.py:1 loop bound|impact=latency|verify=inspect"]),
+        _canary_reply("kimi|anchor_lookup", model,
+                      ["R1|P1|conf=0.70|claim=no deny path"
+                       "|evidence=src/canary/authz.py:10 returns a bool|impact=authz|verify=test"]),
+    ])
+    assert code == canary.EXIT_UNRESOLVED
+    assert all(r["passed"] for r in records), "the answered probes were fine; the lane still is not"
+
+
+def test_the_rendered_packet_states_the_anchor_set_it_will_be_graded_against():
+    """`anchor_lookup` fails a citation outside `repo_files`, so the reply must be told.
+
+    A reviewer graded against a closed set it was never given is being measured
+    on a rule it could not follow, and the resulting number reads as a family
+    that fabricates anchors. The renderer is where the rule is stated, which is
+    also why there is one renderer rather than one per caller.
+    """
+    probe = next(p for p in canary.PROBES if p.probe_id == "anchor_lookup")
+    rendered = run_review.render_packet(probe.packet)
+    for path in probe.packet["repo_files"]:
+        assert path in rendered
+    assert "cite only paths listed" in rendered
+    assert "do not read the working tree" in rendered
+
+
+@needs_agents
+def test_a_permanently_silent_lane_is_not_qualified(tmp_path):
+    """Silence used to be the one reply that passed all three probes.
+
+    `empty_abstention` only fires on a reply that found something, and
+    `anchor_lookup` checked the citations it was given -- of which there were
+    none, vacuously clean. So the worst reviewer imaginable, the one that never
+    reports anything, qualified. Its packet plants one defect and its goal line
+    names it, so returning nothing is non-compliance rather than restraint.
+    """
+    model = yaml.safe_load(
+        (canary.SKILL / "qualification.yml").read_text())["reviewers"]["kimi"]["model"]
+    silent = [_canary_reply(f"kimi|{p.probe_id}", model, []) for p in canary.PROBES]
+    code, records = _graded(tmp_path, silent)
+    assert code == canary.EXIT_FAILED
+    # A well-formed empty reply is well-formed, and abstention only fires on a
+    # reply that found something. Exactly one probe stands between a permanently
+    # silent lane and qualification, which is why that one had to be two-sided.
+    assert {r["probe_id"] for r in records if not r["passed"]} == {"anchor_lookup"}
+
+
+@needs_agents
+def test_a_malformed_reply_fails_the_probe_it_was_answering(tmp_path):
+    """Shape is a property of every reply, not of the one probe that asks about it.
+
+    A real lane answered the anchor probe with its whole review nested under
+    `summary`. There was then no top-level `evidence` for the anchor grader to
+    inspect, so it returned clean and a malformed reply scored as a passed probe
+    -- the schema violation being invisible to every probe except the one that
+    happened not to be asked.
+    """
+    model = yaml.safe_load(
+        (canary.SKILL / "qualification.yml").read_text())["reviewers"]["kimi"]["model"]
+    nested = {"canary_id": "kimi|anchor_lookup", "served_model": model,
+              "response": {"summary": {"evidence": {"item": [
+                  "R1|P0|conf=0.90|claim=no deny path"
+                  "|evidence=src/canary/authz.py:10 observed|impact=authz|verify=test"]}}}}
+    probe = next(p for p in canary.PROBES if p.probe_id == "anchor_lookup")
+    assert canary.grade_reply("kimi", probe, nested["response"]), "the malformed reply graded clean"
+    _, records = _graded(tmp_path, [nested])
+    assert records[0]["passed"] is False
+    assert any(f.startswith("schema:") for f in records[0]["failures"])

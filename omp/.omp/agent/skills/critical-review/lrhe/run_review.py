@@ -93,6 +93,43 @@ class AuthorizedRequest:
     terms_snapshot_id: str
 
 
+def render_packet(packet: dict[str, Any]) -> str:
+    """The packet as a reviewer receives it. One rendering, at the boundary.
+
+    A packet is data; a provider takes text. Something has to turn one into the
+    other, and if each caller does it, two lanes reviewing the same item read two
+    different documents and the comparison between them measures the renderer.
+    So it lives here, beside the transports, and the canary imports it rather
+    than authoring a second one.
+
+    `repo_files` is stated as the closed set of citable anchors because it is:
+    the reviewer is answering from this document, not from a working tree, and a
+    citation outside the set is a fabricated anchor whether or not the path
+    happens to exist on the machine that reads it.
+    """
+    files = packet.get("repo_files") or []
+    return "\n".join((
+        f"item_id: {packet.get('item_id', '')}",
+        f"stratum: {packet.get('stratum', '')}",
+        "",
+        "## Goal",
+        str(packet.get("goal", "")).strip() or "(unstated)",
+        "",
+        "## Problem statement",
+        str(packet.get("problem_statement", "")).strip() or "(none)",
+        "",
+        "## Files in scope -- the complete set of anchors you may cite",
+        *(tuple(f"  {p}" for p in files) or ("  (none)",)),
+        "",
+        "## Design or diff under review",
+        str(packet.get("design_or_diff", "")).strip() or "(none)",
+        "",
+        "Review the change above. This document is the whole of the evidence: do "
+        "not read the working tree, and cite only paths listed under files in "
+        "scope. Return your structured response and nothing else.",
+    ))
+
+
 class EgressRefused(RuntimeError):
     """A transport was asked to send when sending was not permitted."""
 

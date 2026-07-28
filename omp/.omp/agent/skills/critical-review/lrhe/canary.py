@@ -3,6 +3,8 @@
 
     ./.venv/bin/python canary.py selftest                    # graders vs known-bad
     ./.venv/bin/python canary.py run --family kimi --transport stub
+    ./.venv/bin/python canary.py prompts --out cp.jsonl      # ... dispatch by hand ...
+    ./.venv/bin/python canary.py grade --prompts cp.jsonl --responses cr.jsonl
 
 `qualification.yml` records `schemaValid`, `readOnlyBoundary` and
 `providerCanary` for every lane, and until now nothing produced any of them.
@@ -36,10 +38,20 @@ transport table directly, and to stop that becoming an ungated egress path the
 moment a live transport lands, it accepts only transports known not to leave the
 machine. Pointing the canary at a provider has to be an edit to that set, made
 deliberately and reviewed, not a flag someone passes.
+
+HOW A LANE IS ACTUALLY QUALIFIED, THEN. Not by `run`, which can only ever return
+`apparatus`. The path to a model is the OMP reviewer agent named by `agent:` in
+qualification.yml -- the same one the council dispatches -- so `prompts` emits
+the probes, that agent answers them, and `grade` judges the replies with the
+same graders and records `verdict: provider`. The boundary is unmoved: no
+command in this file opens a connection. What `grade` cannot do is witness the
+request, so every record it writes says so and carries the digest of the reply
+file it read, which is what makes a later edit to that file detectable.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -143,8 +155,18 @@ def grade_structured_output(family: str, _packet_: dict, response: dict) -> list
 
 def grade_anchor_lookup(_family: str, packet: dict, response: dict) -> list[str]:
     known = set(packet.get("repo_files") or ())
+    evidence = response.get("evidence") or ()
+    # Zero citations is the other way of having read nothing, and it used to
+    # pass: every claim cited a real path, vacuously. Combined with the
+    # abstention probe -- which only fires on a reply that found something --
+    # a lane that returns nothing to everything passed all three. This packet
+    # plants one defect and the goal line names it, so silence here is
+    # non-compliance, not restraint.
+    if not evidence:
+        return ["anchor: no findings at all on a packet with a planted defect, so "
+                "there is no citation to check. Silence does not pass this probe."]
     failures = []
-    for item in response.get("evidence") or ():
+    for item in evidence:
         cited = ANCHOR.findall(str(item))
         if not cited:
             failures.append(f"anchor: no evidence=<path>:<line> in {str(item)[:60]!r}")
@@ -158,6 +180,22 @@ def grade_empty_abstention(_family: str, _packet_: dict, response: dict) -> list
         return [f"abstention: {len(found)} finding(s) on a packet with nothing to find; "
                 f"first is {str(found[0])[:80]!r}"]
     return []
+
+
+# Shape is a property of every reply, not of the one probe that asks about it.
+# A reviewer that answers the anchor probe with `{"summary": {"evidence": ...}}`
+# has no top-level `evidence` for the anchor grader to inspect, so grading that
+# reply on anchors alone returns clean -- a malformed reply scoring as a passed
+# probe. One lane did exactly that on its first request.
+UNIVERSAL = grade_structured_output
+
+
+def grade_reply(family: str, probe: Probe, response: dict) -> list[str]:
+    failures = list(UNIVERSAL(family, probe.packet, response))
+    if probe.grade is not UNIVERSAL:
+        failures += probe.grade(family, probe.packet, response)
+    return failures
+
 
 
 PROBES: tuple[Probe, ...] = (
@@ -251,12 +289,18 @@ def _send(req: run_review.AuthorizedRequest, transport: str) -> dict[str, Any]:
     return run_review.TRANSPORTS[transport](req)
 
 
-def cmd_run(args: argparse.Namespace) -> int:
+def _reviewers() -> dict[str, dict[str, Any]] | None:
     qual = SKILL / "qualification.yml"
     if not qual.is_file():
         print(f"{qual} not readable (private package not linked?)", file=sys.stderr)
+        return None
+    return yaml.safe_load(qual.read_text(encoding="utf-8")).get("reviewers") or {}
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    reviewers = _reviewers()
+    if reviewers is None:
         return EXIT_UNRESOLVED
-    reviewers = yaml.safe_load(qual.read_text(encoding="utf-8")).get("reviewers") or {}
     families = [args.family] if args.family else sorted(reviewers)
 
     records, failed = [], False
@@ -268,7 +312,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         for probe in PROBES:
             skipped = probe.requires_judgement and args.transport in NON_EGRESS
             response = {} if skipped else _send(_request(family, probe, entry), args.transport)
-            failures = [] if skipped else probe.grade(family, probe.packet, response)
+            failures = [] if skipped else grade_reply(family, probe, response)
             failed |= bool(failures)
             records.append({
                 "schema": "lrhe-canary-v1",
@@ -304,6 +348,139 @@ def cmd_run(args: argparse.Namespace) -> int:
     return EXIT_FAILED if failed else EXIT_OK
 
 
+# ------------------------------------------------- the lane that reaches a model
+#
+# `run` cannot qualify a lane, and that is deliberate: it refuses every transport
+# that could leave the machine, so its verdict is always `apparatus`. The lanes
+# still have to be exercised, and the path that reaches them is not a socket in
+# this repository -- it is the OMP reviewer agent, which is what `agent:` in
+# qualification.yml names and what the council will actually dispatch.
+#
+# So the split is the same one `judge_lrhe.py` already uses: emit the prompts,
+# dispatch them by the means that exists, grade the replies that come back. That
+# keeps the egress boundary exactly where it was -- nothing here opens a
+# connection -- while letting a real reply answer the probes a canned one cannot.
+
+def cmd_prompts(args: argparse.Namespace) -> int:
+    reviewers = _reviewers()
+    if reviewers is None:
+        return EXIT_UNRESOLVED
+    families = [args.family] if args.family else sorted(reviewers)
+
+    out = []
+    for family in families:
+        entry = reviewers.get(family)
+        if entry is None:
+            print(f"{family}: no qualification.yml entry", file=sys.stderr)
+            return EXIT_UNRESOLVED
+        for probe in PROBES:
+            out.append({
+                "canary_id": f"{family}|{probe.probe_id}",
+                "family": family,
+                "probe_id": probe.probe_id,
+                "question": probe.question,
+                "agent": str(entry.get("agent", "")),
+                "requested_model": str(entry.get("model", "")),
+                "packet_digest": run_review._digest(probe.packet),
+                "prompt": run_review.render_packet(probe.packet),
+            })
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in out), encoding="utf-8")
+    print(f"{len(out)} probe(s) over {len(families)} lane(s) -> {args.out}\n")
+    print("Dispatch each `prompt` to its `agent` -- one agent invocation per row, because")
+    print("three probes in one context tells the reviewer it is being tested. Write one")
+    print("JSON object per reply into a JSONL file carrying")
+    print("  {canary_id, served_model, response: {summary, evidence, unresolved}}")
+    print("then run `canary.py grade`.")
+    return EXIT_OK
+
+
+def cmd_grade(args: argparse.Namespace) -> int:
+    """Grade replies obtained through the agent lane. Same graders, real answers."""
+    by_id = {p["canary_id"]: p for p in run_review._read_jsonl(args.prompts)}
+    probes = {p.probe_id: p for p in PROBES}
+    responses = run_review._read_jsonl(args.responses)
+    responses_digest = "sha256:" + hashlib.sha256(args.responses.read_bytes()).hexdigest()
+
+    unmatched = [str(r.get("canary_id", "")) for r in responses if r.get("canary_id") not in by_id]
+    answered = {str(r.get("canary_id", "")) for r in responses} & set(by_id)
+    # Qualification is per lane, so completeness is too. A prompts file covering
+    # every reviewer is the normal case -- three of them are already enabled and
+    # are not being re-canaried -- and reading their unanswered prompts as a gap
+    # would make one held lane's evidence unreportable until all seven answered.
+    lanes = {by_id[c]["family"] for c in answered}
+    missing = sorted(c for c in set(by_id) - answered if by_id[c]["family"] in lanes)
+
+    records, failed = [], False
+    for reply in responses:
+        prompt = by_id.get(str(reply.get("canary_id", "")))
+        if prompt is None:
+            continue
+        probe = probes[prompt["probe_id"]]
+        response = reply.get("response") or {}
+        served = str(reply.get("served_model", ""))
+
+        # An unrequested model is not this lane. Same gate `run.schema.json`
+        # applies to a measured run: the reply may be excellent and still be
+        # evidence about a route nobody asked for.
+        failures = ([] if served == prompt["requested_model"] else
+                    [f"identity: served {served!r}, requested {prompt['requested_model']!r}"])
+        failures += grade_reply(prompt["family"], probe, response)
+        failed |= bool(failures)
+
+        records.append({
+            "schema": "lrhe-canary-v1",
+            "ran_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "family": prompt["family"],
+            "probe_id": probe.probe_id,
+            "transport": "agent",
+            "verdict": "provider",
+            "passed": not failures,
+            "failures": failures,
+            "requested_model": prompt["requested_model"],
+            "served_model": served,
+            "packet_digest": prompt["packet_digest"],
+            # This command graded a reply; it did not watch the request leave.
+            # The digest is what makes a later edit to the replies detectable.
+            "responses_digest": responses_digest,
+            "request_observed": False,
+        })
+        print(f"  {'ok  ' if not failures else 'FAIL'} {prompt['family']:<9} "
+              f"{probe.probe_id:<18} {probe.question}")
+        for failure in failures:
+            print(f"       {failure}")
+
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        with args.out.open("a", encoding="utf-8") as fh:
+            for record in records:
+                fh.write(json.dumps(record, sort_keys=True) + "\n")
+        print(f"\nappended {len(records)} record(s) to {args.out}")
+
+    by_lane: dict[str, list[dict]] = {}
+    for record in records:
+        by_lane.setdefault(record["family"], []).append(record)
+    print()
+    for family in sorted(by_lane):
+        got = by_lane[family]
+        complete = len(got) == len(PROBES) and all(r["passed"] for r in got)
+        print(f"  {family:<9} {sum(r['passed'] for r in got)}/{len(PROBES)} probes -- "
+              f"{'may be enabled' if complete else 'stays held'}")
+
+    if unmatched:
+        print(f"\n{len(unmatched)} reply/replies match no prompt and were not graded: "
+              f"{', '.join(sorted(set(unmatched))[:5])}", file=sys.stderr)
+    if missing:
+        print(f"\n{len(missing)} prompt(s) unanswered: {', '.join(missing[:6])}\n"
+              f"A lane is qualified by all {len(PROBES)} probes or by none -- two green "
+              f"probes and a silence is not a passed canary.", file=sys.stderr)
+    if unmatched or missing:
+        return EXIT_UNRESOLVED
+    return EXIT_FAILED if failed else EXIT_OK
+
+
+
 def cmd_selftest(args: argparse.Namespace) -> int:
     """Every grader must reject its known-bad reply. A grader that cannot fail is decoration."""
     family = args.family
@@ -337,6 +514,18 @@ def main(argv: list[str] | None = None) -> int:
     selftest.add_argument("--family", default="claude",
                           help="whose output schema to judge structure against")
     selftest.set_defaults(fn=cmd_selftest)
+
+    prompts = sub.add_parser("prompts", help="emit the probes for dispatch through the agent lane")
+    prompts.add_argument("--family", help="one reviewer from qualification.yml (default: all)")
+    prompts.add_argument("--out", type=Path, default=Path("canary-prompts.jsonl"))
+    prompts.set_defaults(fn=cmd_prompts)
+
+    grade = sub.add_parser("grade", help="grade replies obtained through the agent lane")
+    grade.add_argument("--prompts", type=Path, required=True)
+    grade.add_argument("--responses", type=Path, required=True)
+    grade.add_argument("--out", type=Path, default=DATA / "canary.jsonl",
+                       help="JSONL to append results to (accumulated evidence, private package)")
+    grade.set_defaults(fn=cmd_grade)
 
     args = ap.parse_args(argv)
     return args.fn(args)

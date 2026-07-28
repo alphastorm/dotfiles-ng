@@ -95,7 +95,7 @@ python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
-python3 -m pytest -q                               # 129 tests; see "The test suite"
+python3 -m pytest -q                               # 136 tests; see "The test suite"
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -446,6 +446,8 @@ provider has no cached catalogue, and the gate says so by name.
 ```bash
 python3 canary.py selftest                     # graders vs replies built to fail them
 python3 canary.py run --transport stub         # every lane, no egress
+python3 canary.py prompts --out cp.jsonl       # ... answered through the agent lane ...
+python3 canary.py grade --prompts cp.jsonl --responses cr.jsonl
 ```
 
 `qualification.yml` records `schemaValid`, `readOnlyBoundary` and `providerCanary`
@@ -455,7 +457,7 @@ right answer is known before the reply arrives:
 | probe | asks | needs a real reply |
 |---|---|---|
 | `structured_output` | does the reply validate against the reviewer's own output schema? | no |
-| `anchor_lookup` | does every cited anchor exist in the packet? | no |
+| `anchor_lookup` | are the citations real, and are there any? | no |
 | `empty_abstention` | given nothing to find, does it return nothing? | yes |
 
 The split matters. The first two judge the *shape* of a reply and are meaningful
@@ -486,10 +488,66 @@ to reach it, so it accepts only transports known not to leave the machine and
 refuses anything else by name. Pointing a probe at a provider is an edit to that
 set, made deliberately.
 
+### Which is why `run` cannot qualify anything
+
+Its verdict is always `apparatus`. The path to a model is not a socket in this
+repository — it is the OMP reviewer agent named by `agent:`, the same one the
+council dispatches. So the split is the one `judge_lrhe.py` already uses: emit
+the prompts, answer them by the means that exists, grade what comes back. The
+boundary is unmoved, no command here opens a connection, and a real reply can
+finally answer the probe a canned one cannot. What `grade` cannot do is witness
+the request, so every record says `request_observed: false` and carries the
+digest of the reply file it read.
+
+`render_packet()` lives in `run_review.py` rather than here. Two lanes reviewing
+one item must read one document; if each caller renders its own, the comparison
+between them measures the renderer. It states `repo_files` as the closed set of
+citable anchors, because that is the rule `anchor_lookup` grades against and a
+reviewer held to a rule it was never given reads as a family that fabricates.
+
+**The four OpenCode floor lanes, 2026-07-28.** Kimi K3, GLM 5.2 and DeepSeek
+V4 Pro passed 3/3 and are enabled. MiniMax M3 passed 0/3 and stays held, on
+`failureClass: repeated_schema_noncompliance`: every reply wraps its JSON arrays
+as `{"item": [...]}` where the schema requires an array, so nothing it returns
+parses as the evidence contract. Served identity was read out of the session
+transcript rather than taken from the reply, so `quotaPath` records the route
+that answered: `opencode-go` for all four, no Zen overflow.
+
+One non-scoring diagnostic located that wrapper, without a provider call and
+without touching the parser — `lrhe-data/diagnostics/`. The session records keep
+`partialArgs`, the raw streamed tool-call text from before the harness parses it,
+and MiniMax's very first payload already reads `"evidence": {"item": [...]}`.
+There is no XML in the wire text for an extraction layer to have converted, which
+also disposes of the model's own explanation — its thinking blames the harness for
+nesting `<item>` tags it never emitted. The other three lanes ran the same agent
+definition, schema, prompt and extraction path and returned a conformant call on
+the first attempt. The model is the only variable that differs.
+
+Two things that result does *not* say. It is not a review-quality finding: MiniMax
+found the same `None == None` authorization bypass the passing lanes found, at the
+same severity, citing real packet paths. And the fix is not a parser that accepts
+the wrapper — that would relax a contract the other lanes meet unaided, and the
+floor comparison would then be measuring the parser. Worth knowing for later: OMP
+rejected and re-prompted three times per probe, and MiniMax *degraded* under
+retry, moving the malformation up into `summary`; the fourth attempt is the one
+permissive mode accepted and `grade` scored.
+
+Two graders were wrong, and the four lanes found both:
+
+- `anchor_lookup` checked the citations it was given and passed vacuously when
+  there were none. With `empty_abstention` firing only on a reply that *found*
+  something, a lane that returned nothing to everything passed all three probes —
+  the worst reviewer imaginable, qualified. Its packet plants one defect and the
+  goal line names it, so silence is now non-compliance.
+- Shape was judged only on the probe that asks about it. MiniMax's malformed
+  anchor reply had no top-level `evidence` for the anchor grader to inspect, so
+  it graded clean: a schema violation invisible to every probe except the one it
+  was not asked. Every reply is now judged for shape, whichever probe it answers.
+
 ## The test suite
 
 ```bash
-python3 -m pytest -q            # 129 tests, ~60s
+python3 -m pytest -q            # 136 tests, ~60s
 ruff check .                    # rule set pinned in ruff.toml, not inherited
 ```
 
