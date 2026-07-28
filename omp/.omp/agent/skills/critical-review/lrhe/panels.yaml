@@ -31,10 +31,13 @@ arms:
   R:      {role: refuter, description: cold falsification, scheduled per disputed claim}
   probe:  {role: critic,  description: contamination probe; no repository, no tools}
   smoke:  {role: critic,  description: plumbing validation; never a benchmark observation}
+  OC_SCREEN: {role: critic, description: the twelve-item promotion screen; a go/no-go on
+              operational failure, never a recall ranking}
 
 # Excluded from performance estimates by every analysis. Arm A is the author, R is
-# scheduled per claim rather than per item, and probe and smoke never saw the
-# repository under production conditions.
+# scheduled per claim rather than per item, probe and smoke never saw the repository
+# under production conditions, and OC_SCREEN is twelve items -- enough to catch a
+# lane that cannot hold a contract, nowhere near enough to rank three that can.
 councilArms: [C, D]
 nullArm: T
 squareArm: D
