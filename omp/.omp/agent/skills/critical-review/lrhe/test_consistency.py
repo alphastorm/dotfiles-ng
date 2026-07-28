@@ -227,15 +227,21 @@ def test_preflight_inspects_the_lock_that_freeze_actually_writes(monkeypatch):
     would have reported "no lock yet, which is correct" forever -- including
     after the lock existed. Asserting the constants match would be circular, so
     this drives the write path the command actually takes.
+
+    Through `main`, not `cmd_freeze`. Calling the subcommand directly skipped the
+    one line between them, `args.lock = Path(args.lock)`, which raised TypeError
+    on the documented default of not passing --lock at all. `cmd_freeze` already
+    defaults it from --data-dir, so the coercion was redundant as well as fatal,
+    and the only invocation that never reached it was the tested one.
     """
     written: list[Path] = []
     clean = {"public_repo": {"dirty": False}, "private_repo": {"dirty": False}}
     monkeypatch.setattr(freeze_lock, "_build_record", lambda args: {"lock_inputs": clean})
     monkeypatch.setattr(freeze_lock, "_write_lock", lambda path, record: written.append(path))
 
-    args = freeze_lock._build_parser().parse_args(["freeze"])
-    assert args.lock is None, "a --lock default pinned at import cannot follow --data-dir"
-    assert freeze_lock.cmd_freeze(args) == freeze_lock.EXIT_OK
+    assert freeze_lock._build_parser().parse_args(["freeze"]).lock is None, (
+        "a --lock default pinned at import cannot follow --data-dir")
+    assert freeze_lock.main(["freeze"]) == freeze_lock.EXIT_OK
     assert written == [preflight.LOCK], "preflight is watching a file freeze does not write"
 
 

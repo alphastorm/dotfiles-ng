@@ -440,7 +440,6 @@ def main(argv: list[str] | None = None) -> int:
         args.answer_key = args.corpus
     args.assignments_manifest = Path(args.assignments_manifest or (data_dir / "assignments.manifest.json"))
     args.terms_dir = Path(args.terms_dir or (data_dir / "terms"))
-    args.lock = Path(args.lock)
 
     return args.fn(args)
 
