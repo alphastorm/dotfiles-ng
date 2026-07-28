@@ -18,6 +18,7 @@ unchanged on a CI runner that has no access to it.
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -279,7 +280,64 @@ def test_the_freeze_is_ordered_after_the_steps_that_change_what_it_hashes():
     """
     steps = [step for step, _why in preflight.MANUAL_STEPS]
     freeze_at = next(i for i, s in enumerate(steps) if "freeze" in s)
-    for earlier in ("credential", "canaries", "enable a lane"):
+    for earlier in ("canaries", "enable a lane"):
         at = next(i for i, s in enumerate(steps) if earlier in s)
         assert at < freeze_at, f"{steps[at]!r} must precede the freeze, not follow it"
     assert freeze_at == len(steps) - 1, "the freeze is the last manual step"
+
+
+def _fake_catalogue(path: Path, provider_id: str, models: list[dict]) -> None:
+    con = sqlite3.connect(path)
+    try:
+        con.execute("create table model_cache (provider_id TEXT PRIMARY KEY, models TEXT NOT NULL)")
+        con.execute("insert into model_cache values (?, ?)", (provider_id, json.dumps(models)))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _qualification(path: Path, selector: str) -> None:
+    (path / "qualification.yml").write_text(
+        yaml.safe_dump({"reviewers": {"kimi": {"model": selector, "councilEnabled": False}}}),
+        encoding="utf-8",
+    )
+
+
+def test_preflight_resolves_selectors_through_the_hashed_provider_key(tmp_path, monkeypatch):
+    """qualification.yml cannot assert that its own selectors exist.
+
+    The catalogue keys scoped providers as `<provider>:models-v1:<hash>` -- a
+    cache discriminator, not part of the selector -- so a resolver comparing the
+    raw key would find no `opencode-go` at all and report every OpenCode lane
+    unresolvable. That is the shape the blocker "selector not discovered against
+    the installed build" was standing in for.
+    """
+    db = tmp_path / "models.db"
+    _fake_catalogue(db, "opencode-go:models-v1:1gswkvxt6z2u9",
+                    [{"id": "kimi-k3", "thinking": {"efforts": ["low", "high", "max"]}}])
+    monkeypatch.setattr(preflight, "MODELS_DB", db)
+    monkeypatch.setattr(preflight, "SKILL", tmp_path)
+
+    _qualification(tmp_path, "opencode-go/kimi-k3")
+    assert preflight.check_model_selectors().state == preflight.PASS
+
+    _qualification(tmp_path, "opencode-go/kimi-k3:high")
+    assert preflight.check_model_selectors().state == preflight.PASS
+
+    for selector, expected in (
+        ("opencode-nope/kimi-k3", "no cached catalogue"),
+        ("opencode-go/kimi-k9", "serves no model"),
+        ("opencode-go/kimi-k3:medium", "not 'medium'"),
+    ):
+        _qualification(tmp_path, selector)
+        result = preflight.check_model_selectors()
+        assert result.state == preflight.FAIL, selector
+        assert expected in result.detail, result.detail
+
+
+def test_an_absent_catalogue_is_unknown_rather_than_resolved(tmp_path, monkeypatch):
+    """On CI there is no OMP cache, and "nothing to check" is not "checks out"."""
+    monkeypatch.setattr(preflight, "MODELS_DB", tmp_path / "absent.db")
+    monkeypatch.setattr(preflight, "SKILL", tmp_path)
+    _qualification(tmp_path, "opencode-go/kimi-k3")
+    assert preflight.check_model_selectors().state == preflight.UNKNOWN

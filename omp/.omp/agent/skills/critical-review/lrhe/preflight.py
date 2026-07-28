@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +45,9 @@ import run_review  # noqa: E402
 SKILL = Path.home() / ".omp/agent/skills/critical-review"
 AGENTS = Path.home() / ".omp/agent/agents"
 DATA = SKILL / "lrhe-data"
+# OMP's model cache. Read-only, and the only local answer to "does this selector
+# resolve", short of spending a request to find out.
+MODELS_DB = Path.home() / ".omp/agent/models.db"
 # Imported, not restated. These disagreed once -- freeze wrote `lrhe-data/runs/
 # LOCK.json` while this file looked for `lrhe-data/LOCK.json`, so the gate that
 # refuses a lock frozen under the wrong toolchain could never see one at all.
@@ -203,6 +207,82 @@ def check_lanes_held() -> Result:
     return Result(PASS, f"enabled {on} all canaried, held {off}")
 
 
+def _catalogue() -> dict[str, dict[str, set[str]]] | None:
+    """provider -> model -> offered efforts, from OMP's cache, or None if unreadable.
+
+    Scoped providers are keyed `<provider>:models-v1:<hash>` in the cache -- the
+    suffix is a cache discriminator built from the provider id and a scope hash,
+    not part of a selector, so it is stripped. That is why `opencode-go` appears
+    under a hashed key while `anthropic` does not.
+    """
+    if not MODELS_DB.is_file():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{MODELS_DB}?mode=ro", uri=True)
+        try:
+            rows = con.execute("select provider_id, models from model_cache").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return None
+
+    catalogue: dict[str, dict[str, set[str]]] = {}
+    for provider_id, blob in rows:
+        try:
+            parsed = json.loads(blob)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        models = parsed if isinstance(parsed, list) else parsed.get("models", [])
+        provider = catalogue.setdefault(provider_id.split(":models-v1:", 1)[0], {})
+        for model in models:
+            if not isinstance(model, dict) or "id" not in model:
+                continue
+            thinking = model.get("thinking") or {}
+            provider[model["id"]] = set(thinking.get("efforts") or thinking.get("levels") or ())
+    return catalogue
+
+
+def check_model_selectors() -> Result:
+    """A selector that does not resolve fails at dispatch, once the council is running.
+
+    qualification.yml names `provider/model[:effort]`, and nothing in it can
+    assert that any of the three parts exist. The provider has to be
+    authenticated far enough for OMP to have cached its catalogue, the model has
+    to be in that catalogue, and an effort suffix has to be one the model offers.
+    This is the "selector not discovered against the installed build" blocker,
+    answered automatically instead of by hand.
+    """
+    qual = SKILL / "qualification.yml"
+    if not qual.is_file():
+        return Result(UNKNOWN, f"{qual} not readable (private package not linked?)")
+    catalogue = _catalogue()
+    if catalogue is None:
+        return Result(UNKNOWN, f"{MODELS_DB} not readable; nothing to resolve against")
+
+    doc = yaml.safe_load(qual.read_text(encoding="utf-8"))
+    reviewers = doc.get("reviewers", {}) if isinstance(doc, dict) else {}
+    problems: list[str] = []
+    resolved = 0
+    for name, entry in sorted(reviewers.items()):
+        if not isinstance(entry, dict) or not entry.get("model"):
+            continue
+        provider, _, rest = str(entry["model"]).partition("/")
+        model, _, effort = rest.partition(":")
+        offered = catalogue.get(provider)
+        if offered is None:
+            problems.append(f"{name}: provider {provider!r} has no cached catalogue; authenticate it first")
+        elif model not in offered:
+            problems.append(f"{name}: {provider} serves no model {model!r}")
+        elif effort and offered[model] and effort not in offered[model]:
+            problems.append(f"{name}: {model} offers {sorted(offered[model])}, not {effort!r}")
+        else:
+            resolved += 1
+
+    if problems:
+        return Result(FAIL, "; ".join(problems))
+    return Result(PASS, f"{resolved} reviewer selectors resolve against the installed build")
+
+
 def check_no_live_transport() -> Result:
     names = sorted(run_review.TRANSPORTS)
     if "live" in names:
@@ -297,6 +377,7 @@ GATES = (
     ("reviewer agents", check_reviewer_agents_resolve),
     ("no live transport", check_no_live_transport),
     ("lanes held", check_lanes_held),
+    ("model selectors", check_model_selectors),
     ("omp version", check_omp_version),
     ("freeze lock", check_lock_state),
 )
@@ -306,10 +387,11 @@ MANUAL_STEPS = (
     ("upgrade OMP and restart the session",
      "the reviewer definitions are version-sensitive and the lock must name the "
      "version that actually runs"),
-    ("add the OpenCode Go credential",
-     "the four floor lanes have no credential; this is the only blocker left on them"),
-    ("selector discovery, then canaries",
-     "one cheap request per lane to prove the request path before the council runs"),
+    ("run the three canaries",
+     "one cheap request per lane -- structured output, read-only anchor lookup, "
+     "empty-evidence abstention -- to prove the request path before the council runs. "
+     "The credential itself is no longer a step: the `model selectors` gate above "
+     "fails with 'authenticate it first' when a provider has no cached catalogue"),
     ("enable a lane and smoke it",
      "flip councilEnabled only for a lane whose canary passed"),
     ("freeze runs/LOCK.json, then run",

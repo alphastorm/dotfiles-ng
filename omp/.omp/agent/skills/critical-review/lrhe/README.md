@@ -95,7 +95,7 @@ python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
-python3 -m pytest -q                               # 124 tests; see "The test suite"
+python3 -m pytest -q                               # 126 tests; see "The test suite"
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -432,10 +432,19 @@ resolves to an agent file that is present and not a dangling stow symlink; and a
 enabled lane is checked against the evidence recorded for it rather than a
 hardcoded list of names.
 
+It also resolves every selector against OMP's model cache — provider, model, and
+any `:effort` suffix. `qualification.yml` cannot assert that its own selectors
+exist, and the alternative to checking is spending a request to find out. Note
+the cache keys scoped providers as `<provider>:models-v1:<hash>`, a discriminator
+rather than part of the selector, so `opencode-go` appears hashed while
+`anthropic` does not; a resolver comparing raw keys finds no OpenCode lane at all.
+That is why "add the credential" is no longer a manual step — an unauthenticated
+provider has no cached catalogue, and the gate says so by name.
+
 ## The test suite
 
 ```bash
-python3 -m pytest -q            # 124 tests, ~60s
+python3 -m pytest -q            # 126 tests, ~60s
 ruff check .                    # rule set pinned in ruff.toml, not inherited
 ```
 
@@ -470,7 +479,7 @@ runner tried to assemble a request.
 **Fourteen tests skip without the corpus.** They read the private data package, and
 they skip cleanly when it is absent — which is what happens in CI, because the
 corpus carries the answer key and must never reach a public runner. The remaining
-110 need nothing but this repository. `.github/workflows/lrhe.yml` runs lint, the
+112 need nothing but this repository. `.github/workflows/lrhe.yml` runs lint, the
 cross-file invariants, the suite, and a final assertion that no `live` transport
 has appeared. The skips there are correct; do not "fix" them by checking the
 corpus out.
