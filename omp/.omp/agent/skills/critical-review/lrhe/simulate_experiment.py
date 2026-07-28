@@ -166,7 +166,7 @@ def simulate(
                         eta += interaction
                     if rng.random() < sigmoid(eta):
                         rid_n += 1
-                        rid = f"{rid_n:02d}"
+                        rid = f"{rid_n}"
                         s = lab["sites"][0]
                         line = int(rng.integers(s["lines"][0], s["lines"][1] + 1))
                         evidence.append(
@@ -187,7 +187,7 @@ def simulate(
                 # trap bait
                 if "trap" in _item and rng.random() < trap_bait[fam]:
                     rid_n += 1
-                    rid = f"{rid_n:02d}"
+                    rid = f"{rid_n}"
                     ts = _item["trap"]["sites"][0]
                     evidence.append(
                         f"R{rid}|P0|conf={rng.uniform(.6,.95):.2f}"
@@ -204,7 +204,7 @@ def simulate(
                 # noise claims
                 for _ in range(int(rng.poisson(2.0))):
                     rid_n += 1
-                    rid = f"{rid_n:02d}"
+                    rid = f"{rid_n}"
                     fab = rng.random() < fabrication_rate / max(1e-9, fabrication_rate + plausible_rate)
                     path = (f"src/{_iid}/ghost.py" if fab
                             else _item["repo_files"][0])

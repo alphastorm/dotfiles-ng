@@ -3,10 +3,11 @@
 # drops an arm, a gate that stops being called, a policy that cites a snapshot
 # nobody fetched -- and a suite nobody runs decays into decoration.
 #
-# 112 of the 126 tests need nothing but this repository. The remaining 14 read the
-# private corpus and skip cleanly when it is absent, which is exactly what happens
-# here: the corpus and its answer key live in a separate private repository and
-# must never reach a public runner. Do not "fix" the skips by checking it out.
+# 113 of the 129 tests need nothing but this repository. The remaining 16 read the
+# private package -- corpus and reviewer agents -- and skip cleanly when absent,
+# which is exactly what happens here: the corpus and its answer key live in a
+# separate private repository and must never reach a public runner.
+# Do not "fix" the skips by checking it out.
 #
 # Path-filtered because this is a dotfiles repo; a zsh change should not spend two
 # minutes proving the corpus builder still imports.

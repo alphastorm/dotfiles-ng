@@ -29,8 +29,10 @@ from referencing import Registry, Resource
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
+import canary  # noqa: E402  -- needs the path above
 import freeze_lock  # noqa: E402  -- needs the path above
 import preflight  # noqa: E402
+import run_review  # noqa: E402  -- needs the path above
 import snapshot_terms  # noqa: E402
 
 PANELS = yaml.safe_load((HERE / "panels.yaml").read_text())
@@ -341,3 +343,65 @@ def test_an_absent_catalogue_is_unknown_rather_than_resolved(tmp_path, monkeypat
     monkeypatch.setattr(preflight, "SKILL", tmp_path)
     _qualification(tmp_path, "opencode-go/kimi-k3")
     assert preflight.check_model_selectors().state == preflight.UNKNOWN
+
+
+# ------------------------------------------------------------------- canary
+
+_AGENTS_PRESENT = (canary.AGENTS / "review-claude.md").is_file()
+needs_agents = pytest.mark.skipif(
+    not _AGENTS_PRESENT, reason="reviewer agent definitions are not present in this checkout")
+
+
+def test_every_canary_grader_rejects_the_reply_built_to_fail_it():
+    """A grader that cannot fail is decoration, and this one guards spending.
+
+    Each probe ships the reply that should fail it. Run them before trusting a
+    green canary, because otherwise the first paid request is also the first
+    execution of the code deciding whether the answer was any good.
+    """
+    if not _AGENTS_PRESENT:
+        pytest.skip("structured_output needs the agent definitions")
+    for probe in canary.PROBES:
+        failures = probe.grade("claude", probe.packet, probe.known_bad)
+        assert failures, f"{probe.probe_id} accepted a reply built to fail it"
+
+
+@needs_agents
+def test_the_stub_reply_satisfies_every_apparatus_probe():
+    """The stub is the reviewer every local run and every fixture is shaped like.
+
+    It emitted `R01|...` while every reviewer's output schema requires
+    `^R[1-9][0-9]*`, so the canned reply exercising the whole path was one no
+    real reviewer is allowed to return -- and `score_lrhe.py` parses evidence
+    leniently, so nothing downstream noticed. Same for the simulator and the
+    fixtures. This keeps synthetic evidence answerable to the schema that
+    governs the real thing.
+    """
+    qual = yaml.safe_load((canary.SKILL / "qualification.yml").read_text())["reviewers"]
+    for family, entry in sorted(qual.items()):
+        for probe in canary.PROBES:
+            if probe.requires_judgement:
+                continue
+            request = canary._request(family, probe, entry)
+            reply = run_review.stub_transport(request)
+            assert not probe.grade(family, probe.packet, reply), (
+                f"{family}/{probe.probe_id}: the stub reply fails a probe the "
+                f"apparatus is supposed to pass")
+
+
+def test_the_canary_refuses_a_transport_that_could_leave_the_machine(monkeypatch):
+    """The canary talks to transports directly, so it needs its own egress guard.
+
+    `dispatch()` is the gated path, and the canary deliberately does not use it:
+    probes are pre-qualification and `prepare()` refuses an unqualified lane, so
+    every lane that needs a canary would be refused. The cost of that shortcut is
+    that adding a live transport would otherwise make this command an ungated way
+    to reach it.
+    """
+    sent = []
+    monkeypatch.setitem(run_review.TRANSPORTS, "pretend_live", lambda req: sent.append(req) or {})
+    with pytest.raises(SystemExit) as refused:
+        canary._send(object(), "pretend_live")
+    assert "refuses transport" in str(refused.value)
+    assert sent == [], "the canary reached a transport it had just refused"
+    assert "pretend_live" not in canary.NON_EGRESS

@@ -95,7 +95,7 @@ python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
-python3 -m pytest -q                               # 126 tests; see "The test suite"
+python3 -m pytest -q                               # 129 tests; see "The test suite"
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -441,10 +441,55 @@ rather than part of the selector, so `opencode-go` appears hashed while
 That is why "add the credential" is no longer a manual step — an unauthenticated
 provider has no cached catalogue, and the gate says so by name.
 
+## The canaries decide whether a lane may be dispatched
+
+```bash
+python3 canary.py selftest                     # graders vs replies built to fail them
+python3 canary.py run --transport stub         # every lane, no egress
+```
+
+`qualification.yml` records `schemaValid`, `readOnlyBoundary` and `providerCanary`
+per lane, and nothing produced any of them. Three probes do, each built so the
+right answer is known before the reply arrives:
+
+| probe | asks | needs a real reply |
+|---|---|---|
+| `structured_output` | does the reply validate against the reviewer's own output schema? | no |
+| `anchor_lookup` | does every cited anchor exist in the packet? | no |
+| `empty_abstention` | given nothing to find, does it return nothing? | yes |
+
+The split matters. The first two judge the *shape* of a reply and are meaningful
+against any reply, canned included. The third asks what the model chose to say,
+and grading that against a fixture measures the fixture's opinion — so on a
+non-egress transport it is skipped with that stated, not failed into a permanent
+red that teaches you to ignore the exit code.
+
+**A stub run is evidence about the graders, not about a lane.** It records
+`verdict: apparatus` and refuses to emit a passed provider canary; nothing from it
+belongs in `qualification.yml`. Running it first is still worth it, because
+otherwise the first paid request is also the first execution of the code deciding
+whether the answer was any good. `selftest` is the other half: every grader must
+reject the reply shipped to fail it.
+
+It earned itself immediately. `stub_transport` emitted `R01|P2|...` while every
+reviewer's output schema requires `^R[1-9][0-9]*` — so the canned reply that
+exercises the whole path locally, and the fixtures and simulator built the same
+way, were shaped like a reply no reviewer is permitted to return. `score_lrhe.py`
+parses evidence leniently, so nothing downstream ever objected. Fixed in all
+three, and `test_consistency.py` now holds synthetic evidence answerable to the
+schema that governs the real thing.
+
+The canary talks to the transport table directly, because `prepare()` refuses an
+unqualified lane and every lane needing a canary is one. The cost of that
+shortcut is that a live transport would otherwise make `canary.py` an ungated way
+to reach it, so it accepts only transports known not to leave the machine and
+refuses anything else by name. Pointing a probe at a provider is an edit to that
+set, made deliberately.
+
 ## The test suite
 
 ```bash
-python3 -m pytest -q            # 126 tests, ~60s
+python3 -m pytest -q            # 129 tests, ~60s
 ruff check .                    # rule set pinned in ruff.toml, not inherited
 ```
 
@@ -476,10 +521,11 @@ The first of those is not hypothetical. All three enabled reviewers routed throu
 ungoverned. Both files were internally consistent. Nothing surfaced it until a
 runner tried to assemble a request.
 
-**Fourteen tests skip without the corpus.** They read the private data package, and
-they skip cleanly when it is absent — which is what happens in CI, because the
-corpus carries the answer key and must never reach a public runner. The remaining
-112 need nothing but this repository. `.github/workflows/lrhe.yml` runs lint, the
+**Sixteen tests skip without the private package.** Fourteen read the corpus and
+two read the reviewer agent definitions; both live outside this repository and
+both skip cleanly when absent — which is what happens in CI, because the corpus
+carries the answer key and must never reach a public runner. The remaining 113
+need nothing but this repository. `.github/workflows/lrhe.yml` runs lint, the
 cross-file invariants, the suite, and a final assertion that no `live` transport
 has appeared. The skips there are correct; do not "fix" them by checking the
 corpus out.

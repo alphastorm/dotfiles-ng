@@ -117,7 +117,7 @@ def stub_transport(req: AuthorizedRequest) -> dict[str, Any]:
         "served_model": req.requested_model,
         "summary": f"stub review of {req.item_id} by {req.family}",
         "evidence": [
-            f"R01|P2|conf=0.50|claim=stub finding {seed[:8]}"
+            f"R1|P2|conf=0.50|claim=stub finding {seed[:8]}"
             f"|evidence={(req.packet.get('repo_files') or ['src/unknown.py'])[0]}:1 observed"
             f"|impact=stub|verify=stub"
         ],
