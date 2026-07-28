@@ -1287,6 +1287,12 @@ def test_the_judge_schema_and_the_runner_agree_on_the_label_field():
     assert set(schema["properties"]["verdict"]["enum"]) == set(judge_lrhe.VERDICTS)
 
 
+# The agent definitions live in the PRIVATE package; this repository is public and its CI
+# runner has no `~/.omp/agent/agents`. `test_runner.py` gets this for free from a
+# module-level skip on the private corpus, which is why its floor-reviewer equivalent
+# skipped there while this one failed the build.
+@pytest.mark.skipif(not (Path.home() / ".omp/agent/agents/judge-claude.md").is_file(),
+                    reason="judge agent definitions are not present in this checkout")
 def test_every_judge_agent_declares_an_empty_tool_surface():
     """A judge is shown the ground-truth labels, so it needs no repository at all.
 
