@@ -95,7 +95,7 @@ python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
-python3 -m pytest -q                               # 123 tests; see "The test suite"
+python3 -m pytest -q                               # 124 tests; see "The test suite"
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -407,15 +407,22 @@ would cost money are *named*, not run, because a preflight that can spend is not
 preflight.
 
 It exists because three steps are order-sensitive and expensive to get wrong, and
-that ordering was living in a chat log. `runs/LOCK.json` must be frozen **after**
-the OMP upgrade — a lock is a claim about the starting state of a result set, and
-one frozen under the old version records a toolchain that never produced anything.
-It must equally be frozen from **committed** trees: the lock records each repo's
-commit and dirty flag and `verify` diffs both, so a lock taken over uncommitted
-work reports drift the moment that work lands, against the very tree it came from.
-And a lane stays `councilEnabled: false` until its credential exists and its canary
-has passed, because enabling first makes the first live request also the first test
-of the request path.
+that ordering was living in a chat log. `runs/LOCK.json` is frozen **last**. A lock
+is a claim about the starting state of a result set, so it has to name the toolchain
+that runs — hence after the OMP upgrade, since one frozen under the old version
+records a toolchain that never produced anything — and the tree that produced the
+runs. Qualification edits `qualification.yml` and rewrites the terms snapshots, both
+tracked and both hashed into the lock, so a lock taken before the canaries reports
+`drift: lock_inputs.private_repo.commit` before the first measured run. And a lane
+stays `councilEnabled: false` until its credential exists and its canary has passed,
+because enabling first makes the first live request also the first test of the
+request path.
+
+`freeze_lock.py freeze` refuses a dirty tree outright, with `--allow-dirty` to
+record the dirty state deliberately. That refusal lives at the point of effect
+rather than in preflight: the freeze is the last step, so the three before it run
+with the tree legitimately dirty, and a gate that printed red through all of them
+is one you would learn to skip. Preflight reports the tree state instead.
 
 The gates it owns that no test covers: reviewer definitions parse and declare
 `thinkingLevel` rather than the `thinking-level` that is silently ignored; their
@@ -428,7 +435,7 @@ hardcoded list of names.
 ## The test suite
 
 ```bash
-python3 -m pytest -q            # 123 tests, ~60s
+python3 -m pytest -q            # 124 tests, ~60s
 ruff check .                    # rule set pinned in ruff.toml, not inherited
 ```
 
@@ -463,7 +470,7 @@ runner tried to assemble a request.
 **Fourteen tests skip without the corpus.** They read the private data package, and
 they skip cleanly when it is absent — which is what happens in CI, because the
 corpus carries the answer key and must never reach a public runner. The remaining
-109 need nothing but this repository. `.github/workflows/lrhe.yml` runs lint, the
+110 need nothing but this repository. `.github/workflows/lrhe.yml` runs lint, the
 cross-file invariants, the suite, and a final assertion that no `live` transport
 has appeared. The skips there are correct; do not "fix" them by checking the
 corpus out.

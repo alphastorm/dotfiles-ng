@@ -746,6 +746,44 @@ def test_freeze_lock_roundtrip_and_drift_detection(tmp_path: Path):
     assert "drift: lock_inputs.corpus.sha256" in combined
 
 
+def test_freeze_refuses_a_dirty_tree_unless_told_otherwise(tmp_path: Path):
+    """A lock is a claim about a state someone can return to.
+
+    `commit` and `dirty` are both recorded and both diffed at verify, so a lock
+    taken over uncommitted work reports drift against the very tree it came from
+    as soon as that work lands. The refusal lives here rather than in preflight
+    because this is the point of effect: the freeze is the last manual step, and
+    the qualification steps before it leave the tree legitimately dirty.
+    """
+    public_repo = tmp_path / "public"
+    private_repo = tmp_path / "private"
+    _init_temp_repo(public_repo)
+    _init_temp_repo(private_repo)
+
+    data_dir = tmp_path / "ledger-data"
+    lock = data_dir / "LOCK.json"
+    data_dir.mkdir(parents=True)
+    (data_dir / "corpus.jsonl").write_text('{"item_id":"S1-0001"}\n', encoding="utf-8")
+    (data_dir / "assignments.manifest.json").write_text('{"assignment":"v1"}\n', encoding="utf-8")
+    _write_terms_manifest(data_dir / "terms")
+
+    common = ["--public-repo", str(public_repo), "--private-repo", str(private_repo),
+              "--data-dir", str(data_dir), "--lock", str(lock)]
+    (private_repo / "in-progress.txt").write_text("uncommitted work", encoding="utf-8")
+
+    refused = _run_cmd(["freeze_lock.py", "freeze", *common])
+    combined = refused.stdout + refused.stderr
+    assert refused.returncode != 0, combined
+    assert "refusing to freeze" in combined, combined
+    assert not lock.exists(), "a refused freeze must not leave a lock behind"
+
+    allowed = _run_cmd(["freeze_lock.py", "freeze", "--allow-dirty", *common])
+    assert allowed.returncode == 0, allowed.stdout + allowed.stderr
+    recorded = json.loads(lock.read_text())["lock_inputs"]
+    assert recorded["private_repo"]["dirty"] is True, "an override must still record what it overrode"
+    assert recorded["public_repo"]["dirty"] is False
+
+
 def test_freeze_lock_names_an_unreadable_tool_instead_of_calling_it_drift(tmp_path: Path):
     """A silent version probe is not a toolchain change, and must not read as one.
 

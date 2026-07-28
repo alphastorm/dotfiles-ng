@@ -253,6 +253,19 @@ def cmd_freeze(args: argparse.Namespace) -> int:
         print(f"failed to build lock: {exc}", file=sys.stderr)
         return EXIT_ERROR
 
+    dirty = sorted(
+        repo["path"]
+        for repo in (record["lock_inputs"]["public_repo"], record["lock_inputs"]["private_repo"])
+        if repo["dirty"]
+    )
+    if dirty and not args.allow_dirty:
+        print(f"refusing to freeze over uncommitted work in {', '.join(dirty)}", file=sys.stderr)
+        print("the lock records commit and dirty for both repos and verify diffs every recorded "
+              "field, so committing after this point reports drift against the tree the lock was "
+              "taken from. Commit first, or pass --allow-dirty to record the dirty state "
+              "deliberately.", file=sys.stderr)
+        return EXIT_ERROR
+
     try:
         _write_lock(args.lock, record)
     except OSError as exc:
@@ -380,6 +393,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "where to write the lock (default: data-dir/"
             f"{LOCK_RELPATH}, i.e. {DEFAULT_LOCK_PATH})"
+        ),
+    )
+    freeze.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help=(
+            "freeze even though a repository has uncommitted changes. The lock will "
+            "record dirty:true, and verify will report drift as soon as that work is "
+            "committed -- which is almost never what you want"
         ),
     )
     freeze.set_defaults(fn=cmd_freeze)

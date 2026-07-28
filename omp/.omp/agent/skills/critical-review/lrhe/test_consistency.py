@@ -226,7 +226,8 @@ def test_preflight_inspects_the_lock_that_freeze_actually_writes(monkeypatch):
     this drives the write path the command actually takes.
     """
     written: list[Path] = []
-    monkeypatch.setattr(freeze_lock, "_build_record", lambda args: {"stub": True})
+    clean = {"public_repo": {"dirty": False}, "private_repo": {"dirty": False}}
+    monkeypatch.setattr(freeze_lock, "_build_record", lambda args: {"lock_inputs": clean})
     monkeypatch.setattr(freeze_lock, "_write_lock", lambda path, record: written.append(path))
 
     args = freeze_lock._build_parser().parse_args(["freeze"])
@@ -235,40 +236,50 @@ def test_preflight_inspects_the_lock_that_freeze_actually_writes(monkeypatch):
     assert written == [preflight.LOCK], "preflight is watching a file freeze does not write"
 
 
-def test_preflight_refuses_a_freeze_taken_over_uncommitted_work(tmp_path, monkeypatch):
-    """A lock over a dirty tree fails its own verify as soon as the work lands.
+def test_preflight_reports_the_tree_state_without_failing_on_it(tmp_path, monkeypatch):
+    """Refusing a dirty freeze belongs at the point of effect, not here.
 
-    `_git_state` records `commit` and `dirty`, and `cmd_verify` diffs every
-    recorded field. Freeze now, commit after, and both flip -- so the lock
-    reports drift against the very tree it was taken from, and the result set it
-    was supposed to anchor cannot be proven. This is only preflight's call while
-    the lock is absent; afterwards the tree is expected to move and `verify` is
-    the authority.
+    The freeze is the last manual step, so the three steps before it -- credential,
+    canaries, lane enablement -- all happen with the lock absent and the tree
+    legitimately dirty. A gate that failed on that would print red through every
+    ordinary edit for the whole qualification, and a gate that cries wolf during
+    normal work is one the operator learns to skip. `freeze_lock.py freeze` does
+    the refusing; preflight only has to say what it will find.
     """
     monkeypatch.setattr(preflight, "LOCK", tmp_path / "runs/LOCK.json")
     dirty = {freeze_lock.DEFAULT_PUBLIC_REPO: False, freeze_lock.DEFAULT_PRIVATE_REPO: False}
     monkeypatch.setattr(freeze_lock, "_git_state",
                         lambda repo: {"path": str(repo), "commit": "0" * 40, "dirty": dirty[repo]})
 
-    assert preflight.check_worktrees_clean().state == preflight.PASS
+    clean = preflight.check_lock_state()
+    assert clean.state == preflight.PASS
+    assert "both repos committed" in clean.detail
 
     dirty[freeze_lock.DEFAULT_PRIVATE_REPO] = True
-    blocked = preflight.check_worktrees_clean()
-    assert blocked.state == preflight.FAIL
-    assert freeze_lock.DEFAULT_PRIVATE_REPO.name in blocked.detail
-
-    preflight.LOCK.parent.mkdir(parents=True)
-    preflight.LOCK.write_text("{}", encoding="utf-8")
-    assert preflight.check_worktrees_clean().state == preflight.SKIP, (
-        "after the freeze, drift is verify's call and not a preflight failure")
-
-
-def test_a_repo_that_cannot_be_read_is_unknown_not_clean(monkeypatch):
-    """"Could not check" and "checked, fine" must never print the same."""
-    monkeypatch.setattr(preflight, "LOCK", Path("/nonexistent/data/runs/LOCK.json"))
+    noted = preflight.check_lock_state()
+    assert noted.state == preflight.PASS, "a dirty tree mid-qualification is not a preflight failure"
+    assert freeze_lock.DEFAULT_PRIVATE_REPO.name in noted.detail
 
     def unreadable(repo):
         raise RuntimeError(f"{repo}: git rev-parse HEAD failed")
 
     monkeypatch.setattr(freeze_lock, "_git_state", unreadable)
-    assert preflight.check_worktrees_clean().state == preflight.UNKNOWN
+    assert "unreadable" in preflight.check_lock_state().detail, (
+        '"could not check" and "checked, fine" must never print the same')
+
+
+def test_the_freeze_is_ordered_after_the_steps_that_change_what_it_hashes():
+    """Qualification mutates the lock's own inputs, so it cannot follow the lock.
+
+    Canaries and lane enablement both edit `qualification.yml`, and snapshotting
+    terms rewrites `lrhe-data/terms/` -- tracked files in the private repository
+    whose commit the lock records. A lock frozen before them reports
+    `drift: lock_inputs.private_repo.commit` before the first measured run, which
+    is the one ordering mistake that cannot be corrected after the fact.
+    """
+    steps = [step for step, _why in preflight.MANUAL_STEPS]
+    freeze_at = next(i for i, s in enumerate(steps) if "freeze" in s)
+    for earlier in ("credential", "canaries", "enable a lane"):
+        at = next(i for i, s in enumerate(steps) if earlier in s)
+        assert at < freeze_at, f"{steps[at]!r} must precede the freeze, not follow it"
+    assert freeze_at == len(steps) - 1, "the freeze is the last manual step"
