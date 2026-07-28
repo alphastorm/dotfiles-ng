@@ -3,7 +3,7 @@
 # drops an arm, a gate that stops being called, a policy that cites a snapshot
 # nobody fetched -- and a suite nobody runs decays into decoration.
 #
-# 130 of the 160 tests need nothing but this repository. The remaining 30 read the
+# 130 of the 161 tests need nothing but this repository. The remaining 31 read the
 # private package -- corpus and reviewer agents -- and skip cleanly when absent,
 # which is exactly what happens here: the corpus and its answer key live in a
 # separate private repository and must never reach a public runner.

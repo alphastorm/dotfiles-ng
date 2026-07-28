@@ -36,6 +36,11 @@ arms:
   OC_SCREEN_NULL: {role: critic, description: the screen's null stratum extended to the
                    corpus's other two S5 items; a targeted follow-up on one result,
                    outside the frozen twelve and never merged into them}
+  T_OC: {role: critic, description: the OpenCode panel's matched null -- one family
+         repeated over the screen items. Three replicates, not the pre-registered
+         four, because the four was derived from a four-family panel and MiniMax is
+         held; a four-sample null against three families would leave union coverage
+         partly measuring the arity gap}
 
 # Excluded from performance estimates by every analysis. Arm A is the author, R is
 # scheduled per claim rather than per item, probe and smoke never saw the repository

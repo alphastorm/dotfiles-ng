@@ -413,3 +413,30 @@ def test_the_run_record_states_whether_the_checkpoint_is_identifiable(tmp_path):
             __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
             __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
             "agent", "17.1.6")
+
+
+def test_replicates_reach_the_run_record_as_distinct_cells(tmp_path):
+    """The null arm is N runs of one family on one item, and this is the only difference.
+
+    `_run_record` hardcoded `replicate` to the empty string, so three Kimi replicates
+    would have arrived as one cell repeated three times -- `score_lrhe` and
+    `analyze_lrhe` both preserve the field and neither was ever given one. Definition
+    of done item 4 is that replicates survive scoring and analysis; they have to reach
+    it first.
+    """
+    _, rows = _prompted(tmp_path, [
+        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "T_OC",
+         "experiment_id": "lrhe-opencode-v1", "replicate": f"rep{n}"} for n in (1, 2, 3)])
+    assert len(rows) == 3, "three replicates collapsed into fewer prompts"
+    assert len({r["run_key"] for r in rows}) == 3, (
+        "two replicates share a run_key, so the second reply would overwrite the first")
+
+    prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
+    prompts.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    responses.write_text("".join(json.dumps(_reply(r)) + "\n" for r in rows))
+    assert run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses,
+                                           out=out, omp_version="t")) == run_review.EXIT_OK
+
+    records = [json.loads(x) for x in out.read_text().splitlines() if x.strip()]
+    assert sorted(r["replicate"] for r in records) == ["rep1", "rep2", "rep3"]
+    assert len({r["run_id"] for r in records}) == 3, "the run ids collide too"

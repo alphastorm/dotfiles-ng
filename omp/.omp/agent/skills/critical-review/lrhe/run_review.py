@@ -100,6 +100,13 @@ class AuthorizedRequest:
     packet_digest: str
     assignment_manifest_digest: str
     terms_snapshot_id: str
+    # The same-family null is N independent runs of one family on one item, and the
+    # only thing distinguishing them is this. `_run_record` hardcoded it to "", so
+    # three Kimi replicates would have arrived as one cell repeated three times --
+    # `score_lrhe` and `analyze_lrhe` both preserve `replicate`, and neither was
+    # ever given one. Defaulted so every existing construction keeps working; the
+    # null is the only arm that sets it.
+    replicate: str = ""
 
 
 def lens_text(panels: dict[str, Any], lens: str) -> str:
@@ -330,6 +337,7 @@ def prepare(args) -> AuthorizedRequest | Refusal:
         packet_digest=_digest(packet),
         assignment_manifest_digest=manifest.get("assignments_sha256", "unset"),
         terms_snapshot_id=rights["terms_snapshot_id"],
+        replicate=str(getattr(args, "replicate", "") or ""),
     )
 
 
@@ -431,12 +439,17 @@ def _run_record(req: AuthorizedRequest, response: dict, started, completed,
         "schema_version": 2,
         "experiment_id": req.experiment_id,
         "panel_id": req.panel_id,
-        "run_id": f"{req.item_id}-{req.family}-{req.lens}-{int(started.timestamp())}",
+        # The replicate belongs in the id, not only in its own column. Three
+        # replicates ingested in the same second produced one run_id three times,
+        # and `score_lrhe` keys claims by run_id -- so two thirds of the null arm
+        # would have been silently overwritten by the third.
+        "run_id": "-".join(filter(None, (req.item_id, req.family, req.lens,
+                                         req.replicate, str(int(started.timestamp()))))),
         "item_id": req.item_id,
         "arm": req.arm,
         "family": req.family,
         "lens": req.lens,
-        "replicate": "",
+        "replicate": req.replicate,
         "context_config": req.context_config,
         "role": "critic",
         "prompt_version": req.prompt_version,
@@ -565,7 +578,8 @@ def cmd_prompts(args) -> int:
             refused.append((a, outcome))
             continue
         rows.append({
-            "run_key": f"{outcome.item_id}|{outcome.family}|{outcome.lens}|{outcome.arm}",
+            "run_key": "|".join((outcome.item_id, outcome.family, outcome.lens,
+                                 outcome.arm, outcome.replicate)),
             "agent": outcome.agent,
             "request": asdict(outcome),
             "prompt": render_packet(outcome.packet, outcome.lens, panels),
@@ -673,6 +687,9 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--family", required=name != "prompts")
         p.add_argument("--lens", default="")
         p.add_argument("--arm", default="C")
+        p.add_argument("--replicate", default="",
+                       help="distinguishes independent runs of one family on one item; "
+                            "the same-family null arm is the only one that sets it")
         p.add_argument("--experiment-id", default="lrhe-core-v1")
         p.add_argument("--classification", default="public_corpus")
         p.add_argument("--item-authorized", action="store_true")
