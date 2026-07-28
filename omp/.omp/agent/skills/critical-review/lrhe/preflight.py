@@ -404,15 +404,29 @@ GATES = (
     ("freeze lock", check_lock_state),
 )
 
+
+def _has_rows(path: Path) -> bool:
+    """Does this artifact exist and contain at least one record?
+
+    An empty file is what a run that started and produced nothing leaves behind,
+    and a step reported as done on the strength of a zero-byte file is the same
+    silent pass the gates above exist to refuse.
+    """
+    try:
+        return any(line.strip() for line in path.read_text(encoding="utf-8").splitlines())
+    except OSError:
+        return False
+
+
 # Printed after the gates. Order matters and is the reason this file exists.
 #
 # Each step carries the condition under which it is still outstanding, evaluated
-# against the gate results above, because a static checklist is exactly the kind
-# of claim this file exists to stop trusting. This one went stale in the obvious
-# way: it went on naming the OMP upgrade and the canaries after both were done,
-# so the only way to learn what actually remained was to read the gates and
-# reconstruct it. A step whose completion is visible to a gate should be asked,
-# not remembered.
+# against the gate results above or the artifact it would leave behind, because a
+# static checklist is exactly the kind of claim this file exists to stop trusting.
+# This one went stale in the obvious way: it went on naming the OMP upgrade and the
+# canaries after both were done, so the only way to learn what actually remained
+# was to read the gates and reconstruct it. A step whose completion is visible
+# should be asked, not remembered.
 MANUAL_STEPS = (
     ("upgrade OMP and restart the session",
      "the reviewer definitions are version-sensitive and the lock must name the "
@@ -436,7 +450,15 @@ MANUAL_STEPS = (
      "the first thing to exercise ARVO build/PoC wiring and a real packet end to end, "
      "and it is not a blind observation: do not score it unless the same condition is "
      "rerun cold later",
-     lambda r: True),
+     lambda r: not _has_rows(DATA / "runs-smoke.jsonl")),
+    ("the twelve-item four-family screen",
+     "S1x4 + S2x3 + S3x2 + S4x2 + S5x1, frozen before any output exists, each item "
+     "run by kimi, glm and deepseek independently on arm OC_SCREEN, lens floor, a "
+     "fresh session and no peer output, plus the contamination probe per cell in a "
+     "separate cold session. MiniMax is held on repeated schema noncompliance and is "
+     "not one of the families. Do not prune on a 12-item recall ranking; drop a "
+     "challenger only for operational failure",
+     lambda r: not _has_rows(DATA / "runs-screen.jsonl")),
 )
 
 
