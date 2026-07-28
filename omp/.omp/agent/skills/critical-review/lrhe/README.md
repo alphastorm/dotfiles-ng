@@ -95,7 +95,7 @@ python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
 # prove the harness before spending quota
-python3 -m pytest -q                               # 120 tests; see "The test suite"
+python3 -m pytest -q                               # 123 tests; see "The test suite"
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -406,10 +406,13 @@ order. Exit 10 means one failed. Nothing in it contacts a provider: the steps th
 would cost money are *named*, not run, because a preflight that can spend is not a
 preflight.
 
-It exists because two steps are order-sensitive and expensive to get wrong, and
+It exists because three steps are order-sensitive and expensive to get wrong, and
 that ordering was living in a chat log. `runs/LOCK.json` must be frozen **after**
 the OMP upgrade — a lock is a claim about the starting state of a result set, and
 one frozen under the old version records a toolchain that never produced anything.
+It must equally be frozen from **committed** trees: the lock records each repo's
+commit and dirty flag and `verify` diffs both, so a lock taken over uncommitted
+work reports drift the moment that work lands, against the very tree it came from.
 And a lane stays `councilEnabled: false` until its credential exists and its canary
 has passed, because enabling first makes the first live request also the first test
 of the request path.
@@ -425,7 +428,7 @@ hardcoded list of names.
 ## The test suite
 
 ```bash
-python3 -m pytest -q            # 120 tests, ~60s
+python3 -m pytest -q            # 123 tests, ~60s
 ruff check .                    # rule set pinned in ruff.toml, not inherited
 ```
 
@@ -448,7 +451,8 @@ has a policy behind it in `provider-policies.yaml`; that every `termsSnapshotId`
 resolves to a real snapshot and none is still a placeholder; that a risk-accepted
 policy names a principal and hashes the record it rests on; that no policy permits
 training a competing model; that an arm-T `nullFamily` is actually in its own
-panel; and that every requirement is pinned.
+panel; that the lock file `preflight.py` inspects is the one `freeze_lock.py`
+actually writes; and that every requirement is pinned.
 
 The first of those is not hypothetical. All three enabled reviewers routed through
 `anthropic-subscription`, `google-antigravity` and `xai-oauth` while
@@ -459,7 +463,7 @@ runner tried to assemble a request.
 **Fourteen tests skip without the corpus.** They read the private data package, and
 they skip cleanly when it is absent — which is what happens in CI, because the
 corpus carries the answer key and must never reach a public runner. The remaining
-84 need nothing but this repository. `.github/workflows/lrhe.yml` runs lint, the
+109 need nothing but this repository. `.github/workflows/lrhe.yml` runs lint, the
 cross-file invariants, the suite, and a final assertion that no `live` transport
 has appeared. The skips there are correct; do not "fix" them by checking the
 corpus out.

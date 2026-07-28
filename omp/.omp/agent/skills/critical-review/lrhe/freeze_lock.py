@@ -34,7 +34,11 @@ DEFAULT_DATA_DIR = Path.home() / ".omp/agent/skills/critical-review/lrhe-data"
 DEFAULT_CORPUS = DEFAULT_DATA_DIR / "corpus.jsonl"
 DEFAULT_ASSIGNMENTS_MANIFEST = DEFAULT_DATA_DIR / "assignments.manifest.json"
 DEFAULT_TERMS_DIR = DEFAULT_DATA_DIR / "terms"
-DEFAULT_LOCK_PATH = DEFAULT_DATA_DIR / "runs/LOCK.json"
+# Relative, and derived from whatever `--data-dir` is in play: a lock that stays
+# pinned to the real data root while every other input moves to a scratch dir is
+# how a rehearsal overwrites the production lock.
+LOCK_RELPATH = "runs/LOCK.json"
+DEFAULT_LOCK_PATH = DEFAULT_DATA_DIR / LOCK_RELPATH
 MANIFEST_NAME = "MANIFEST.sha256"
 
 
@@ -241,7 +245,7 @@ def cmd_freeze(args: argparse.Namespace) -> int:
     args.answer_key = args.answer_key or args.corpus
     args.assignments_manifest = args.assignments_manifest or (args.data_dir / "assignments.manifest.json")
     args.terms_dir = args.terms_dir or (args.data_dir / "terms")
-    args.lock = args.lock
+    args.lock = args.lock or (args.data_dir / LOCK_RELPATH)
 
     try:
         record = _build_record(args)
@@ -267,7 +271,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     args.answer_key = args.answer_key
     args.assignments_manifest = args.assignments_manifest or (args.data_dir / "assignments.manifest.json")
     args.terms_dir = args.terms_dir or (args.data_dir / "terms")
-    args.lock = args.lock
+    args.lock = args.lock or (args.data_dir / LOCK_RELPATH)
 
     if not args.lock.is_file():
         print(f"lock file missing: {args.lock}", file=sys.stderr)
@@ -373,10 +377,9 @@ def _build_parser() -> argparse.ArgumentParser:
     freeze.add_argument(
         "--lock",
         type=Path,
-        default=DEFAULT_LOCK_PATH,
         help=(
-            "where to write the lock (default: "
-            f"{DEFAULT_LOCK_PATH})"
+            "where to write the lock (default: data-dir/"
+            f"{LOCK_RELPATH}, i.e. {DEFAULT_LOCK_PATH})"
         ),
     )
     freeze.set_defaults(fn=cmd_freeze)
@@ -385,10 +388,9 @@ def _build_parser() -> argparse.ArgumentParser:
     verify.add_argument(
         "--lock",
         type=Path,
-        default=DEFAULT_LOCK_PATH,
         help=(
-            "lock to verify against (default: "
-            f"{DEFAULT_LOCK_PATH})"
+            "lock to verify against (default: data-dir/"
+            f"{LOCK_RELPATH}, i.e. {DEFAULT_LOCK_PATH})"
         ),
     )
     verify.set_defaults(fn=cmd_verify)

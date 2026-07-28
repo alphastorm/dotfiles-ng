@@ -8,11 +8,14 @@ Exit 0 = every automatic gate holds and the next manual step is printed.
 Exit 10 = a gate failed. Exit 20 = a gate could not be evaluated.
 
 This exists because the ordering is load-bearing and was living in a chat log.
-Two steps are order-sensitive and expensive to get wrong:
+Three steps are order-sensitive and expensive to get wrong:
 
   * LOCK.json must be frozen AFTER the OMP upgrade. A lock is a claim about the
     starting state of a result set; freezing it under the old version records a
     toolchain that never produced anything.
+  * It must also be frozen from COMMITTED trees. The lock records each repo's
+    commit and dirty flag, and `freeze_lock.py verify` diffs both, so a lock
+    taken over uncommitted work reports drift the moment that work lands.
   * The OpenCode lanes stay councilEnabled: false until a credential exists AND a
     canary has run. Enabling first means the first live request is also the first
     test of the request path.
@@ -39,6 +42,10 @@ import run_review  # noqa: E402
 SKILL = Path.home() / ".omp/agent/skills/critical-review"
 AGENTS = Path.home() / ".omp/agent/agents"
 DATA = SKILL / "lrhe-data"
+# Imported, not restated. These disagreed once -- freeze wrote `lrhe-data/runs/
+# LOCK.json` while this file looked for `lrhe-data/LOCK.json`, so the gate that
+# refuses a lock frozen under the wrong toolchain could never see one at all.
+LOCK = freeze_lock.DEFAULT_LOCK_PATH
 
 EXIT_OK = 0
 EXIT_BLOCKED = 10
@@ -241,12 +248,34 @@ def check_omp_version() -> Result:
     return Result(PASS, f"omp {got}")
 
 
+def check_worktrees_clean() -> Result:
+    """Freeze from a committed tree, or the lock fails its own verify later.
+
+    Only preflight's call while the lock is absent. Once it exists the tree is
+    expected to move on, and `freeze_lock.py verify` is the authority on whether
+    that movement invalidated the run.
+    """
+    if LOCK.is_file():
+        return Result(SKIP, "lock already frozen; freeze_lock.py verify owns drift from here")
+    dirty = []
+    for repo in (freeze_lock.DEFAULT_PUBLIC_REPO, freeze_lock.DEFAULT_PRIVATE_REPO):
+        try:
+            state = freeze_lock._git_state(repo)
+        except (RuntimeError, OSError) as exc:
+            return Result(UNKNOWN, f"cannot read {repo.name}: {exc}")
+        if state["dirty"]:
+            dirty.append(repo.name)
+    if dirty:
+        return Result(FAIL, f"uncommitted changes in {', '.join(dirty)}; the lock would record "
+                            f"dirty:true and every later commit would read as drift")
+    return Result(PASS, "both repos committed; the lock will pin a reproducible state")
+
+
 def check_lock_state() -> Result:
-    """Absent is correct until the upgrade; present must verify."""
-    lock = DATA / "LOCK.json"
-    if not lock.is_file():
-        return Result(PASS, "no LOCK.json yet, which is correct before the upgrade")
-    stored = json.loads(lock.read_text(encoding="utf-8"))
+    """Absent is correct until the upgrade; present must name the running toolchain."""
+    if not LOCK.is_file():
+        return Result(PASS, f"no {LOCK.name} yet; freezing it is manual step 2 below")
+    stored = json.loads(LOCK.read_text(encoding="utf-8"))
     recorded = (stored.get("lock_inputs", {}).get("versions", {}) or {}).get("omp")
     if recorded != EXPECTED_OMP:
         return Result(FAIL, f"LOCK.json was frozen under omp {recorded!r}, not {EXPECTED_OMP}; "
@@ -262,6 +291,7 @@ GATES = (
     ("no live transport", check_no_live_transport),
     ("lanes held", check_lanes_held),
     ("omp version", check_omp_version),
+    ("worktrees", check_worktrees_clean),
     ("freeze lock", check_lock_state),
 )
 
@@ -271,7 +301,7 @@ MANUAL_STEPS = (
      "the reviewer definitions are version-sensitive and the lock must name the "
      "version that actually runs"),
     ("freeze runs/LOCK.json",
-     "freeze_lock.py freeze -- after the upgrade, never before"),
+     "freeze_lock.py freeze -- after the upgrade and from committed trees, never before"),
     ("add the OpenCode Go credential",
      "the four floor lanes have no credential; this is the only blocker left on them"),
     ("selector discovery, then canaries",

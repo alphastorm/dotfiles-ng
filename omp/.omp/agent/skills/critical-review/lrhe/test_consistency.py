@@ -28,6 +28,7 @@ from referencing import Registry, Resource
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
+import freeze_lock  # noqa: E402  -- needs the path above
 import preflight  # noqa: E402
 import snapshot_terms  # noqa: E402
 
@@ -182,6 +183,7 @@ def test_every_preflight_gate_reports_instead_of_raising(monkeypatch):
     monkeypatch.setattr(preflight, "SKILL", Path("/nonexistent/skill"))
     monkeypatch.setattr(preflight, "AGENTS", Path("/nonexistent/agents"))
     monkeypatch.setattr(preflight, "DATA", Path("/nonexistent/data"))
+    monkeypatch.setattr(preflight, "LOCK", Path("/nonexistent/data/runs/LOCK.json"))
 
     for name, gate in preflight.GATES:
         result = gate()
@@ -197,15 +199,76 @@ def test_preflight_will_not_pass_a_lock_frozen_under_the_wrong_toolchain(tmp_pat
     lock's whole job is to be believed later. This is the one ordering mistake
     that cannot be corrected after the fact without discarding the result set.
     """
-    monkeypatch.setattr(preflight, "DATA", tmp_path)
+    lock = tmp_path / "runs/LOCK.json"
+    lock.parent.mkdir(parents=True)
+    monkeypatch.setattr(preflight, "LOCK", lock)
     assert preflight.check_lock_state().state == preflight.PASS, "absent is correct pre-upgrade"
 
-    (tmp_path / "LOCK.json").write_text(json.dumps(
+    lock.write_text(json.dumps(
         {"lock_inputs": {"versions": {"omp": "0.0.0-stale"}}}), encoding="utf-8")
     stale = preflight.check_lock_state()
     assert stale.state == preflight.FAIL
     assert "0.0.0-stale" in stale.detail
 
-    (tmp_path / "LOCK.json").write_text(json.dumps(
+    lock.write_text(json.dumps(
         {"lock_inputs": {"versions": {"omp": preflight.EXPECTED_OMP}}}), encoding="utf-8")
     assert preflight.check_lock_state().state == preflight.PASS
+
+
+def test_preflight_inspects_the_lock_that_freeze_actually_writes(monkeypatch):
+    """Two files naming the same artifact by hand is how a gate goes blind.
+
+    freeze wrote `lrhe-data/runs/LOCK.json`; preflight looked for
+    `lrhe-data/LOCK.json`. Both files were internally consistent, every test
+    passed, and the gate that refuses a lock frozen under the wrong toolchain
+    would have reported "no lock yet, which is correct" forever -- including
+    after the lock existed. Asserting the constants match would be circular, so
+    this drives the write path the command actually takes.
+    """
+    written: list[Path] = []
+    monkeypatch.setattr(freeze_lock, "_build_record", lambda args: {"stub": True})
+    monkeypatch.setattr(freeze_lock, "_write_lock", lambda path, record: written.append(path))
+
+    args = freeze_lock._build_parser().parse_args(["freeze"])
+    assert args.lock is None, "a --lock default pinned at import cannot follow --data-dir"
+    assert freeze_lock.cmd_freeze(args) == freeze_lock.EXIT_OK
+    assert written == [preflight.LOCK], "preflight is watching a file freeze does not write"
+
+
+def test_preflight_refuses_a_freeze_taken_over_uncommitted_work(tmp_path, monkeypatch):
+    """A lock over a dirty tree fails its own verify as soon as the work lands.
+
+    `_git_state` records `commit` and `dirty`, and `cmd_verify` diffs every
+    recorded field. Freeze now, commit after, and both flip -- so the lock
+    reports drift against the very tree it was taken from, and the result set it
+    was supposed to anchor cannot be proven. This is only preflight's call while
+    the lock is absent; afterwards the tree is expected to move and `verify` is
+    the authority.
+    """
+    monkeypatch.setattr(preflight, "LOCK", tmp_path / "runs/LOCK.json")
+    dirty = {freeze_lock.DEFAULT_PUBLIC_REPO: False, freeze_lock.DEFAULT_PRIVATE_REPO: False}
+    monkeypatch.setattr(freeze_lock, "_git_state",
+                        lambda repo: {"path": str(repo), "commit": "0" * 40, "dirty": dirty[repo]})
+
+    assert preflight.check_worktrees_clean().state == preflight.PASS
+
+    dirty[freeze_lock.DEFAULT_PRIVATE_REPO] = True
+    blocked = preflight.check_worktrees_clean()
+    assert blocked.state == preflight.FAIL
+    assert freeze_lock.DEFAULT_PRIVATE_REPO.name in blocked.detail
+
+    preflight.LOCK.parent.mkdir(parents=True)
+    preflight.LOCK.write_text("{}", encoding="utf-8")
+    assert preflight.check_worktrees_clean().state == preflight.SKIP, (
+        "after the freeze, drift is verify's call and not a preflight failure")
+
+
+def test_a_repo_that_cannot_be_read_is_unknown_not_clean(monkeypatch):
+    """"Could not check" and "checked, fine" must never print the same."""
+    monkeypatch.setattr(preflight, "LOCK", Path("/nonexistent/data/runs/LOCK.json"))
+
+    def unreadable(repo):
+        raise RuntimeError(f"{repo}: git rev-parse HEAD failed")
+
+    monkeypatch.setattr(freeze_lock, "_git_state", unreadable)
+    assert preflight.check_worktrees_clean().state == preflight.UNKNOWN
