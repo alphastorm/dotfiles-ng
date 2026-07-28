@@ -36,3 +36,9 @@ assignments.manifest.json
 # provider terms snapshots are accumulated evidence, not replicable output:
 # a later fetch returns a different document. They live beside the corpus.
 terms/
+
+# An unset variable in a documented command does not fail -- it makes a directory
+# named for the variable. `$WORK/{runs,reviews}.jsonl` reached this public
+# repository that way, and only `findings.jsonl` was caught, by name. Output
+# addressed by a variable is never repository content.
+$*
