@@ -285,3 +285,96 @@ promoted — the bait would have scored as correctly refused every time. With th
 barename branch added, all 12 traps register. `Makefile`, `Dockerfile`,
 `configure`, `BUILD` and friends now anchor when a line number is present, and
 still do not match the same words in prose.
+
+### 15. The consensus rule recorded a bare majority as settled
+
+`aggregate_case` flagged `needs_resolution` only when a CONFIRMED majority's voters named
+different `label_id`s. It had no dependency on the vote margin, so all 83 automated-audit
+cases carried `needs_resolution: false` and `human_queue.jsonl` stayed empty while 22 of
+them rested on a bare 3–2 split.
+
+Measured across two independent five-voter panels (rep1, and a rep2 built by running the
+missing second replicate for claude/gemini/grok): consensus accuracy is **0.72** at a bare
+majority against **0.96** at 4–1 and **0.99** at 5–0, and the bare bucket holds **13 of 16**
+observed consensus errors. On rep1 alone the separation looked perfect — 6 of 6 errors in
+that bucket — but that was small-sample plus reference coupling: `panel_verdict` is built
+from claude/gemini/grok, who voted only in rep1, so a rep1 consensus shares three of its
+five voters with the reference it is scored against (0.928 agreement on rep1, 0.887 on rep2).
+
+`needs_resolution` is now `label_ambiguous or best == min_majority`. **Triage, not a filter:**
+3 of the 15 errors carried a wider margin, so the flag is not exhaustive and the docstring
+says so. `label_split` was re-keyed to `label_ambiguous` at the same time — leaving it gated
+on `needs_resolution` would have started populating it on every bare majority, changing the
+meaning of a field the label-recall figures read.
+
+This is a new producer policy, so `AGGREGATION_POLICY_VERSION = 2` is declared and emitted on
+every aggregate row — a derivative says which policy produced it instead of being dated by its
+filename. v1 is the behaviour above; v2 is margin-aware with `label_split` keyed to label
+ambiguity.
+
+`lrhe-data/auto-reliability-v1/aggregate-fresh.jsonl` was **not** regenerated. It was produced
+under v1 and is preserved byte-identical, so its `needs_resolution` column is all-false by
+construction rather than by measurement. Any v2 recomputation is a versioned derivative
+(`aggregate-fresh-v2.jsonl`), never an overwrite.
+
+### 16. The human calibration gate could not be scored at all
+
+Found by smoke-testing the one step preflight still lists as outstanding, before any row was
+labelled. Three defects stacked:
+
+**Two packets.** `judge-calibration-packet.csv` is the frozen *selection manifest* — the
+`--selection` input to `auto_reliability.py build`, pinned by
+`test_01_selection_keys_are_preserved_exactly`, and leaky (it carries `item_id` and the `S4`
+trap prefix). The blinded packet that replaced it for human use is
+`auto-reliability-v1/human-packet.csv`: opaque `AR-####` ids and two blank columns.
+`preflight._calibration()` read the former and its guidance told the operator to fill it.
+
+**Two id namespaces.** `run_id` became a digest of the reply after the 60-claim selection was
+frozen, so the selection's keys match nothing in a current judge file — `_run_stem` already
+documents this and `resolve_selection` already handles it soundly, but neither `cmd_kappa` nor
+preflight used it. Both joined on exact `(run_id, claim_rid)`: 0 of 60 matched, so preflight
+would have reported `kappa n/a` even after a human labelled everything.
+
+**A silent collapse.** `judge-floor.jsonl` holds 667 rows over 315 claims. Indexing it by
+claim kept whichever row came last, scoring the rater against an arbitrary panel member — a
+number rather than an error, which is the worse failure.
+
+One loader, `blinded_calibration_pairs`, now serves both `judge_lrhe.py kappa --case-map` and
+`preflight._calibration()`, resolving opaque `case_id` through `case-map.private.jsonl`.
+`load_judge_index` refuses a per-judge file or one not keyed by claim; `calibration_agreement`
+produces every section-8 figure from one pair list so the CLI and the status line cannot
+disagree. The gate is exactly the 60 `kind == "case"` rows and all 60 must be labelled; the 5
+`case_supplement` rows stay in the frozen packet, are excluded from κ and reported separately;
+`control` is refused. Under `--case-map`, `--expect-rows` counts gate rows, so the 65-row
+packet satisfies `--expect-rows 60`.
+
+Blinded-path violations name `case_id` and never echo `item_id`: reporting `S1` back would leak
+the stratum prefix the packet exists to withhold, and a test asserts its absence.
+
+`human-packet.csv`, `FROZEN_INPUTS` and `MANIFEST.sha256` are unchanged and the gate stays
+n=60. Both packets remain 0-labelled — the gate compares a *human* against the panel, and the
+operator authorization forbids model output in `human_verdict` / `human_label_id`.
+
+### 17. A "byte-identical" revert that was not, and the rule that catches it
+
+Near-miss, caught by `git status` rather than by any check of mine. While investigating the
+calibration path I briefly rewrote `judge-calibration-packet.csv`, then reverted it with
+`path.write_text(path.read_text())`. That file is CRLF in git; universal-newlines on read plus
+`write_text` on write silently converted all 61 lines to LF, so the working tree differed from
+`HEAD` in every line while the content was unchanged.
+
+The verification was the actual defect. I compared the file against a scratch backup written
+through the *same* text-mode round trip, so both agreed with each other while both differed
+from the repository. `git diff --ignore-cr-at-eol` and `cmp` after `tr -d '\r'` proved the
+content identical, and `git checkout --` restored the exact bytes.
+
+The rule, which finding 11 already implies for diffs and this generalises:
+
+> Compare protected artifacts with Git or raw bytes. Never verify a text-mode rewrite against
+> a backup produced by the same text-mode path.
+
+Line endings are deliberately **not** normalised here. `aggregate-fresh.jsonl` is git-LFS
+tracked, so `git show HEAD:<path>` prints a 130-byte pointer rather than content: verify that
+one by comparing the pointer's `oid sha256` against `shasum -a 256` of the working file, or with
+`git hash-object` against `git rev-parse HEAD:<path>`. A plain `cmp` against `git show` output
+reports a false difference.
