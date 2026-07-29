@@ -94,11 +94,11 @@ VIRTUAL_ENV=.venv uv pip install -r requirements.txt
 python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
-# Stable skill-development tiers; both resolve .venv and tests from this directory.
-./review_checks.py quick
-./review_checks.py full
+# Stable skill-development tiers resolve tools and tests from this directory.
+./review_checks.py quick  # three-file inner loop
+./review_checks.py full   # quick + Ruff + clean-HOME public CI contract
 
-# Citable pre-freeze skill proof, bound to exact artifact and changed-file digests.
+# Citable pre-freeze/pre-push proof, bound to exact artifact and file digests.
 ./review_checks.py full --subject-record review-record.json --receipt full-proof.json
 
 # Any other exact proof command uses the same before/after subject binding.

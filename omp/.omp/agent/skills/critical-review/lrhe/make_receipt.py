@@ -20,7 +20,7 @@ def _load_subject(path: Path) -> Mapping[str, object]:
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"subject record is unreadable: {exc}") from exc
     if not isinstance(value, dict):
-        raise ValueError("subject record must be a JSON object")
+        raise TypeError("subject record must be a JSON object")
     return cast(Mapping[str, object], value)
 
 
@@ -61,7 +61,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         subject = _load_subject(args.subject_record)
         subject_digest = proof_subject_digest(subject)
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         parser.error(str(exc))
     errors = verify_subject_files(subject)
     if errors:

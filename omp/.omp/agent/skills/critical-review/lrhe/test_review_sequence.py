@@ -16,7 +16,7 @@ from qualification import QualificationError, live_reviewers, load_qualification
 from review_sequence import PROOF_CLASSES, SESSION_LOCAL_ROOT, proof_subject_digest, readiness_errors, select_review_action
 
 QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
-SKILL = Path.home() / ".omp/agent/skills/critical-review/SKILL.md"
+SKILL = Path(__file__).resolve().parent.parent / "SKILL.md"
 
 
 def _sha256(path: Path) -> str:
@@ -190,6 +190,12 @@ def test_receipt_from_an_earlier_subject_is_rejected(tmp_path: Path) -> None:
     record["proof_receipts"]["focused-proof"]["sha256"] = _sha256(receipt_path)
     assert "invalid-proof-receipt:focused-proof" in readiness_errors(record)
 
+    record = _ready_record(tmp_path / "invalid-digest")
+    record["artifact_digest"] = 7
+    decision = select_review_action(record)
+    assert decision.status == "not-council-ready"
+    assert "invalid-artifact-digest" in decision.reason_codes
+
 
 def test_session_local_review_evidence_fails_closed(tmp_path: Path) -> None:
     record = _ready_record(tmp_path)
@@ -318,17 +324,45 @@ def test_stable_quick_and_full_check_tiers() -> None:
         "test_runner.py",
         "test_consistency.py",
     )
-    assert review_checks.FULL_TESTS == (*review_checks.QUICK_TESTS, "test_invariants.py")
     assert review_checks.command_for("quick")[-3:] == review_checks.QUICK_TESTS
-    assert review_checks.command_for("full")[-4:] == review_checks.FULL_TESTS
+    assert review_checks.command_for("full")[-1] == "full"
+    commands = review_checks.full_commands()
+    assert commands[0][1:] == ("check", ".", "--exclude", ".venv")
+    assert commands[1][-2:] == ("test_consistency.py", "-q")
+    assert commands[2][-3:] == ("pytest", "-q", "--durations=10")
+    assert "TRANSPORTS" in commands[3][-1]
     with pytest.raises(ValueError, match="unknown review check tier"):
         review_checks.command_for("other")
+
+
+def test_full_tier_runs_public_ci_under_clean_home(monkeypatch) -> None:
+    calls: list[tuple[tuple[str, ...], Path, str]] = []
+
+    class Result:
+        returncode = 0
+
+    def run(command, *, cwd, env, check):
+        assert check is False
+        calls.append((command, cwd, env["HOME"]))
+        return Result()
+
+    monkeypatch.setattr(review_checks.subprocess, "run", run)
+    assert review_checks.run_full_checks() == 0
+    assert calls[0][0] == review_checks.command_for("quick")
+    assert [call[0] for call in calls[1:]] == list(review_checks.full_commands())
+    assert all(call[1] == review_checks.HERE for call in calls)
+    assert len({call[2] for call in calls[1:]}) == 1
+    assert calls[0][2] != calls[1][2]
+    assert "critical-review-ci-" in calls[1][2]
 
 
 def test_check_wrapper_writes_only_subject_bound_passing_receipts(tmp_path: Path, monkeypatch) -> None:
     interpreter = tmp_path / "python"
     interpreter.touch()
     monkeypatch.setattr(review_checks, "VENV_PYTHON", interpreter)
+    linter = tmp_path / "ruff"
+    linter.touch()
+    monkeypatch.setattr(review_checks, "VENV_RUFF", linter)
 
     class Result:
         returncode = 0
@@ -411,8 +445,26 @@ def test_generic_receipt_runner_binds_and_rechecks_subject(tmp_path: Path) -> No
     ) == make_receipt.EXIT_SUBJECT_MISMATCH
     assert not drift_receipt.exists()
 
+    malformed_path = tmp_path / "malformed-subject.json"
+    _write_json(malformed_path, [])
+    with pytest.raises(SystemExit):
+        make_receipt.main(
+            [
+                "--subject-record",
+                str(malformed_path),
+                "--receipt",
+                str(tmp_path / "malformed-receipt.json"),
+                "--",
+                sys.executable,
+                "-c",
+                "pass",
+            ]
+        )
+
 
 def test_live_panel_roles_are_derived_from_private_authority() -> None:
+    if not QUALIFICATION.is_file():
+        pytest.skip("private qualification authority is not present in this checkout")
     document = load_qualification(QUALIFICATION)
     root = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
     reviewers = root["reviewers"]
@@ -423,10 +475,14 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
     assert all(reviewers[item.family]["dispatchEnabled"] is True for item in live_reviewers(document, "targeted-refuter"))
 
 
-def test_qualification_schema_and_live_gates_fail_closed() -> None:
+def test_qualification_schema_version_fails_closed() -> None:
     with pytest.raises(QualificationError, match="schemaVersion"):
         validate_qualification({"schemaVersion": 2, "reviewers": {}})
 
+
+def test_private_qualification_live_gate_fails_closed() -> None:
+    if not QUALIFICATION.is_file():
+        pytest.skip("private qualification authority is not present in this checkout")
     current = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
     family = current["liveDispatch"]["initialCritics"][0]
     current["reviewers"][family]["readOnlyBoundary"] = "unknown"

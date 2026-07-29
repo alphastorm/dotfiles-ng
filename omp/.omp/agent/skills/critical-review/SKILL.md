@@ -91,10 +91,13 @@ When modifying this critical-review skill itself, use its stable developer tiers
 ```
 
 `quick` is the inner loop for `test_review_sequence.py`, `test_runner.py`, and
-`test_consistency.py`. `full` is the pre-freeze skill proof and is exactly `quick`
-plus `test_invariants.py`; it is not the entire seven-module LRHE experiment
-harness. The receipt form is mandatory when this skill's full proof is cited in a
-review record.
+`test_consistency.py`. `full` is the pre-freeze and pre-push proof: it first
+runs `quick` against the operator environment so private qualification authority
+is exercised when present, then mirrors the public Actions contract by running
+Ruff, the early consistency gate, the entire LRHE test suite under an isolated
+`HOME`, and the no-live-transport assertion. The receipt form is mandatory when
+this skill's full proof is cited in a review record. Never substitute the
+narrower quick selection for `full`.
 
 After an initial council, the lead fixes and directly verifies localized P0/P1
 findings before any further reviewer call. A remediation epoch may cover only
