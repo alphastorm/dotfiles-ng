@@ -251,7 +251,7 @@ Conflating experiment membership with live dispatch turns evaluation lanes into
 unapproved reviewers and makes independent roles look like votes. `panels.yaml`
 therefore owns experiments only; `qualification.yml` owns live dispatch.
 
-`qualification.py` fails closed unless schema version 3, role membership,
+`qualification.py` fails closed unless schema version 4, role membership,
 dispatch/evaluation flags, canary results, read-only proof, agents, and selectors
 are internally consistent. `initial` returns only configured primary critics;
 `targeted-refuter` returns only the separately configured refutation pool.
