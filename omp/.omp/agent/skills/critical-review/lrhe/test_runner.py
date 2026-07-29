@@ -93,18 +93,17 @@ def test_refusal_never_reaches_a_transport(spy, over, expect_reason):
 
 
 def test_an_unqualified_lane_never_reaches_a_transport(spy):
-    """A held evaluation lane never reaches transport.
+    """The qualification gate, proved on whichever lane is actually held.
 
-    Live-only reviewers are governed by `liveDispatch` and may deliberately have
-    evaluation disabled. This gate covers lanes held from both evaluation and live
-    dispatch, deriving them from qualification instead of duplicating membership.
+    This case used to name Kimi and became stale after Kimi qualified. Held
+    evaluation lanes are facts in qualification.yml, so the test derives them
+    there rather than duplicating membership.
     """
     import yaml
     qual = yaml.safe_load((SKILL / "qualification.yml").read_text())["reviewers"]
-    held = [f for f, e in qual.items()
-            if not e.get("evaluationEnabled") and not e.get("dispatchEnabled")]
+    held = [f for f, e in qual.items() if not e.get("evaluationEnabled")]
     if not held:
-        pytest.skip("no lane is held from both evaluation and live dispatch")
+        pytest.skip("every evaluation lane is enabled; no held lane to refuse")
 
     for family in held:
         declared = _declaring_experiment(family)

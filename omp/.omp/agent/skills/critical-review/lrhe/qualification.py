@@ -22,7 +22,7 @@ except ModuleNotFoundError:
         raise
     os.execv(venv_python, [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DEFAULT_QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
 LIVE_GROUPS = {
     "initialCritics": ("primary_critic", True),
@@ -75,12 +75,25 @@ def validate_qualification(document: object) -> Mapping[str, object]:
     if not isinstance(panel_id, str) or not panel_id.strip():
         raise QualificationError("liveDispatch.panelId must be a non-empty string")
 
+    lead_family = live.get("leadFamily")
+    if not isinstance(lead_family, str) or not lead_family.strip():
+        raise QualificationError("liveDispatch.leadFamily must be a non-empty string")
+    lead_family = lead_family.strip()
+
     reviewers = _mapping(root.get("reviewers"), "reviewers")
+    groups = {
+        group: _names(live.get(group), f"liveDispatch.{group}")
+        for group in LIVE_GROUPS
+    }
+    for group in ("initialCritics", "targetedRefuters"):
+        if lead_family in groups[group]:
+            raise QualificationError(
+                f"lead family {lead_family!r} cannot appear in liveDispatch.{group}"
+            )
+
     memberships: dict[str, str] = {}
-    groups: dict[str, tuple[str, ...]] = {}
     for group, (role, dispatch_enabled) in LIVE_GROUPS.items():
-        families = _names(live.get(group), f"liveDispatch.{group}")
-        groups[group] = families
+        families = groups[group]
         for family in families:
             if family in memberships:
                 raise QualificationError(

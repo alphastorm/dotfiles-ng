@@ -471,8 +471,20 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
     live = root["liveDispatch"]
     memberships = [family for group in live.values() if isinstance(group, list) for family in group]
     assert len(memberships) == len(set(memberships)) == len(reviewers)
+    assert live["leadFamily"] not in live["initialCritics"]
+    assert live["leadFamily"] not in live["targetedRefuters"]
     assert all(reviewers[item.family]["dispatchEnabled"] is True for item in live_reviewers(document, "initial"))
     assert all(reviewers[item.family]["dispatchEnabled"] is True for item in live_reviewers(document, "targeted-refuter"))
+
+
+@pytest.mark.parametrize("group", ("initialCritics", "targetedRefuters"))
+def test_qualification_rejects_lead_as_live_reviewer(group: str) -> None:
+    if not QUALIFICATION.is_file():
+        pytest.skip("private qualification authority is not present in this checkout")
+    current = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
+    current["liveDispatch"][group].append(current["liveDispatch"]["leadFamily"])
+    with pytest.raises(QualificationError, match="lead family"):
+        validate_qualification(current)
 
 
 def test_qualification_schema_version_fails_closed() -> None:

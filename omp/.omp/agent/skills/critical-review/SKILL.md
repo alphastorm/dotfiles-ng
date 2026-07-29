@@ -16,6 +16,8 @@ Live reviewer membership and roles are configuration, not prose:
 - `skill://critical-review/qualification.yml` `liveDispatch` is the sole
   authoritative live panel definition;
 - `lrhe/qualification.py` is the sole executable resolver for that definition;
+- `leadFamily` records the accountable GPT lead and MUST NOT appear in either
+  `initialCritics` or `targetedRefuters`;
 - `initialCritics` and `targetedRefuters` are distinct dispatch roles;
 - `evaluationOnly` lanes and every experiment in `lrhe/panels.yaml` never
   authorize live review dispatch.

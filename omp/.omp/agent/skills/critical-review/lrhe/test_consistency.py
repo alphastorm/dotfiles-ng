@@ -323,9 +323,10 @@ def _fake_catalogue(path: Path, provider_id: str, models: list[dict]) -> None:
 
 def _qualification(path: Path, selector: str) -> None:
     document = {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "liveDispatch": {
             "panelId": "test-panel",
+            "leadFamily": "gpt",
             "initialCritics": [],
             "targetedRefuters": [],
             "evaluationOnly": ["kimi"],

@@ -233,9 +233,10 @@ bookkeeping that is a retrieval hint and never evidence.
 
 ## Live dispatch and evaluation are separate
 
-`qualification.yml` `liveDispatch` is the sole authoritative live panel. Resolve
-the current initial or targeted-refuter roster with `qualification.py`; do not
-duplicate family names or counts in public tests, packets, or policy prose. This
+`qualification.yml` `liveDispatch` is the sole authoritative live panel. Its
+`leadFamily` records the accountable GPT lead and is disjoint from both live reviewer
+roles. Resolve the current initial or targeted-refuter roster with `qualification.py`;
+do not duplicate family names or counts in public tests, packets, or policy prose. This
 public package never grants live membership.
 
 LRHE experiments remain asymmetric evaluation designs:
