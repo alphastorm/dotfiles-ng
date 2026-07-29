@@ -459,17 +459,62 @@ def _judgeable() -> int:
 
 
 def _adjudicated() -> int:
-    """Distinct floor claims carrying an aggregated judgement."""
+    """Distinct floor claims carrying an aggregated judgement.
+
+    The floor aggregate only. An earlier version unioned `judge-qual-agg.jsonl`, the
+    12-call qualification run, so its 8 claims double-counted against a denominator they
+    were never part of -- harmless as a progress counter and wrong the moment anyone reads
+    it as coverage.
+    """
     seen = set()
-    for name in ("judge-floor-agg.jsonl", "judge-qual-agg.jsonl"):
-        try:
-            for line in (DATA / name).read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    row = json.loads(line)
-                    seen.add((row.get("run_id"), str(row.get("claim_rid"))))
-        except OSError:
-            continue
+    try:
+        for line in (DATA / "judge-floor-agg.jsonl").read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                seen.add((row.get("run_id"), str(row.get("claim_rid"))))
+    except OSError:
+        return 0
     return len(seen)
+
+
+def _calibration() -> tuple[int, int, float | None]:
+    """(labelled rows, rows in the packet, kappa against the judges) for the blind packet.
+
+    Adjudication coverage being complete does NOT finish this step. With 315 of 315 claims
+    judged the predicate read done while the calibration packet held 0 labelled rows, so
+    preflight said "nothing manual remains" over numbers that are provisional by their own
+    protocol. Fourth instance of the same shape: a step is not done because the artifact
+    upstream of it exists.
+    """
+    packet = DATA / "judge-calibration-packet.csv"
+    try:
+        import csv as _csv
+        with packet.open() as fh:
+            rows = list(_csv.DictReader(fh))
+    except OSError:
+        return (0, 0, None)
+    labelled = [r for r in rows if (r.get("human_verdict") or "").strip()]
+    if not labelled:
+        return (0, len(rows), None)
+    agg = {}
+    try:
+        for line in (DATA / "judge-floor-agg.jsonl").read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                agg[(row.get("run_id"), str(row.get("claim_rid")))] = row.get("verdict")
+    except OSError:
+        return (len(labelled), len(rows), None)
+    pairs = [(agg[k], r["human_verdict"].strip())
+             for r in labelled
+             if (k := (r.get("run_id"), str(r.get("claim_rid")))) in agg]
+    if not pairs:
+        return (len(labelled), len(rows), None)
+    observed = sum(1 for a, b in pairs if a == b) / len(pairs)
+    cats = {c for pair in pairs for c in pair}
+    expected = sum((sum(1 for a, _ in pairs if a == c) / len(pairs))
+                   * (sum(1 for _, b in pairs if b == c) / len(pairs)) for c in cats)
+    kappa = 1.0 if expected >= 1 else (observed - expected) / (1 - expected)
+    return (len(labelled), len(rows), kappa)
 
 
 def _authorization(kind: str) -> bool:
@@ -560,18 +605,28 @@ MANUAL_STEPS = (
      "construction and the routes are unaffected by the opencode-go spending limit. "
      "judge-output.schema.json is installed and reconciled -- the archived copy named "
      "the matched label `matched_label_id` where the runner reads `label_id`, so a reply "
-     "valid against it would have been ingested with no label at all. The kappa >= 0.70 "
-     "human-calibration gate stands: until a blinded 60-claim packet has been labelled "
-     "independently, every automated performance conclusion is labelled provisional "
-     "rather than the gate being dropped. Nothing here is quotable as a result yet -- "
-     "arm_critical_recall, unique_contribution and the decorrelation contrast are one "
-     "blockage, not three findings, and all three read zero or NaN because no claim has "
-     "been matched to a labeled defect",
+     "valid against it would have been ingested with no label at all. `served_model` is "
+     "harvested from the session record and gated: a judgement from a model nobody "
+     "requested drops its whole claim, because one surviving judge is not a majority of "
+     "two",
      # The schema existing is not the step being done. The first version of this
      # predicate was `not judge-output.schema.json.is_file()`, so writing the file
      # reported adjudication complete with 0 of 279 claims judged -- the same defect
      # `ac4855e` fixed for the floor step, which called a panel one fifth finished done.
      lambda r: _adjudicated() < _judgeable()),
+    (f"the kappa >= 0.70 human calibration ({_calibration()[0]}/{_calibration()[1]} "
+     f"labelled, kappa "
+     f"{'n/a' if _calibration()[2] is None else format(_calibration()[2], '.2f')})",
+     "the blinded packet is at lrhe-data/judge-calibration-packet.csv, stratified across "
+     "all 13 stratum x verdict cells with the panel's own verdict withheld. Fill "
+     "`human_verdict` with CONFIRMED / PLAUSIBLE / FABRICATED and run `judge_lrhe.py "
+     "kappa`. Until this passes, `arm_critical_recall`, `unique_contribution` and the "
+     "leave-one-family-out deltas are provisional by the protocol's own terms -- "
+     "adjudicating 667 calls produced them faster, not more quotable. A separate step "
+     "from adjudication on purpose: with 315 of 315 claims judged the combined predicate "
+     "read done over a packet holding zero labelled rows, and preflight said nothing "
+     "manual remained",
+     lambda r: (_calibration()[2] or 0.0) < 0.70),
 )
 
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "lrhe/judge-output.schema.json",
-  "title": "LRHE independent claim-adjudication output",
-  "description": "One record per judge invocation. Reconciled from handoff/2026-07-27-opencode/schema/judge-output.schema.json, which the harness never read: that copy named the matched label `matched_label_id` while `judge_lrhe.cmd_ingest` reads `label_id`, so a reply valid against the published schema would have been ingested with no label at all and every CONFIRMED verdict would have lost the 1:1 matching it exists to establish. `label_id` wins because it is what the code reads and what `score_lrhe` writes to `judge_label_id`; the archived name is accepted nowhere.",
+  "title": "LRHE independent claim-adjudication record",
+  "description": "One record per judge invocation, as the DISPATCHER assembles it: the judge's answer plus the fields only the harness can establish. Reconciled from handoff/2026-07-27-opencode/schema/judge-output.schema.json, which the harness never read -- that copy named the matched label `matched_label_id` while `judge_lrhe.cmd_ingest` reads `label_id`, so a reply valid against the published schema would have been ingested with no label at all and every CONFIRMED verdict would have lost the 1:1 defect matching it exists to establish. `label_id` wins because it is what the code reads; the archived spelling is accepted nowhere.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,23 +10,24 @@
     "verdict",
     "confidence",
     "label_id",
-    "rationale"
+    "rationale",
+    "served_model"
   ],
   "properties": {
     "judge_id": {
       "type": "string",
       "minLength": 1,
-      "description": "`<run_id>|<claim_rid>|<judge_family>`, echoed from the prompt. Ingest matches on it and discards a reply it cannot match, so a judge that rewrites this has not answered"
+      "description": "`<run_id>|<claim_rid>|<judge_family>`. Supplied by the dispatcher from the assignment row and NEVER echoed by the judge: `JUDGE_PROMPT` does not contain it, so requiring the judge to echo it was unsatisfiable. One grok call refused rather than invent one -- the only honest reply available to it -- while 427 others looked correct solely because the dispatcher overwrote whatever they returned. Correlation belongs to the harness, for the same reason `served_model` does"
     },
     "verdict": {
       "type": "string",
       "enum": ["CONFIRMED", "PLAUSIBLE", "FABRICATED"],
-      "description": "the archived copy also allowed REFUTED and UNRESOLVED. Both are removed. REFUTED is produced by the separate cold-refutation pass and folded in through exec.jsonl, never asserted by a judge; UNRESOLVED had no consumer -- `VERDICTS` is a three-tuple, so ingest counted such a reply as unmatched and dropped it silently. A judge that cannot decide returns PLAUSIBLE, which is the interim verdict that moves no headline number"
+      "description": "the archived copy also allowed REFUTED and UNRESOLVED. Both are removed. REFUTED comes from the separate cold-refutation pass and is folded in through exec.jsonl, never asserted by a judge; UNRESOLVED had no consumer -- `VERDICTS` is a three-tuple, so such a reply was counted as unmatched and dropped silently. A judge that cannot decide returns PLAUSIBLE, the interim verdict that moves no headline number"
     },
     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
     "label_id": {
       "type": ["string", "null"],
-      "description": "the ground-truth label this claim matches, from the labels supplied in the prompt, or null. Required to be present: absent and null are the same value here only because the judge was shown the label set, so `I did not say` and `none matched` cannot be distinguished after the fact"
+      "description": "the ground-truth label this claim matches, from the label set supplied in the prompt, or null. The judge is shown the labels, so it always has an answer to give"
     },
     "rationale": {
       "type": "string",
@@ -34,11 +35,31 @@
       "maxLength": 400,
       "description": "one sentence. Truncated at 400 by ingest, so anything longer is discarded rather than stored"
     },
+    "served_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the model the OMP session record says answered, harvested from the record and not from the reply. `judge_family` is the family that was REQUESTED; without this, a silent provider fallback would leave a judgement attributed to a family that never answered and nothing able to detect it. `cmd_ingest` compares it against the expected selector and drops the whole claim when it does not match or cannot be checked -- one surviving judge is not a majority of two"
+    },
+    "judge_family": {
+      "type": "string",
+      "description": "optional echo of the requested family; the prompt row is authoritative"
+    },
+    "tool_calls": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "calls that NAMED a tool, from the session record. Judges declare `tools: []`, so anything above zero means the surface leaked"
+    },
+    "malformed_tool_calls": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "calls naming no tool, which the runtime rejected. Not a boundary breach"
+    },
+    "agent_label": {"type": "string", "minLength": 1},
     "claim_summary": {"type": "string", "maxLength": 1200},
     "verification_status": {
       "type": "string",
       "enum": ["not_executed", "supports_claim", "refutes_claim", "inconclusive"],
-      "description": "optional. No judge executes anything today, so `not_executed` is the only honest value and the field is not required"
+      "description": "optional. No judge executes anything, so `not_executed` is the only honest value and the field is not required"
     },
     "unresolved_questions": {
       "type": "array",

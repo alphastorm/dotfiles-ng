@@ -863,15 +863,20 @@ def test_judge_lrhe_ingest_is_order_deterministic_for_bytes(tmp_path: Path):
     ]
     _write_jsonl(prompts_path, prompts)
 
+    # `served_model` and `--expect` below are what the identity gate reads. A judgement
+    # from a model nobody requested is not that family's judgement, and ingest refuses the
+    # whole claim rather than half its panel -- so a fixture that omits them exercises the
+    # refusal, not the aggregation this test is about.
     responses_one = [
         {"judge_id": "r1|01|grok", "verdict": "CONFIRMED", "label_id": "L1", "confidence": 0.9,
-         "judge_family": "grok"},
+         "judge_family": "grok", "served_model": "xai-oauth/grok-build"},
         {"judge_id": "r1|01|gemi", "verdict": "CONFIRMED", "label_id": "L1", "confidence": 0.8,
-         "judge_family": "gemi"},
+         "judge_family": "gemi", "served_model": "google-antigravity/gemini-3.6-flash"},
     ]
     responses_two = list(reversed(responses_one))
     _write_jsonl(responses_a, responses_one)
     _write_jsonl(responses_b, responses_two)
+    expect = ["grok=xai-oauth/grok-build", "gemi=google-antigravity/gemini-3.6-flash:high"]
 
     first = _run_cmd([
         "judge_lrhe.py",
@@ -879,7 +884,7 @@ def test_judge_lrhe_ingest_is_order_deterministic_for_bytes(tmp_path: Path):
         "--prompts", str(prompts_path),
         "--responses", str(responses_a),
         "--out", str(out_a),
-        "--out-judgments", str(judgments_a),
+        "--out-judgments", str(judgments_a), "--expect", *expect,
     ])
     assert first.returncode == 0
 
@@ -889,7 +894,7 @@ def test_judge_lrhe_ingest_is_order_deterministic_for_bytes(tmp_path: Path):
         "--prompts", str(prompts_path),
         "--responses", str(responses_b),
         "--out", str(out_b),
-        "--out-judgments", str(judgments_b),
+        "--out-judgments", str(judgments_b), "--expect", *expect,
     ])
     assert second.returncode == 0
 

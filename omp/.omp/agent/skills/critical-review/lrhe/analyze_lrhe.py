@@ -665,10 +665,32 @@ def select_panel(claims: pd.DataFrame, runs: pd.DataFrame, args) -> tuple[pd.Dat
 
 # ----------------------------------------------------------------- driver
 
+def _concat(paths: list[Path], what: str) -> pd.DataFrame:
+    """Read one or more cohort CSVs, refusing a column-set mismatch.
+
+    Concatenating frames with different columns yields NaN wherever one file lacked a
+    field, and a NaN in `trap_promoted` or `measurement_status` is indistinguishable from
+    a genuine absence. Pandas would do it silently.
+    """
+    frames = [pd.read_csv(p) for p in paths]
+    first = list(frames[0].columns)
+    for path, frame in zip(paths[1:], frames[1:], strict=True):
+        if list(frame.columns) != first:
+            missing = sorted(set(first) ^ set(frame.columns))
+            raise SystemExit(
+                f"{what}: {path} does not share {paths[0]}'s columns; differing: {missing}. "
+                f"Re-score both cohorts with the same scorer before pooling them.")
+    return pd.concat(frames, ignore_index=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--claims", required=True, type=Path)
-    ap.add_argument("--runs", required=True, type=Path)
+    ap.add_argument("--claims", required=True, type=Path, nargs="+",
+                    help="one or more cohort CSVs. Arms are compared within one file, so "
+                         "the OpenCode contrast needs OC_FULL, T_OC and OC_SCREEN together; "
+                         "passing them here beats maintaining a concatenated copy that can "
+                         "go stale against its sources without saying so")
+    ap.add_argument("--runs", required=True, type=Path, nargs="+")
     ap.add_argument("--corpus", required=True, type=Path)
     ap.add_argument("--probe", type=Path, default=None,
                     help="CSV: item_id,family,probe_localized -- contamination probe results")
@@ -689,8 +711,8 @@ def main(argv: list[str] | None = None) -> int:
                          "itself; never for a headline number")
     args = ap.parse_args(argv)
 
-    claims = pd.read_csv(args.claims)
-    runs = pd.read_csv(args.runs)
+    claims = _concat(args.claims, "claims")
+    runs = _concat(args.runs, "runs")
     corpus = read_jsonl(args.corpus)
     probe = pd.read_csv(args.probe) if args.probe and args.probe.exists() else None
 
@@ -729,10 +751,27 @@ def main(argv: list[str] | None = None) -> int:
 
     # 1. arm contrasts
     arms = sorted(a for a in defects["arm"].dropna().unique() if a)
-    result["arm_critical_recall"] = {
-        str(a): cluster_bootstrap(defects[defects["arm"] == a], recall_crit, B=args.boot)
-        for a in arms
-    }
+    # An arm nobody adjudicated has recall 0 by construction: `caught` requires a judge to
+    # match a claim to a label, so an unjudged arm reports 0.0 with a [0, 0] interval and
+    # reads exactly like a measured failure. `T_OC` and `OC_SCREEN` sat at 0.0000 [0, 0]
+    # for that reason while their 71 runs were simply never sent to a panel. Same
+    # zero-versus-unmeasured confusion as the NaN decorrelation verdict, one level down.
+    judged_by_arm = (claims.assign(_j=claims.get("judge_verdict").notna()
+                                   if "judge_verdict" in claims else False)
+                     .groupby("arm", observed=True)["_j"].sum().to_dict())
+    result["arm_critical_recall"] = {}
+    for a in arms:
+        if not judged_by_arm.get(a, 0):
+            result["arm_critical_recall"][str(a)] = {
+                "point": None, "lo": None, "hi": None, "B": 0,
+                "note": ("NOT MEASURABLE -- no claim in this arm has been adjudicated, so "
+                         "nothing can be caught and 0.0 would be the absence of a judge "
+                         "rather than a property of the reviewers"),
+            }
+            continue
+        result["arm_critical_recall"][str(a)] = cluster_bootstrap(
+            defects[defects["arm"] == a], recall_crit, B=args.boot)
+    result["judged_claims_by_arm"] = {str(k): int(v) for k, v in judged_by_arm.items()}
 
     # 2. marginal contribution
     if len(families) >= 2:

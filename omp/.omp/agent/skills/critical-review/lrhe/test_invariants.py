@@ -1306,3 +1306,53 @@ def test_every_judge_agent_declares_an_empty_tool_surface():
         front = yaml.safe_load(path.read_text().split("---")[1])
         assert front["tools"] == [], f"{path.name} declares {front['tools']}"
         assert front["output"]["additionalProperties"] is False, path.name
+
+
+def test_a_judgement_from_an_unrequested_model_drops_its_claim(tmp_path: Path):
+    """Reviewer runs carry identity_verified; judgements carried nothing.
+
+    `judge_family` is copied from the PROMPT, which is the request. A silent provider
+    fallback would have left every judgement attributed to a family that never answered,
+    with nothing in the record able to detect it afterwards -- the session's defect in a
+    new place. The whole claim drops, not half its panel: one surviving judge cannot be a
+    majority of two.
+    """
+    sys.path.insert(0, str(HERE))
+    import judge_lrhe
+
+    assert judge_lrhe.identity_of("grok", "xai-oauth/grok-build",
+                                  {"grok": "xai-oauth/grok-build"}) is True
+    # The definition pins a thinking level; the session record does not report one.
+    assert judge_lrhe.identity_of("claude", "anthropic/claude-opus-5",
+                                  {"claude": "anthropic/claude-opus-5:max"}) is True
+    assert judge_lrhe.identity_of("grok", "opencode-go/kimi-k3",
+                                  {"grok": "xai-oauth/grok-build"}) is False
+    # Unanswerable is not a pass: no expectation, or nothing served.
+    assert judge_lrhe.identity_of("nobody", "x/y", {}) is None
+    assert judge_lrhe.identity_of("grok", None, {"grok": "xai-oauth/grok-build"}) is None
+
+    prompts, responses, out, judgments = (tmp_path / n for n in
+                                          ("jp.jsonl", "jr.jsonl", "agg.jsonl", "raw.jsonl"))
+    prompts.write_text(json.dumps({
+        "judge_id": "r1|01|grok", "run_id": "r1", "claim_rid": "01", "item_id": "S1-0001",
+        "author_family": "kimi", "judge_family": "grok", "role": "judge", "round": 1}) + "\n")
+    responses.write_text(json.dumps({
+        "judge_id": "r1|01|grok", "verdict": "CONFIRMED", "label_id": "L1",
+        "confidence": 0.9, "judge_family": "grok",
+        "served_model": "opencode-go/kimi-k3"}) + "\n")
+
+    res = subprocess.run(
+        [PY, "judge_lrhe.py", "ingest", "--prompts", str(prompts),
+         "--responses", str(responses), "--out", str(out),
+         "--out-judgments", str(judgments),
+         "--human-queue", str(tmp_path / "hq.jsonl"),
+         "--expect", "grok=xai-oauth/grok-build"],
+        cwd=HERE, capture_output=True, text=True)
+    assert res.returncode != 0, res.stdout
+    assert "unverified judge identity" in res.stdout, res.stdout
+    # Kept as raw evidence, excluded from the aggregate that scoring reads.
+    raw = [json.loads(x) for x in judgments.read_text().splitlines() if x.strip()]
+    assert len(raw) == 1 and raw[0]["identity_verified"] is False
+    assert raw[0]["served_model"] == "opencode-go/kimi-k3"
+    assert not [x for x in out.read_text().splitlines() if x.strip()], (
+        "an unverified judgement reached the aggregate scoring reads")

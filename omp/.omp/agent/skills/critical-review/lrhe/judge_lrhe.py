@@ -49,6 +49,8 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+import yaml
+
 VERDICTS = ("CONFIRMED", "PLAUSIBLE", "FABRICATED")
 VERDICT_TIE_ORDER = {v: i for i, v in enumerate(VERDICTS)}
 REFUTE_OUTCOMES = ("confirmed", "falsified", "unresolved")
@@ -213,6 +215,46 @@ def _needs_judging(row: dict) -> bool:
 
 
 # ---------------------------------------------------------------- adjudication
+AGENTS = Path.home() / ".omp/agent/agents"
+
+
+def declared_model(family: str) -> str | None:
+    """The selector `judge-<family>.md` declares, or None when unreadable.
+
+    Reviewer runs carry `identity_verified`; judgements carried nothing, so a silent
+    provider fallback would have left every judgement attributed to a family that never
+    answered and no way to notice afterwards. `judge_family` comes from the PROMPT, which
+    is the request, not the answer.
+    """
+    definition = AGENTS / f"judge-{family}.md"
+    if not family or not definition.is_file():
+        return None
+    text = definition.read_text(encoding="utf-8")
+    if not text.startswith("---"):
+        return None
+    models = (yaml.safe_load(text.split("---", 2)[1]) or {}).get("model") or []
+    return str(models[0]) if models else None
+
+
+def identity_of(family: str, served: str | None,
+                expect: dict[str, str] | None = None) -> bool | None:
+    """Did the family we asked for answer? None when the question is unanswerable.
+
+    The expected selector comes from `--expect family=selector` when given, and from
+    `judge-<family>.md` otherwise. Explicit wins because the agent definitions are stowed
+    from the PRIVATE package: deriving the expectation from them only would make this
+    check pass locally and abstain everywhere else, which is the same environment
+    dependence that made the judge-agent test fail the public build.
+
+    Compared on the provider/model prefix: the definition pins
+    `anthropic/claude-opus-5:max` and the session record reports
+    `anthropic/claude-opus-5`, so the thinking-level suffix is not part of the identity.
+    """
+    want = (expect or {}).get(family) or declared_model(family)
+    if want is None or not served:
+        return None
+    return str(served).split(":")[0] == want.split(":")[0]
+
 
 def cmd_prompts(args) -> int:
     corpus = {it["item_id"]: it for it in _read_jsonl(args.corpus)}
@@ -321,6 +363,7 @@ def _coerce_float(value: object, default: float) -> float:
 
 
 def cmd_ingest(args) -> int:
+    expect = dict(pair.split("=", 1) for pair in (args.expect or []))
     prompts = {p["judge_id"]: p for p in _read_jsonl(args.prompts)}
     responses = _read_jsonl(args.responses)
 
@@ -328,6 +371,7 @@ def cmd_ingest(args) -> int:
     judgments: list[dict] = []
     unmatched = 0
     cross_family_claims: set[tuple[str, str]] = set()
+    identity_failed: set[tuple[str, str]] = set()
 
     for r in responses:
         p = prompts.get(r.get("judge_id", ""))
@@ -348,9 +392,19 @@ def cmd_ingest(args) -> int:
             "label_id": r.get("label_id") or "",
             "confidence": _coerce_float(r.get("confidence"), 0.0),
             "rationale": (r.get("rationale") or "")[:400],
+            # The answer, not the request. `judge_family` above is what we asked for.
+            "served_model": r.get("served_model") or "",
+            "identity_verified": identity_of(
+                str(r.get("judge_family", p.get("judge_family", ""))).strip(),
+                r.get("served_model"), expect),
         }
         if judgment["judge_family"] == judgment["author_family"]:
             cross_family_claims.add(key)
+        # A judgement from a model nobody requested is not that family's judgement, and
+        # `identity_verified: None` means the question could not be answered at all.
+        # Neither is scorable, and both drop the whole claim rather than half its panel.
+        if judgment["identity_verified"] is not True:
+            identity_failed.add(key)
 
         by_claim[key].append(judgment)
         judgments.append(judgment)
@@ -364,7 +418,7 @@ def cmd_ingest(args) -> int:
 
     scorable_by_claim: dict[tuple[str, str], list[dict]] = {}
     for key, rows in by_claim.items():
-        if key in cross_family_claims:
+        if key in cross_family_claims or key in identity_failed:
             continue
         scorable_by_claim[key] = sorted(
             rows, key=lambda r: (r["round"], r["judge_family"], r["judge_id"], r["verdict"])
@@ -424,6 +478,12 @@ def cmd_ingest(args) -> int:
         print(f"  {'cross-family violations':<28} {len(cross_family_claims):>5}")
         print(f"  Refusing {len(cross_family_claims)} claims with same-family judging")
         print("  Fix responses and re-run to score only safe claims")
+    if identity_failed:
+        print(f"  {'unverified judge identity':<28} {len(identity_failed):>5}")
+        print(f"  Refusing {len(identity_failed)} claims: a judgement from a model nobody")
+        print("  requested is not that family's judgement, and an unverifiable one is not")
+        print("  a judgement at all. Pass served_model on every reply, harvested from the")
+        print("  session record rather than the answer.")
     print(f"\nwrote {args.out}")
     print(f"wrote {args.out_judgments}")
     if args.human_queue:
@@ -435,7 +495,7 @@ def cmd_ingest(args) -> int:
         print(f"\n{stats['split_to_human']} claims split with no majority. Pass "
               f"--tiebreak-out to spend one extra non-authoring judge on those claims\n"
               f"instead of your own time; re-ingest the combined responses afterwards.")
-    return 1 if cross_family_claims else 0
+    return 1 if (cross_family_claims or identity_failed) else 0
 
 
 def _emit_tiebreak(prompts: dict, by_claim: dict, args) -> None:
@@ -692,6 +752,13 @@ def main() -> int:
     i.add_argument("--tiebreak-out", type=Path, default=None,
                    help="emit one extra non-authoring judge for split claims")
     i.add_argument("--families", nargs="*", default=None, help="pool for tiebreak selection")
+    i.add_argument("--expect", nargs="*", default=None, metavar="FAMILY=SELECTOR",
+                   help="the selector each judge family must have been served, e.g. "
+                        "claude=anthropic/claude-opus-5:max. A judgement whose served "
+                        "model does not match, or cannot be checked, drops its whole "
+                        "claim. Falls back to judge-<family>.md when omitted, which is "
+                        "convenient locally and unavailable wherever the private agent "
+                        "definitions are not stowed")
     i.set_defaults(fn=cmd_ingest)
 
     r = sub.add_parser("refute", help="cold-refutation packets for disputed P0/P1 claims")
