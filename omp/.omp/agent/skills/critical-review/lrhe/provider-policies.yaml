@@ -73,11 +73,10 @@ policies:
       noSessionPersistence: true
       exactServedModelIdentityRequired: true
 
-  # The three routes below predate this registry. Their lanes were qualified and
-  # set councilEnabled: true before any rights apparatus existed, so they have been
-  # in use with no policy governing them at all. run_review.py refused every one of
-  # them until these were written, which is the gate working rather than a
-  # regression: an enabled lane with no policy is not a permission, it is an
+  # The three routes below predate this registry. Their evaluation lanes were
+  # enabled before any rights apparatus existed, so they had no governing policy.
+  # run_review.py refused every one until policies existed. That is the gate
+  # working rather than a regression: an enabled lane with no policy is an
   # oversight nobody had a way to see.
   #
   # They inherit the same operator risk acceptance. Their terms are NOT snapshotted

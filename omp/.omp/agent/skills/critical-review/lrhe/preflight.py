@@ -16,9 +16,9 @@ Three steps are order-sensitive and expensive to get wrong:
     after qualification, which edits qualification.yml and the terms snapshots,
     both of which the lock hashes). It records each repo's commit and dirty flag
     and `verify` diffs both, so a lock taken early drifts before anything runs.
-  * The OpenCode lanes stay councilEnabled: false until a credential exists AND a
-    canary has run. Enabling first means the first live request is also the first
-    test of the request path.
+  * OpenCode lanes stay evaluationEnabled: false until a credential exists and
+    their canary passes. Enabling first makes the first evaluation request also
+    the first test of the request path.
   * A canary result is evidence and gets committed, which is why it precedes the
     freeze rather than following it.
 
@@ -41,6 +41,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 import freeze_lock  # noqa: E402  -- needs the path above
 import run_review  # noqa: E402
+from qualification import QualificationError, load_qualification, reviewers as qualification_reviewers  # noqa: E402
 
 SKILL = Path.home() / ".omp/agent/skills/critical-review"
 AGENTS = Path.home() / ".omp/agent/agents"
@@ -183,50 +184,41 @@ def _uncanaried_lanes() -> list[str] | None:
     is deliberately held, so a checklist counting it as outstanding work would ask
     for a rerun the operator ruled out.
     """
-    qual = SKILL / "qualification.yml"
-    if not qual.is_file():
+    try:
+        document = load_qualification(SKILL / "qualification.yml")
+        qualified = qualification_reviewers(document)
+    except QualificationError:
         return None
-    doc = yaml.safe_load(qual.read_text(encoding="utf-8"))
-    reviewers = doc.get("reviewers", {}) if isinstance(doc, dict) else {}
-    return sorted(n for n, e in reviewers.items()
-                  if isinstance(e, dict) and not e.get("councilEnabled")
-                  and e.get("providerCanary") not in ("passed", "failed"))
+    return sorted(
+        name
+        for name, value in qualified.items()
+        if isinstance(value, dict)
+        and value.get("evaluationEnabled") is not True
+        and value.get("providerCanary") not in ("passed", "failed")
+    )
 
 
 def check_lanes_held() -> Result:
-    """An enabled lane must have earned it, and the record must say how.
+    """An evaluation-enabled lane must have earned it.
 
-    Hardcoding which three families are allowed would just move the claim into
-    this file. The qualification record already states what each lane proved --
-    a passed provider canary, a schema that validated, a read-only boundary that
-    held -- so enabling is checked against that evidence instead.
+    Live critical-review membership is separate and owned by `liveDispatch`.
+    This gate covers LRHE evaluation capability: provider canary, schema, and
+    read-only boundary. Hardcoding families here would duplicate the private
+    qualification record.
     """
-    qual = SKILL / "qualification.yml"
-    if not qual.is_file():
-        return Result(UNKNOWN, f"{qual} not readable (private package not linked?)")
-    doc = yaml.safe_load(qual.read_text(encoding="utf-8"))
-    reviewers = doc.get("reviewers", {}) if isinstance(doc, dict) else {}
+    try:
+        document = load_qualification(SKILL / "qualification.yml")
+        qualified = qualification_reviewers(document)
+    except QualificationError as exc:
+        return Result(FAIL, str(exc))
 
-    on, off, unearned = [], [], []
-    for name, entry in sorted(reviewers.items()):
-        if not isinstance(entry, dict):
-            continue
-        if not entry.get("councilEnabled"):
-            off.append(name)
-            continue
-        on.append(name)
-        missing = [
-            field for field, want in (("providerCanary", "passed"),
-                                      ("readOnlyBoundary", "passed"),
-                                      ("schemaValid", True))
-            if entry.get(field) != want
-        ]
-        if missing:
-            unearned.append(f"{name} enabled but {missing} not proven")
-
-    if unearned:
-        return Result(FAIL, "; ".join(unearned))
-    return Result(PASS, f"enabled {on} all canaried, held {off}")
+    on = sorted(
+        name
+        for name, value in qualified.items()
+        if isinstance(value, dict) and value.get("evaluationEnabled") is True
+    )
+    off = sorted(set(qualified) - set(on))
+    return Result(PASS, f"evaluation-enabled {on} all canaried, held {off}")
 
 
 def _catalogue() -> dict[str, dict[str, set[str]]] | None:
@@ -274,21 +266,21 @@ def check_model_selectors() -> Result:
     This is the "selector not discovered against the installed build" blocker,
     answered automatically instead of by hand.
     """
-    qual = SKILL / "qualification.yml"
-    if not qual.is_file():
-        return Result(UNKNOWN, f"{qual} not readable (private package not linked?)")
+    try:
+        document = load_qualification(SKILL / "qualification.yml")
+        qualified = qualification_reviewers(document)
+    except QualificationError as exc:
+        return Result(FAIL, str(exc))
     catalogue = _catalogue()
     if catalogue is None:
         return Result(UNKNOWN, f"{MODELS_DB} not readable; nothing to resolve against")
 
-    doc = yaml.safe_load(qual.read_text(encoding="utf-8"))
-    reviewers = doc.get("reviewers", {}) if isinstance(doc, dict) else {}
     problems: list[str] = []
     resolved = 0
-    for name, entry in sorted(reviewers.items()):
-        if not isinstance(entry, dict) or not entry.get("model"):
+    for name, value in sorted(qualified.items()):
+        if not isinstance(value, dict) or not value.get("model"):
             continue
-        provider, _, rest = str(entry["model"]).partition("/")
+        provider, _, rest = str(value["model"]).partition("/")
         model, _, effort = rest.partition(":")
         offered = catalogue.get(provider)
         if offered is None:
@@ -321,25 +313,25 @@ def check_reviewer_agents_resolve() -> Result:
     reviewer pointing at a missing definition fails at dispatch -- after the
     council has started and the other lanes have already been paid for.
     """
-    qual = SKILL / "qualification.yml"
-    if not qual.is_file():
-        return Result(UNKNOWN, f"{qual} not readable (private package not linked?)")
-    reviewers = yaml.safe_load(qual.read_text(encoding="utf-8")).get("reviewers", {})
+    try:
+        document = load_qualification(SKILL / "qualification.yml")
+        qualified = qualification_reviewers(document)
+    except QualificationError as exc:
+        return Result(FAIL, str(exc))
 
     missing = []
-    for name, entry in sorted(reviewers.items()):
-        agent = entry.get("agent") if isinstance(entry, dict) else None
+    for name, value in sorted(qualified.items()):
+        agent = value.get("agent") if isinstance(value, dict) else None
         if not agent:
             missing.append(f"{name} names no agent")
             continue
         path = AGENTS / f"{agent}.md"
         if not path.exists():
-            # .exists() already follows the link, so this covers both a missing
-            # file and the dangling stow symlink that reads as one.
+            # .exists() follows links, covering absent files and dangling stow links.
             missing.append(f"{name} -> {agent}.md absent")
     if missing:
         return Result(FAIL, "; ".join(missing))
-    return Result(PASS, f"{len(reviewers)} reviewers resolve to an agent definition")
+    return Result(PASS, f"{len(qualified)} reviewers resolve to an agent definition")
 
 
 def check_omp_version() -> Result:

@@ -94,8 +94,16 @@ VIRTUAL_ENV=.venv uv pip install -r requirements.txt
 python3 build_corpus.py plan                       # sampling plan, no network
 python3 power_lrhe.py --sweep-items 16,24,32,40,56 --effect 0.8 --reps 300
 
-# prove the harness before spending quota
-python3 -m pytest -q                               # 161 tests; see "The test suite"
+# Stable skill-development tiers; both resolve .venv and tests from this directory.
+./review_checks.py quick
+./review_checks.py full
+
+# Citable pre-freeze skill proof, bound to exact artifact and changed-file digests.
+./review_checks.py full --subject-record review-record.json --receipt full-proof.json
+
+# Any other exact proof command uses the same before/after subject binding.
+./make_receipt.py --subject-record review-record.json --receipt proof.json \
+    --cwd /path/to/repository -- command arg1 arg2
 python3 make_fixtures.py                           # writes ./fixtures, never ./
 python3 score_lrhe.py --corpus fixtures/corpus.jsonl --runs fixtures/runs.jsonl \
     --judge fixtures/judge.jsonl --exec fixtures/exec.jsonl \
@@ -223,17 +231,29 @@ one search from the upstream fix, the answer key, the harness's own verdict, sam
 bookkeeping that is a retrieval hint and never evidence.
 
 
-## The council is asymmetric
+## Live dispatch and evaluation are separate
 
-Six families, three roles. Conflating them is what makes this look like six votes
-when it is four first-pass critics, one conditional refuter, and one accountable
-integrator.
+`qualification.yml` `liveDispatch` is the sole authoritative live panel. Resolve
+the current initial or targeted-refuter roster with `qualification.py`; do not
+duplicate family names or counts in public tests, packets, or policy prose. This
+public package never grants live membership.
 
-| Role | Family | Runs on | Cost driver |
+LRHE experiments remain asymmetric evaluation designs:
+
+| Evaluation role | Family | Runs on | Cost driver |
 |---|---|---|---|
 | author / integrator | `gpt` | arm A, synthesis | per review |
-| critic | `claude` `gemini` `grok` `kimi` | arms B, C, D, probe | per review, linear in council size |
-| refuter | `glm` | arm R | **per disputed P0/P1 claim**, not per review |
+| critic | experiment-defined | arms B, C, D, probe, floor arms | per evaluation item |
+| refuter | experiment-defined | arm R | per disputed claim, not per review |
+
+Conflating experiment membership with live dispatch turns evaluation lanes into
+unapproved reviewers and makes independent roles look like votes. `panels.yaml`
+therefore owns experiments only; `qualification.yml` owns live dispatch.
+
+`qualification.py` fails closed unless schema version 3, role membership,
+dispatch/evaluation flags, canary results, read-only proof, agents, and selectors
+are internally consistent. `initial` returns only configured primary critics;
+`targeted-refuter` returns only the separately configured refutation pool.
 
 `independent` is a real fourth lens, not a relabelling of the other three:
 reconstruct the system and its invariants from primary evidence instead of
@@ -542,12 +562,11 @@ that ordering was living in a chat log. `runs/LOCK.json` is frozen **last**. A l
 is a claim about the starting state of a result set, so it has to name the toolchain
 that runs — hence after the OMP upgrade, since one frozen under the old version
 records a toolchain that never produced anything — and the tree that produced the
-runs. Qualification edits `qualification.yml` and rewrites the terms snapshots, both
-tracked and both hashed into the lock, so a lock taken before the canaries reports
-`drift: lock_inputs.private_repo.commit` before the first measured run. And a lane
-stays `councilEnabled: false` until its credential exists and its canary has passed,
-because enabling first makes the first live request also the first test of the
-request path.
+runs. Qualification edits `qualification.yml` and rewrites the terms snapshots,
+both tracked and hashed into the lock, so a lock taken before the canaries reports
+`drift: lock_inputs.private_repo.commit` before the first measured run. A lane
+stays `evaluationEnabled: false` until its credential exists and its canary passes;
+live critical-review membership remains separately owned by `liveDispatch`.
 
 `freeze_lock.py freeze` refuses a dirty tree outright, with `--allow-dirty` to
 record the dirty state deliberately. That refusal lives at the point of effect
@@ -560,8 +579,8 @@ The gates it owns that no test covers: reviewer definitions parse and declare
 output schemas compile, since a reviewer whose schema fails returns free text and
 free text cannot be scored against a label; every reviewer in `qualification.yml`
 resolves to an agent file that is present and not a dangling stow symlink; and an
-enabled lane is checked against the evidence recorded for it rather than a
-hardcoded list of names.
+evaluation-enabled lane is checked against the evidence recorded for it rather
+than a hardcoded list of names.
 
 It also resolves every selector against OMP's model cache — provider, model, and
 any `:effort` suffix. `qualification.yml` cannot assert that its own selectors

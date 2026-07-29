@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The three probes a lane must pass before councilEnabled may be flipped.
+"""The probes a lane must pass before evaluationEnabled may be true.
 
     ./.venv/bin/python canary.py selftest                    # graders vs known-bad
     ./.venv/bin/python canary.py run --family kimi --transport stub
@@ -41,11 +41,12 @@ deliberately and reviewed, not a flag someone passes.
 
 HOW A LANE IS ACTUALLY QUALIFIED, THEN. Not by `run`, which can only ever return
 `apparatus`. The path to a model is the OMP reviewer agent named by `agent:` in
-qualification.yml -- the same one the council dispatches -- so `prompts` emits
-the probes, that agent answers them, and `grade` judges the replies with the
-same graders and records `verdict: provider`. The boundary is unmoved: no
-command in this file opens a connection. What `grade` cannot do is witness the
-request, so every record it writes says so and carries the digest of the reply
+qualification.yml, so `prompts` emits the probes, that agent answers them, and
+`grade` judges the replies with the same graders and records `verdict: provider`.
+Live critical-review membership remains separately owned by `liveDispatch`. The
+boundary is unmoved: no command in this file opens a connection. What `grade`
+cannot do is witness the request, so every record it writes says so and carries
+the digest of the reply
 file it read, which is what makes a later edit to that file detectable.
 """
 from __future__ import annotations
@@ -60,7 +61,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-import yaml
+from qualification import QualificationError, load_qualification, reviewers as qualification_reviewers
 from jsonschema import Draft202012Validator
 
 HERE = Path(__file__).parent
@@ -340,11 +341,12 @@ def _send(req: run_review.AuthorizedRequest, transport: str) -> dict[str, Any]:
 
 
 def _reviewers() -> dict[str, dict[str, Any]] | None:
-    qual = SKILL / "qualification.yml"
-    if not qual.is_file():
-        print(f"{qual} not readable (private package not linked?)", file=sys.stderr)
+    try:
+        qualified = qualification_reviewers(load_qualification(SKILL / "qualification.yml"))
+    except QualificationError as exc:
+        print(str(exc), file=sys.stderr)
         return None
-    return yaml.safe_load(qual.read_text(encoding="utf-8")).get("reviewers") or {}
+    return {name: value for name, value in qualified.items() if isinstance(value, dict)}
 
 
 def cmd_run(args: argparse.Namespace) -> int:

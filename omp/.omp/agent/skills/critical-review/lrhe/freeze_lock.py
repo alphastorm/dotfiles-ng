@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-import yaml
+from qualification import load_qualification, reviewers as qualification_reviewers
 
 
 EXIT_OK = 0
@@ -189,7 +189,7 @@ def _parse_manifest_terms(terms_dir: Path) -> tuple[str, ManifestEntry]:
 
 
 def _model_pins(args: argparse.Namespace) -> dict[str, Any]:
-    """Every enabled lane's selector, and what is known about the model behind it.
+    """Every evaluation-enabled lane's selector and known model identity.
 
     This lock pins the toolchain, both repositories, the corpus and its answer key,
     the assignment manifest and the terms snapshots -- and nothing whatsoever about
@@ -205,14 +205,16 @@ def _model_pins(args: argparse.Namespace) -> dict[str, Any]:
     an unexplained shift in the results. The detector that acts on it is
     `analyze_lrhe.py`, which refuses to pool two fingerprints under one selector.
     """
-    qual = getattr(args, "qualification", None) or (SKILL / "qualification.yml")
-    if not Path(qual).is_file():
+    qual = Path(getattr(args, "qualification", None) or DEFAULT_QUALIFICATION)
+    if not qual.is_file():
         return {"unreadable": str(qual)}
-    reviewers = (yaml.safe_load(Path(qual).read_text(encoding="utf-8")) or {}).get("reviewers") or {}
+    document = load_qualification(qual)
+    qualified = qualification_reviewers(document)
     return {
         name: {"selector": str(entry.get("model", "")), "fingerprint": None}
-        for name, entry in sorted(reviewers.items())
-        if isinstance(entry, dict) and entry.get("councilEnabled")
+        for name, value in sorted(qualified.items())
+        if isinstance(value, dict)
+        and (entry := value).get("evaluationEnabled") is True
     }
 
 

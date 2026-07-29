@@ -2,13 +2,13 @@
 # asks for these to live in configuration rather than Python constants, because a
 # panel edited in source is a design change with no artifact and no digest.
 #
-# What this file owns: which experiment exists, which families are in its panel,
-# which lenses rotate, and which arms it schedules.
+# What this file owns: evaluation experiments, their families, rotating lenses,
+# and scheduled arms. It is never a live dispatch panel.
 #
-# What this file does NOT own: whether a lane is live. That is
-# `skill://critical-review/qualification.yml`, which the SKILL reads before
-# dispatch and which carries the per-lane canary results and blockers. Two files
-# claiming to answer "is this reviewer enabled" is how they come to disagree.
+# `skill://critical-review/qualification.yml` `liveDispatch` is the sole
+# authoritative live panel and role definition. Qualification also records
+# per-lane canary results and blockers. An experiment family listed here gains no
+# production dispatch authority.
 #
 # Also deliberately absent: spend caps and quota balances. This package is public.
 # Budget lives with the handoff in the private package.
@@ -196,6 +196,8 @@ experiments:
       - {family: minimax,  providerRoute: opencode-go, requestedSelector: opencode-go/minimax-m3}
       - {family: deepseek, providerRoute: opencode-go, requestedSelector: opencode-go/deepseek-v4-pro}
 
+  # Historical experiment identifier only. Despite its name, this remains a
+  # shadow-evaluation cohort and never defines live critical-review membership.
   - experimentId: live-critical-review-v1
     panelId: opencode-broad-v1
     promptVersion: opencode-floor-v2

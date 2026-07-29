@@ -95,17 +95,15 @@ def test_refusal_never_reaches_a_transport(spy, over, expect_reason):
 def test_an_unqualified_lane_never_reaches_a_transport(spy):
     """The qualification gate, proved on whichever lane is actually held.
 
-    This case used to name kimi, and passed until kimi was canaried and enabled
-    -- at which point it asserted that a qualified lane is refused. The held lane
-    is a fact in qualification.yml, so read it there. When nothing is held the
-    gate has nothing to demonstrate on and this skips saying so, rather than
-    going quietly green on an assertion it can no longer make.
+    This case used to name Kimi and became stale after Kimi qualified. Held
+    evaluation lanes are facts in qualification.yml, so the test derives them
+    there rather than duplicating membership.
     """
     import yaml
     qual = yaml.safe_load((SKILL / "qualification.yml").read_text())["reviewers"]
-    held = [f for f, e in qual.items() if not e.get("councilEnabled")]
+    held = [f for f, e in qual.items() if not e.get("evaluationEnabled")]
     if not held:
-        pytest.skip("every lane is enabled; no unqualified lane to refuse")
+        pytest.skip("every evaluation lane is enabled; no held lane to refuse")
 
     for family in held:
         declared = _declaring_experiment(family)
@@ -197,32 +195,26 @@ def test_emitted_run_record_validates_against_the_run_schema():
 
 
 def test_every_enabled_lane_can_be_planned():
-    """A lane marked councilEnabled must actually be dispatchable.
+    """Every evaluation-enabled lane must be plannable in a declared experiment.
 
-    The three enabled reviewers routed through providers with no policy entry at
-    all for a while: qualified, in use, and ungoverned. Nothing surfaced it until
-    a runner tried to assemble a request, because no other code path asked.
-
-    Each lane is planned in the experiment that declares it, not in a fixed one.
-    Hardcoding the core panel made this pass only while every enabled lane
-    happened to be a core lane: enabling the floor panel turned a real invariant
-    into `family_not_in_panel`, which is the runner correctly refusing a question
-    nobody meant to ask. A lane declared by no experiment is the actual defect,
-    and it now fails as one.
+    Live critical-review membership is a separate `liveDispatch` concern.
+    Evaluation capability without a rights policy or experiment declaration is
+    still a dead end, so each enabled lane is planned in the experiment that
+    declares it instead of a fixed panel.
     """
     import yaml
     qual = yaml.safe_load((SKILL / "qualification.yml").read_text())["reviewers"]
-    enabled = [f for f, e in qual.items() if e.get("councilEnabled")]
-    assert enabled, "no lane is enabled; this test would be vacuous"
+    enabled = [f for f, e in qual.items() if e.get("evaluationEnabled")]
+    assert enabled, "no evaluation lane is enabled; this test would be vacuous"
 
     for family in enabled:
         declared = _declaring_experiment(family)
-        assert declared, f"{family} is councilEnabled but no experiment in panels.yaml declares it"
+        assert declared, f"{family} is evaluationEnabled but no experiment declares it"
         experiment, lens = declared
         outcome = run_review.prepare(
             _args(family=family, lens=lens, experiment_id=experiment))
         assert isinstance(outcome, run_review.Refusal) is False, (
-            f"{family} is councilEnabled but cannot be dispatched in {experiment}: "
+            f"{family} is evaluationEnabled but cannot be planned in {experiment}: "
             f"{getattr(outcome, 'reason_code', '')} {getattr(outcome, 'message', '')}")
 
 

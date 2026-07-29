@@ -55,6 +55,7 @@ from referencing import Registry, Resource
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 import check_packet_gates  # noqa: E402  -- needs the path above
+from qualification import QualificationError, load_qualification, reviewers as qualification_reviewers  # noqa: E402
 
 SKILL = Path.home() / ".omp/agent/skills/critical-review"
 DATA = SKILL / "lrhe-data"
@@ -269,17 +270,20 @@ def prepare(args) -> AuthorizedRequest | Refusal:
         return Refusal("unresolved", "family_not_in_panel",
                        f"{args.family!r} is not in panel {exp['panelId']!r}")
 
-    # 1. Is this lane allowed to run at all? qualification.yml is the dispatch
-    #    gate the SKILL reads, and it is deliberately the only place that answers.
-    qual = yaml.safe_load(args.qualification.read_text())["reviewers"]
-    entry = qual.get(args.family)
-    if entry is None:
+    # 1. Is this lane qualified for the requested evaluation experiment?
+    #    Live critical-review membership is separate and owned by liveDispatch.
+    try:
+        qualified = qualification_reviewers(load_qualification(args.qualification))
+    except QualificationError as exc:
+        return Refusal("deny", "qualification_invalid", str(exc))
+    entry = qualified.get(args.family)
+    if not isinstance(entry, dict):
         return Refusal("unresolved", "lane_unknown",
                        f"{args.family!r} has no qualification.yml entry")
-    if entry.get("councilEnabled") is not True:
+    if entry.get("evaluationEnabled") is not True:
         blockers = "; ".join(entry.get("blockers") or ["no reason recorded"])
         return Refusal("deny", "lane_not_qualified",
-                       f"{args.family} is councilEnabled: false -- {blockers}")
+                       f"{args.family} is evaluationEnabled: false -- {blockers}")
 
     # 2. Does the item exist, and is there a scrubbed packet for it? The packet is
     #    what would actually be transmitted; the corpus row carries the answer key

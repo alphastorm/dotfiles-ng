@@ -49,9 +49,8 @@ def _routes_in_panels() -> set[str]:
 def test_every_panel_route_has_a_policy():
     """A lane you can schedule but cannot get a rights decision for is a dead end.
 
-    This is the bug that shipped: panels.yaml declared anthropic-subscription,
-    google-antigravity and xai-oauth, provider-policies.yaml knew about neither,
-    and the three lanes those routes serve were all councilEnabled: true.
+    This is the bug that shipped: panels.yaml declared provider routes that had
+    no rights policy while their lanes were evaluation-enabled.
     """
     have = {p["providerRoute"] for p in POLICIES["policies"]}
     missing = sorted(_routes_in_panels() - have)
@@ -323,10 +322,29 @@ def _fake_catalogue(path: Path, provider_id: str, models: list[dict]) -> None:
 
 
 def _qualification(path: Path, selector: str) -> None:
-    (path / "qualification.yml").write_text(
-        yaml.safe_dump({"reviewers": {"kimi": {"model": selector, "councilEnabled": False}}}),
-        encoding="utf-8",
-    )
+    document = {
+        "schemaVersion": 3,
+        "liveDispatch": {
+            "panelId": "test-panel",
+            "initialCritics": [],
+            "targetedRefuters": [],
+            "evaluationOnly": ["kimi"],
+            "disabled": [],
+        },
+        "reviewers": {
+            "kimi": {
+                "agent": "review-kimi-floor",
+                "model": selector,
+                "dispatchRole": "evaluation_only",
+                "dispatchEnabled": False,
+                "evaluationEnabled": True,
+                "providerCanary": "passed",
+                "schemaValid": True,
+                "readOnlyBoundary": "passed",
+            }
+        },
+    }
+    (path / "qualification.yml").write_text(yaml.safe_dump(document), encoding="utf-8")
 
 
 def test_preflight_resolves_selectors_through_the_hashed_provider_key(tmp_path, monkeypatch):

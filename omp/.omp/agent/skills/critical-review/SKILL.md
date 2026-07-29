@@ -11,44 +11,147 @@ Run an opt-in, evidence-driven council. GPT remains the accountable lead and int
 
 Use this skill for architecture, authentication or authorization, secrets or cryptography, privacy, money or asset movement, persistent migrations or deletion, public protocol compatibility, concurrency or distributed coordination, release or supply-chain changes, cross-system boundaries, and weak or costly rollback.
 
-Map reviewer names to external processors:
+Live reviewer membership and roles are configuration, not prose:
 
-- `review-claude` -> Anthropic;
-- `review-gemini` -> Google Antigravity;
-- `review-grok` -> xAI Grok Build.
+- `skill://critical-review/qualification.yml` `liveDispatch` is the sole
+  authoritative live panel definition;
+- `lrhe/qualification.py` is the sole executable resolver for that definition;
+- `initialCritics` and `targetedRefuters` are distinct dispatch roles;
+- `evaluationOnly` lanes and every experiment in `lrhe/panels.yaml` never
+  authorize live review dispatch.
 
 Before dispatch:
 
 1. Classify the repository and review material as public, cloud-eligible, or local-only from existing context.
-2. Read `skill://critical-review/qualification.yml`. A provider is enabled only when its entry says `councilEnabled: true`, its exact model selector still resolves, and the packet authorizes that provider.
+2. Read `skill://critical-review/qualification.yml`. A provider is enabled only when its family is in the required `liveDispatch` role, its reviewer entry says `dispatchEnabled: true`, its canary and read-only gates pass, its exact model selector still resolves, and the packet authorizes that provider.
 3. Treat an explicit provider list in the user's current `/skill:critical-review` request as authorization for only those providers and this review epoch.
 4. If hosted-provider authorization is absent or unclear, invoke Ask before transmitting material. Recommend the safest qualified subset. Include a no-effect/local-only option. Never send local-only material to a hosted reviewer.
 5. Never include credential values, private keys, tokens, cookies, environment dumps, secret files, or generated credential stores in a packet. A source file containing secret-handling code may be reviewed only when the chosen providers are authorized for it; redact actual values without changing the reviewed semantics.
 
 A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is `missing`, never `approved`. Do not substitute another GPT model for an unavailable external family.
 
+## Sequence and readiness gate
+
+Every consequential change has one `review_sequence_id`. Every frozen epoch has
+one machine-readable `review-record.json`. `lrhe/review_sequence.py` is the sole
+dispatch-action selector; packet prose cannot override its result. Its modes are:
+
+- `initial`: the first general council for the sequence;
+- `remediation`: a correction scoped to named findings, changed paths, and
+  adjacent invariants;
+- `material-redesign`: a second general council only after the initial council's
+  named P0/P1 findings are directly verified as resolved and the correction
+  changes architecture, a trust boundary, public compatibility, persistent state,
+  migration/rollback, or production effects.
+
+The machine record must contain exactly these fields; any additional key fails closed:
+
+1. `review_sequence_id`, a unique `review_id`, `review_mode`, `parent_review_id`,
+   and ordered `sequence_history` whose rows bind each prior epoch record by
+   path and SHA-256, plus history-derived `general_review_pass_count` and
+   `targeted_refutation_used`;
+2. `artifact_path` and SHA-256, every `changed_file` and its current SHA-256
+   (`DELETED` for a deletion), and proof-receipt paths and SHA-256 values;
+3. every touched risk domain and an invariant proof matrix whose rows collectively
+   cover every changed path and every touched domain;
+4. each proof class as `passed` with a subject-bound receipt or `not-applicable`
+   with a concrete justification: fresh-process smoke, dependency-cycle,
+   cache-invalidation, migration/rollback, authorization, and repository policy;
+5. strict string lists for known deterministic failures, new risk classes,
+   cross-subsystem omissions, and incomplete invariants;
+6. mode-specific fields. Initial mode rejects remediation metadata. Remediation
+   requires an exact finding/scope/verification disposition. Material redesign
+   additionally requires one named material category and proof that all named
+   parent findings are resolved.
+
+Every proof receipt is JSON with `schemaVersion: 1`, `result: passed`,
+`exit_code: 0`, and the `subject_digest` computed from the frozen artifact digest
+and changed-file digest map. The proof runner must verify the live files against
+that subject before executing. A stale, self-consistent, or hand-carried receipt
+from another tree is invalid.
+
+Before **any** critic or refuter dispatch:
+
+```bash
+python3 lrhe/review_sequence.py review-record.json
+```
+
+Only `action: full-council` or `action: targeted-refuter` permits the matching
+provider call. Missing or malformed readiness evidence, a digest mismatch, a
+known deterministic failure, a new risk class, multiple cross-subsystem
+omissions, or incomplete invariant coverage fails closed to
+`implementation-audit-repair`. Reviewers are never used to discover deterministic
+failures that the lead can prove locally.
+
+When modifying this critical-review skill itself, use its stable developer tiers:
+
+```bash
+./review_checks.py quick
+./review_checks.py full --subject-record review-record.json --receipt full-proof.json
+```
+
+`quick` is the inner loop for `test_review_sequence.py`, `test_runner.py`, and
+`test_consistency.py`. `full` is the pre-freeze skill proof and is exactly `quick`
+plus `test_invariants.py`; it is not the entire seven-module LRHE experiment
+harness. The receipt form is mandatory when this skill's full proof is cited in a
+review record.
+
+After an initial council, the lead fixes and directly verifies localized P0/P1
+findings before any further reviewer call. A remediation epoch may cover only
+named findings, its changed paths, and adjacent invariants. Honest direct
+verification records each finding as `resolved` or `disputed`. One still-disputed
+P0/P1 may reach one targeted refuter; otherwise the lead records ledger
+dispositions and closes the sequence.
+
+New risk classes, two or more cross-subsystem omissions, or incomplete invariant
+proof are systemic evidence that the implementation audit was incomplete. Mark
+the sequence `not-council-ready`, return to implementation audit/repair, and do
+not automatically redispatch. The initial pass and at most one verified material
+redesign are the only general council passes. There is never a third.
+
 ## Freeze one review epoch
 
-Reviewers must inspect one stable epoch. Prefer a no-effect digest checkpoint; a temporary commit or any history mutation requires the authorization already present in the current request or an Ask gate.
+Reviewers must inspect one stable epoch. Prefer a no-effect digest checkpoint; a
+temporary commit or any history mutation requires authorization already present
+in the current request or an Ask gate.
 
-1. Choose a review ID such as `CR-<UTC timestamp>-<short digest>` and create `local://critical-review/<review-id>/`.
-2. Record the repository root, current branch, base commit, HEAD, staged and unstaged changed paths, review-scoped untracked paths, and relevant design artifacts.
-3. Materialize the complete review-scoped diff or design as an artifact in that directory. Exclude ignored files and any secret-bearing material not authorized for the selected providers.
-4. Compute a SHA-256 digest for the review artifact and a SHA-256 digest for every reviewed changed file. Record deleted files explicitly. Use stable path ordering.
-5. Do not modify reviewed files from this point until the epoch closes. Other unrelated work must not touch them.
-6. Recompute the same artifact and file digests after round one and before synthesis. Any mismatch makes every result for that epoch stale. Close it and start a new review ID; never blend stale and fresh claims.
+1. Choose a review ID such as `CR-<UTC timestamp>-<short digest>` and create
+   `local://critical-review/<review-id>/`.
+2. Record repository root, branch, base commit, HEAD, changed paths,
+   review-scoped untracked paths, and relevant design artifacts.
+3. Materialize the complete review-scoped diff or design as `artifact.diff`.
+   Exclude unrelated, ignored, secret-bearing, or unauthorized material.
+4. Compute SHA-256 for the artifact and every reviewed changed file. Record
+   deleted files explicitly and use stable path ordering.
+5. Create `review-record.json` with the complete sequence, subject, proof,
+   risk, invariant, failure, and mode-specific fields from the readiness section.
+6. Run each decisive check through the generic subject-bound producer and add
+   the receipt path and digest to the record:
 
-Create `local://critical-review/<review-id>/packet.md` with these fields:
+   ```bash
+   python3 lrhe/make_receipt.py \
+     --subject-record review-record.json --receipt <proof>.json \
+     --cwd <repository> -- <exact command and arguments>
+   ```
+
+   It verifies the frozen subject both before and after the command and emits no
+   receipt on failure or drift. The fixed skill-development `full` wrapper
+   delegates to this same producer.
+7. Run `python3 lrhe/review_sequence.py review-record.json`. A nonzero result
+   prohibits provider dispatch.
+8. Create `packet.md` from the validated record. The packet records only the
+   `review-record.json` path and digest plus the review context below; never
+   restate pass counts, rosters, finding sets, test counts, or digests by hand.
+9. Do not modify reviewed files from this point until the epoch closes.
+10. Recompute the same artifact and file digests after round one and before
+    synthesis. Any mismatch makes every result stale. Close the epoch and start a
+    new review ID; never blend stale and fresh claims.
+
+The packet context is:
 
 ```yaml
-review_id:
-risk_class: critical
-repository:
-base_commit:
-review_commit_or_checkpoint:
-artifact_digest:
-changed_file_digests:
-
+review_record_path:
+review_record_sha256:
 goal:
 non_goals:
 requirements:
@@ -57,27 +160,30 @@ trust_boundaries:
 data_or_state_transitions:
 rollback_contract:
 compatibility_contract:
-
-changed_files:
 design_or_diff:
-tests_already_run:
-test_results:
 known_open_questions:
 rejected_alternatives_and_reasons:
 provider_data_allowlist:
 ```
 
-Use concise facts and primary anchors. Include the decision record, not hidden reasoning, tentative confidence, or another reviewer's verdict. Packet links must resolve for every selected reviewer.
+Use concise facts and primary anchors. Include the decision record, not hidden
+reasoning, tentative confidence, or another reviewer's verdict. Packet links must
+resolve for every selected reviewer. Compute any displayed summary from the
+record; never maintain a second evidence count.
 
 ## Round one: independent concurrent critics
 
-Launch every selected and enabled critic in one `task` batch. Do not launch separate calls that serialize independent reviews. Shared context names only the immutable packet, review ID, epoch, and the independence rule. Do not put a reviewer output or `agent://` handle in shared context.
+Resolve the panel immediately before dispatch:
 
-Use these stable items for the qualified subset:
+```bash
+python3 lrhe/qualification.py initial
+```
 
-- name `ClaudeCritical`, agent `review-claude`;
-- name `GeminiCritical`, agent `review-gemini`;
-- name `GrokCritical`, agent `review-grok`.
+Launch every returned member in one `task`
+batch. Do not launch separate calls that serialize independent reviews. Shared
+context names only the immutable packet, review ID, epoch, and the independence
+rule. Do not put reviewer output or an `agent://` handle in shared context. Use
+each resolver result's `agent`; do not maintain a second live panel list.
 
 Each item must set `schemaMode: strict` and use this complete assignment shape:
 
@@ -154,20 +260,28 @@ adds another correlated draw. Its corpus and answer key are private
 
 ## One targeted refutation round
 
-Run a second round only when a P0/P1 remains disputed or unresolved after direct verification. There is at most one targeted refutation round for the entire review ID.
-
-Choose one qualified family that did not originate the claim when possible. Launch one reviewer task with `schemaMode: strict`. Give it only:
+Run a refutation only when the machine gate returns `action: targeted-refuter`
+for a readiness-complete `remediation` epoch. Resolve eligible
+reviewers with `python3 lrhe/qualification.py targeted-refuter`. There is at most
+one targeted refutation for the entire review sequence. Select one returned
+family that did not originate the claim when possible, then launch one reviewer
+task with `schemaMode: strict`. Give it only:
 
 ```text
-Claim:
+Claim and finding ID:
 Exact supporting evidence:
 Exact counterevidence:
+Lead verification already performed:
 Repository epoch and packet:
 Question that must be answered:
 Permitted read-only verification methods:
 ```
 
-Do not provide the original reviews, reviewer identities, vote counts, or rhetoric. The assignment must ask the refuter to falsify the single normalized claim, not to conduct another general review. Record the result as `confirmed`, `falsified`, or `unresolved/human decision`, update the ledger, and stop. Never start a third round.
+Do not provide the original reviews, reviewer identities, vote counts, or
+rhetoric. Ask the refuter to falsify the single normalized claim, not to conduct
+another general review. Record `confirmed`, `falsified`, or `unresolved/human
+decision`, update the ledger, and stop. Never start another refutation or a third
+general council pass.
 
 ## Close and report
 
@@ -181,4 +295,4 @@ Recheck epoch digests once more before final disposition. Mark the review stale 
 - accepted implementation/design changes and verification evidence;
 - explicit residual risks and human waivers.
 
-There is no majority verdict. The GPT lead owns the final evidence-based decision and coherent revision. Close the epoch before modifying reviewed files. If revision changes the reviewed contract or resolves a blocking finding, run a new review epoch rather than treating the old approval as current.
+There is no majority verdict. The GPT lead owns the final evidence-based decision and coherent revision. Close the frozen epoch before modifying reviewed files. Then apply the sequence gate: close verified localized remediation directly; use the single targeted-refuter path only for a still-disputed P0/P1; return systemic omissions to implementation audit; and open another full council only for a readiness-complete material redesign within the two-pass limit.
