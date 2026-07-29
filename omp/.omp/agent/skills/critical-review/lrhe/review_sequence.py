@@ -81,6 +81,15 @@ RECORD_FIELDS = frozenset(
     }
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+SESSION_LOCAL_ROOT = Path.home() / ".omp/agent/sessions"
+
+
+def _is_session_local(path: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(SESSION_LOCAL_ROOT.resolve(strict=False))
+    except ValueError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -196,6 +205,8 @@ def verify_subject_files(record: Mapping[str, object]) -> tuple[str, ...]:
         errors.append("invalid-artifact-digest")
     else:
         artifact_path = Path(artifact_path_value)
+        if _is_session_local(artifact_path):
+            errors.append("ephemeral-review-path:artifact")
         if not artifact_path.is_file():
             errors.append("artifact-not-readable")
         elif _sha256(artifact_path) != artifact_digest:
@@ -253,6 +264,9 @@ def _binding_errors(record: Mapping[str, object]) -> tuple[str, ...]:
             errors.append(prefix)
             continue
         path = Path(path_value)
+        if _is_session_local(path):
+            errors.append(f"ephemeral-review-path:receipt:{receipt_id}")
+            continue
         if not path.is_file() or _sha256(path) != expected:
             errors.append(prefix)
             continue
@@ -337,6 +351,9 @@ def _history_errors(record: Mapping[str, object], mode: object) -> tuple[str, ..
             errors.append(f"{prefix}:record-binding")
         else:
             record_path = Path(record_path_value)
+            if _is_session_local(record_path):
+                errors.append(f"{prefix}:ephemeral-record-path")
+                continue
             if not record_path.is_file() or _sha256(record_path) != record_digest:
                 errors.append(f"{prefix}:record-binding")
     if len(history_ids) != len(set(history_ids)):

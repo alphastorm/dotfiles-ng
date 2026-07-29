@@ -13,7 +13,7 @@ import yaml
 import review_checks
 import make_receipt
 from qualification import QualificationError, live_reviewers, load_qualification, validate_qualification
-from review_sequence import PROOF_CLASSES, proof_subject_digest, readiness_errors, select_review_action
+from review_sequence import PROOF_CLASSES, SESSION_LOCAL_ROOT, proof_subject_digest, readiness_errors, select_review_action
 
 QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
 SKILL = Path.home() / ".omp/agent/skills/critical-review/SKILL.md"
@@ -189,6 +189,23 @@ def test_receipt_from_an_earlier_subject_is_rejected(tmp_path: Path) -> None:
     _write_json(receipt_path, payload)
     record["proof_receipts"]["focused-proof"]["sha256"] = _sha256(receipt_path)
     assert "invalid-proof-receipt:focused-proof" in readiness_errors(record)
+
+
+def test_session_local_review_evidence_fails_closed(tmp_path: Path) -> None:
+    record = _ready_record(tmp_path)
+    record["artifact_path"] = str(SESSION_LOCAL_ROOT / "ephemeral-artifact.diff")
+    record["proof_receipts"]["focused-proof"]["path"] = str(
+        SESSION_LOCAL_ROOT / "ephemeral-receipt.json"
+    )
+    reasons = readiness_errors(record)
+    assert "ephemeral-review-path:artifact" in reasons
+    assert "ephemeral-review-path:receipt:focused-proof" in reasons
+
+    remediation = _ready_record(tmp_path / "remediation", "remediation")
+    remediation["sequence_history"][0]["record_path"] = str(
+        SESSION_LOCAL_ROOT / "ephemeral-history.json"
+    )
+    assert "invalid-history-row:0:ephemeral-record-path" in readiness_errors(remediation)
 
 
 def test_matrix_must_cover_every_changed_path_and_risk_domain(tmp_path: Path) -> None:

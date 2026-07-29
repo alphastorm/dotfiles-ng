@@ -116,7 +116,10 @@ temporary commit or any history mutation requires authorization already present
 in the current request or an Ask gate.
 
 1. Choose a review ID such as `CR-<UTC timestamp>-<short digest>` and create
-   `local://critical-review/<review-id>/`.
+   durable storage at `~/.omp/agent/critical-review/<review-id>/`. Never use
+   session-scoped `local://` storage: future epochs must revalidate prior records.
+   Future epochs cite that canonical `review-record.json` directly; only legacy
+   session-local records are copied once into durable history.
 2. Record repository root, branch, base commit, HEAD, changed paths,
    review-scoped untracked paths, and relevant design artifacts.
 3. Materialize the complete review-scoped diff or design as `artifact.diff`.
@@ -202,7 +205,7 @@ Do not give reviewers caller-provided output schemas that weaken their agent sch
 
 ## Finding ledger
 
-After the epoch digest recheck passes, create `local://critical-review/<review-id>/ledger.md`. Normalize every `evidence` and `unresolved` item into one row with:
+After the epoch digest recheck passes, create `~/.omp/agent/critical-review/<review-id>/ledger.md`. Normalize every `evidence` and `unresolved` item into one row with:
 
 | Field | Required content |
 | --- | --- |
