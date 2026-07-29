@@ -1380,7 +1380,8 @@ def test_the_judge_schema_and_the_runner_agree_on_the_label_field():
 def _run_kappa_packet(
         tmp_path: Path, rows: list[dict], judge: list[dict], *,
         case_map: list[dict] | None = None,
-        corpus: list[dict] | None = None) -> subprocess.CompletedProcess:
+        corpus: list[dict] | None = None,
+        expect_rows: int | None = None) -> subprocess.CompletedProcess:
     packet_path = tmp_path / "calibration.csv"
     judge_path = tmp_path / "judge.jsonl"
     fields = [
@@ -1397,7 +1398,7 @@ def _run_kappa_packet(
         PY, "judge_lrhe.py", "kappa",
         "--calibration", str(packet_path),
         "--judge", str(judge_path),
-        "--expect-rows", str(len(rows)),
+        "--expect-rows", str(len(rows) if expect_rows is None else expect_rows),
     ]
     if case_map is not None:
         case_map_path = tmp_path / "case-map.jsonl"
@@ -1433,6 +1434,91 @@ def test_kappa_refuses_a_partially_labelled_packet(tmp_path: Path):
     assert "Cohen's kappa" not in res.stdout + res.stderr
 
 
+def test_kappa_refuses_a_per_judge_file_with_many_rows_per_claim(tmp_path: Path):
+    """One rater against one arbitrary panel member is not the section 8 gate.
+
+    `judge-floor.jsonl` holds 667 rows over 315 claims. Indexing it by claim used to
+    keep whichever row came last, so the gate would have scored a number computed
+    against an arbitrary reviewer. It must refuse and ask for the aggregate.
+    """
+    rows = [
+        {"run_id": "r1", "claim_rid": "1", "item_id": "S1",
+         "human_verdict": "CONFIRMED", "human_label_id": "L1"},
+    ]
+    judge = [
+        {"run_id": "r1", "claim_rid": "1", "verdict": "CONFIRMED", "label_id": "L1",
+         "judge_family": "kimi"},
+        {"run_id": "r1", "claim_rid": "1", "verdict": "FABRICATED", "label_id": "",
+         "judge_family": "glm"},
+    ]
+    corpus = [{"item_id": "S1", "labels": [{"label_id": "L1"}]}]
+
+    res = _run_kappa_packet(tmp_path, rows, judge, corpus=corpus)
+    assert res.returncode == 2, res.stdout + res.stderr
+    assert "several rows for 1 claim" in res.stderr
+    assert "Cohen's kappa" not in res.stdout + res.stderr
+
+
+def test_kappa_refuses_a_judge_file_that_is_not_keyed_by_claim(tmp_path: Path):
+    """A raw judge-responses file is keyed by judge_id and used to crash with KeyError."""
+    rows = [
+        {"run_id": "r1", "claim_rid": "1", "item_id": "S1",
+         "human_verdict": "PLAUSIBLE", "human_label_id": ""},
+    ]
+    judge = [{"judge_id": "j1", "judge_family": "kimi", "verdict": "PLAUSIBLE"}]
+    corpus = [{"item_id": "S1", "labels": [{"label_id": "L1"}]}]
+
+    res = _run_kappa_packet(tmp_path, rows, judge, corpus=corpus)
+    assert res.returncode == 2, res.stdout + res.stderr
+    assert "no usable judge rows" in res.stderr
+    assert "Traceback" not in res.stderr
+    assert "Cohen's kappa" not in res.stdout + res.stderr
+
+
+def test_kappa_resolves_a_retired_run_id_suffix_onto_the_current_run(tmp_path: Path):
+    """The frozen 60-claim packet predates run_id becoming a digest of the reply.
+
+    Every key in it carries the retired timestamp suffix, so an exact join matches
+    nothing. `auto_reliability._run_stem` documents the change and the packet's ids are
+    also the audit's selection provenance, so kappa resolves rather than the packet
+    being rewritten.
+    """
+    rows = [
+        {"run_id": "S1-11c5338b-glm-floor-1785281118", "claim_rid": "1",
+         "item_id": "S1", "human_verdict": "CONFIRMED", "human_label_id": "L1"},
+    ]
+    judge = [
+        {"run_id": "S1-11c5338b-glm-floor-b86a9858", "claim_rid": "1",
+         "verdict": "CONFIRMED", "label_id": "L1"},
+    ]
+    corpus = [{"item_id": "S1", "labels": [{"label_id": "L1"}]}]
+
+    res = _run_kappa_packet(tmp_path, rows, judge, corpus=corpus)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "calibration pairs: 1" in res.stdout
+    assert "no judge record" not in res.stderr
+
+
+def test_kappa_refuses_an_ambiguous_run_id_stem(tmp_path: Path):
+    """Resolution is only sound while a stem identifies exactly one run."""
+    rows = [
+        {"run_id": "S1-11c5338b-glm-floor-1785281118", "claim_rid": "1",
+         "item_id": "S1", "human_verdict": "CONFIRMED", "human_label_id": "L1"},
+    ]
+    judge = [
+        {"run_id": "S1-11c5338b-glm-floor-aaaaaaaa", "claim_rid": "1",
+         "verdict": "CONFIRMED", "label_id": "L1"},
+        {"run_id": "S1-11c5338b-glm-floor-bbbbbbbb", "claim_rid": "1",
+         "verdict": "FABRICATED", "label_id": ""},
+    ]
+    corpus = [{"item_id": "S1", "labels": [{"label_id": "L1"}]}]
+
+    res = _run_kappa_packet(tmp_path, rows, judge, corpus=corpus)
+    assert res.returncode == 2, res.stdout + res.stderr
+    assert "ambiguous" in res.stderr
+    assert "Cohen's kappa" not in res.stdout + res.stderr
+
+
 def test_kappa_refuses_confirmed_label_outside_the_item_label_set(tmp_path: Path):
     """Verdict agreement cannot hide that the human matched a different item defect."""
     rows = [
@@ -1449,8 +1535,110 @@ def test_kappa_refuses_confirmed_label_outside_the_item_label_set(tmp_path: Path
 
     res = _run_kappa_packet(tmp_path, rows, judge, case_map=case_map)
     assert res.returncode == 2, res.stdout + res.stderr
-    assert "human_label_id 'L99' is not valid for item 'S1'" in res.stderr
+    # The blinded path names the opaque case_id, never item_id: echoing `S1` back would
+    # leak the stratum prefix the packet exists to withhold.
+    assert "human_label_id 'L99' is not valid for case 'AR-0001'" in res.stderr
+    assert "'S1'" not in res.stderr
     assert "Cohen's kappa" not in res.stdout + res.stderr
+
+
+def _gate_fixture(n_gate: int = 3, n_supplement: int = 2):
+    """A blinded packet with both kinds, plus its case map and judge aggregate."""
+    verdicts = ["CONFIRMED", "PLAUSIBLE", "FABRICATED"]
+    packet, case_map, judge = [], [], []
+    for i in range(n_gate):
+        cid = f"AR-{i + 1:04d}"
+        human = verdicts[i % 3]
+        panel = verdicts[(i + 1) % 3]
+        packet.append({"case_id": cid, "human_verdict": human,
+                       "human_label_id": "L1" if human == "CONFIRMED" else ""})
+        case_map.append({"case_id": cid, "run_id": f"r{i}", "claim_rid": "1",
+                         "item_id": f"S{i}", "label_ids": ["L1"], "kind": "case"})
+        judge.append({"run_id": f"r{i}", "claim_rid": "1", "verdict": panel,
+                      "label_id": "L1" if panel == "CONFIRMED" else ""})
+    for j in range(n_supplement):
+        cid = f"AR-{900 + j:04d}"
+        packet.append({"case_id": cid, "human_verdict": "", "human_label_id": ""})
+        case_map.append({"case_id": cid, "run_id": f"s{j}", "claim_rid": "1",
+                         "item_id": f"S{j}", "label_ids": ["L1"],
+                         "kind": "case_supplement"})
+        judge.append({"run_id": f"s{j}", "claim_rid": "1", "verdict": "PLAUSIBLE",
+                      "label_id": ""})
+    return packet, case_map, judge
+
+
+def test_kappa_gate_excludes_supplements_and_keeps_the_preregistered_n(tmp_path: Path):
+    """`case_supplement` rows may sit in the frozen packet but never enter kappa.
+
+    Widening the gate from the frozen 60 to 65 would quietly restate a preregistered
+    number, so the supplements are reported separately and the unlabelled ones do not
+    block the gate either.
+    """
+    packet, case_map, judge = _gate_fixture(n_gate=3, n_supplement=2)
+    res = _run_kappa_packet(tmp_path, packet, judge, case_map=case_map, expect_rows=3)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "calibration pairs: 3" in res.stdout
+    assert "supplemental cases (not in the gate): 2 (0 labelled)" in res.stdout
+
+
+def test_kappa_requires_every_gating_case_to_be_labelled(tmp_path: Path):
+    """A convenient subset of the gate cannot produce a coefficient."""
+    packet, case_map, judge = _gate_fixture(n_gate=3, n_supplement=1)
+    packet[1]["human_verdict"] = ""
+    packet[1]["human_label_id"] = ""
+    res = _run_kappa_packet(tmp_path, packet, judge, case_map=case_map, expect_rows=3)
+    assert res.returncode == 2, res.stdout + res.stderr
+    assert "human_verdict is empty" in res.stderr
+    assert "Cohen's kappa" not in res.stdout + res.stderr
+
+
+def test_kappa_rejects_a_control_from_the_human_gate(tmp_path: Path):
+    """Planted controls are not calibration observations."""
+    packet, case_map, judge = _gate_fixture(n_gate=1, n_supplement=0)
+    case_map[0]["kind"] = "control"
+    res = _run_kappa_packet(tmp_path, packet, judge, case_map=case_map, expect_rows=1)
+    assert res.returncode == 2, res.stdout + res.stderr
+    assert "not part of the human gate" in res.stderr
+
+
+def test_preflight_and_cli_agree_on_the_same_sixty_cases(tmp_path: Path):
+    """The status line and `judge_lrhe.py kappa` must compute one number.
+
+    They used to read different packets by different join rules, so preflight could print
+    `kappa n/a` over a packet the CLI scored fine. Both now go through
+    `blinded_calibration_pairs`, and this pins them to the same arithmetic.
+    """
+    sys.path.insert(0, str(HERE))
+    import judge_lrhe
+
+    packet, case_map, judge_rows = _gate_fixture(n_gate=6, n_supplement=2)
+    packet_path = tmp_path / "human-packet.csv"
+    case_map_path = tmp_path / "case-map.private.jsonl"
+    judge_path = tmp_path / "judge-agg.jsonl"
+    with packet_path.open("w", newline="") as fh:
+        writer = csv.DictWriter(
+            fh, fieldnames=["case_id", "human_verdict", "human_label_id"])
+        writer.writeheader()
+        writer.writerows(packet)
+    _write_jsonl(case_map_path, case_map)
+    _write_jsonl(judge_path, judge_rows)
+
+    judge_index, problems = judge_lrhe.load_judge_index(judge_path)
+    assert problems == []
+    compared, supplemental, violations = judge_lrhe.blinded_calibration_pairs(
+        packet_path, case_map_path, judge_index, expect_gating=6)
+    assert violations == [], violations
+    assert len(compared) == 6
+    assert len(supplemental) == 2
+    loader_kappa = judge_lrhe.calibration_agreement(compared)["verdict_kappa"]
+
+    res = _run_kappa_packet(tmp_path, packet, judge_rows, case_map=case_map,
+                            expect_rows=6)
+    assert res.returncode == 0, res.stdout + res.stderr
+    cli_kappa = float(
+        re.search(r"verdict agreement:\s+raw agreement : [\d.]+\s+"
+                  r"Cohen's kappa : (-?[\d.]+)", res.stdout).group(1))
+    assert abs(cli_kappa - round(loader_kappa, 3)) < 1e-9, (cli_kappa, loader_kappa)
 
 
 def test_kappa_composite_is_below_verdict_when_confirmed_labels_differ(

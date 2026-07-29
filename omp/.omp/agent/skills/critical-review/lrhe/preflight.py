@@ -502,43 +502,70 @@ def _adjudicated() -> int:
 
 
 def _calibration() -> tuple[int, int, float | None]:
-    """(labelled rows, rows in the packet, kappa against the judges) for the blind packet.
+    """(labelled gate rows, gate size, kappa) for the blinded human packet.
 
     Adjudication coverage being complete does NOT finish this step. With 315 of 315 claims
     judged the predicate read done while the calibration packet held 0 labelled rows, so
     preflight said "nothing manual remains" over numbers that are provisional by their own
     protocol. Fourth instance of the same shape: a step is not done because the artifact
     upstream of it exists.
+
+    Reads `auto-reliability-v1/human-packet.csv`, the blinded packet with opaque case ids.
+    `judge-calibration-packet.csv` is the frozen *selection manifest* and must stay
+    unlabelled -- it leaks item_id and the S4 trap prefix, and it is also the `--selection`
+    input to `auto_reliability.py build`.
+
+    The gate is computed through `judge_lrhe.blinded_calibration_pairs`, the same loader
+    the CLI uses, so this line and `judge_lrhe.py kappa` cannot disagree.
     """
-    packet = DATA / "judge-calibration-packet.csv"
+    packet = DATA / "auto-reliability-v1" / "human-packet.csv"
+    case_map = DATA / "auto-reliability-v1" / "case-map.private.jsonl"
+    judge_path = DATA / "judge-floor-agg.jsonl"
     try:
         import csv as _csv
         with packet.open() as fh:
             rows = list(_csv.DictReader(fh))
     except OSError:
         return (0, 0, None)
-    labelled = [r for r in rows if (r.get("human_verdict") or "").strip()]
-    if not labelled:
+    if not (case_map.exists() and judge_path.exists()):
         return (0, len(rows), None)
-    agg = {}
+
+    import judge_lrhe
     try:
-        for line in (DATA / "judge-floor-agg.jsonl").read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                agg[(row.get("run_id"), str(row.get("claim_rid")))] = row.get("verdict")
+        judge, judge_problems = judge_lrhe.load_judge_index(judge_path)
     except OSError:
-        return (len(labelled), len(rows), None)
-    pairs = [(agg[k], r["human_verdict"].strip())
-             for r in labelled
-             if (k := (r.get("run_id"), str(r.get("claim_rid")))) in agg]
-    if not pairs:
-        return (len(labelled), len(rows), None)
-    observed = sum(1 for a, b in pairs if a == b) / len(pairs)
-    cats = {c for pair in pairs for c in pair}
-    expected = sum((sum(1 for a, _ in pairs if a == c) / len(pairs))
-                   * (sum(1 for _, b in pairs if b == c) / len(pairs)) for c in cats)
-    kappa = 1.0 if expected >= 1 else (observed - expected) / (1 - expected)
-    return (len(labelled), len(rows), kappa)
+        return (0, len(rows), None)
+    gate_size = sum(1 for case in _read_case_kinds(case_map)
+                    if case in {str(r.get("case_id") or "").strip() for r in rows})
+    labelled = sum(
+        1 for r in rows
+        if (r.get("human_verdict") or "").strip()
+        and str(r.get("case_id") or "").strip() in _read_case_kinds(case_map))
+    if judge_problems or labelled < gate_size or not gate_size:
+        return (labelled, gate_size, None)
+
+    compared, _supplemental, problems = judge_lrhe.blinded_calibration_pairs(
+        packet, case_map, judge, expect_gating=gate_size)
+    if problems or not compared:
+        return (labelled, gate_size, None)
+    return (labelled, gate_size,
+            judge_lrhe.calibration_agreement(compared)["verdict_kappa"])
+
+
+def _read_case_kinds(case_map) -> set[str]:
+    """case_ids in the case map that belong to the human gate (`kind == "case"`)."""
+    import judge_lrhe
+    out = set()
+    try:
+        for line in Path(case_map).read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if str(row.get("kind") or "").strip() == judge_lrhe.GATE_KIND:
+                out.add(str(row.get("case_id") or "").strip())
+    except OSError:
+        return set()
+    return out
 
 
 def _authorization(kind: str) -> bool:
@@ -641,10 +668,18 @@ MANUAL_STEPS = (
     (f"the kappa >= 0.70 human calibration ({_calibration()[0]}/{_calibration()[1]} "
      f"labelled, kappa "
      f"{'n/a' if _calibration()[2] is None else format(_calibration()[2], '.2f')})",
-     "the blinded packet is at lrhe-data/judge-calibration-packet.csv, stratified across "
-     "all 13 stratum x verdict cells with the panel's own verdict withheld. Fill "
-     "`human_verdict` with CONFIRMED / PLAUSIBLE / FABRICATED and run `judge_lrhe.py "
-     "kappa`. Until this passes, `arm_critical_recall`, `unique_contribution` and the "
+     "the blinded packet is at lrhe-data/auto-reliability-v1/human-packet.csv: opaque "
+     "case ids and two blank columns, nothing that leaks item_id or the S4 trap prefix. "
+     "Fill `human_verdict` with CONFIRMED / PLAUSIBLE / FABRICATED (and `human_label_id` "
+     "on CONFIRMED), then:\n"
+     "       judge_lrhe.py kappa --calibration lrhe-data/auto-reliability-v1/human-packet.csv \\\n"
+     "         --judge lrhe-data/judge-floor-agg.jsonl \\\n"
+     "         --case-map lrhe-data/auto-reliability-v1/case-map.private.jsonl\n"
+     "     The gate is the frozen 60 `kind == case` rows; the 5 `case_supplement` rows in "
+     "that packet are reported separately and never enter kappa. Do NOT label "
+     "lrhe-data/judge-calibration-packet.csv -- it is the frozen selection manifest and "
+     "the `--selection` input to auto_reliability.py build. Until this passes, "
+     "`arm_critical_recall`, `unique_contribution` and the "
      "leave-one-family-out deltas are provisional by the protocol's own terms -- "
      "adjudicating 667 calls produced them faster, not more quotable. A separate step "
      "from adjudication on purpose: with 315 of 315 claims judged the combined predicate "

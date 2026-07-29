@@ -614,7 +614,14 @@ def cmd_calibrate(args) -> int:
     print(f"cells sampled: {len({(r['_stratum'], r['_verdict']) for r in picked})} "
           f"of {len(cells)} (stratum x verdict)")
     print("Fill `human_verdict` with CONFIRMED / PLAUSIBLE / FABRICATED, then:")
-    print(f"  judge_lrhe.py kappa --calibration {args.out} --judge {args.judge}")
+    print(f"  judge_lrhe.py kappa --calibration {args.out} \\")
+    print("      --judge <one row per claim, e.g. judge-floor-agg.jsonl> \\")
+    print("      --corpus <corpus.jsonl>")
+    print("`--corpus` is required for this packet format, and `--judge` must be an")
+    print("aggregated file: a per-judge file holds several rows per claim and only one")
+    print("of them would be compared. `kappa` rejects duplicate keys rather than guess.")
+    print("The packet's run_id must be the one the judge file carries -- ingest assigns")
+    print("its own, so a packet built from prompt-stage ids will not join.")
     return 0
 
 
@@ -629,13 +636,210 @@ def cohens_kappa(a: list[str], b: list[str]) -> tuple[float, float]:
     return ((po - pe) / (1 - pe) if pe < 1 else 1.0), po
 
 
+GATE_KIND = "case"
+SUPPLEMENT_KIND = "case_supplement"
+
+
+def load_judge_index(path) -> tuple[dict[tuple[str, str], dict], list[str]]:
+    """Index an aggregated judge file by claim, or say why it cannot be used.
+
+    A per-judge file carries one row per reviewer per claim. Indexing it by claim
+    silently kept whichever row came last, so the rater was scored against an
+    arbitrary panel member -- that produced a number rather than an error, which is
+    the worse failure. Duplicates are refused instead.
+    """
+    judge: dict[tuple[str, str], dict] = {}
+    duplicates: dict[tuple[str, str], int] = {}
+    for row in _read_jsonl(path):
+        if "run_id" not in row or "claim_rid" not in row:
+            continue
+        key = (str(row["run_id"]).strip(), str(row["claim_rid"]).strip())
+        if key in judge:
+            duplicates[key] = duplicates.get(key, 1) + 1
+            continue
+        judge[key] = row
+
+    violations: list[str] = []
+    if not judge:
+        violations.append(
+            f"{path} yielded no usable judge rows: every record is missing run_id or "
+            "claim_rid. A raw judge-responses file is keyed by judge_id, not by claim "
+            "-- pass an ingested or aggregated file.")
+    if duplicates:
+        sample = ", ".join(f"{r}+{c}" for r, c in sorted(duplicates)[:3])
+        violations.append(
+            f"{path} holds several rows for {len(duplicates)} claim(s) (up to "
+            f"{max(duplicates.values())}); e.g. {sample}. That is a per-judge file, and "
+            "scoring one rater against one arbitrary panel member is not the gate. Pass "
+            "the aggregated file with one row per claim.")
+    return judge, violations
+
+
+def blinded_calibration_pairs(packet, case_map, judge, *, expect_gating: int = 60):
+    """(gate pairs, supplemental rows, violations) for a blinded case-id packet.
+
+    The one loader behind both `judge_lrhe.py kappa` and preflight, so the CLI and the
+    status line cannot disagree about what the gate measured.
+
+    Opaque `case_id` is resolved through the private case map rather than joined on
+    `run_id`: that suffix was a function of when ingest ran and is a digest of the reply
+    now, so the frozen selection's keys match nothing in a current judge file.
+
+    `kind` decides membership. `case` rows are the preregistered gate and every one of
+    them must be labelled. `case_supplement` rows may sit in the frozen packet but are
+    reported separately and never enter kappa -- the gate is the frozen 60, and widening
+    it to 65 would quietly restate a preregistered number. `control` rows are planted
+    and are refused outright.
+    """
+    cases: dict[str, dict] = {}
+    duplicate_cases: set[str] = set()
+    for case in _read_jsonl(case_map):
+        case_id = str(case.get("case_id", "")).strip()
+        if not case_id:
+            continue
+        if case_id in cases:
+            duplicate_cases.add(case_id)
+        else:
+            cases[case_id] = case
+
+    violations: list[str] = []
+    compared: list[dict] = []
+    supplemental: list[dict] = []
+    seen_case_ids: dict[str, int] = {}
+    seen_judge_keys: dict[tuple[str, str], int] = {}
+
+    for line_number, row in enumerate(_read_csv(packet), start=2):
+        case_id = str(row.get("case_id") or "").strip()
+        verdict = str(row.get("human_verdict") or "").strip().upper()
+        label = str(row.get("human_label_id") or "").strip()
+        where = f"CSV row {line_number}"
+
+        if not case_id:
+            violations.append(f"{where}: missing case_id")
+            continue
+        if case_id in seen_case_ids:
+            violations.append(
+                f"{where}: duplicate case_id {case_id!r} (first seen on row "
+                f"{seen_case_ids[case_id]})")
+            continue
+        seen_case_ids[case_id] = line_number
+        if case_id in duplicate_cases:
+            violations.append(f"{where}: case_id {case_id!r} is duplicated in the case map")
+            continue
+        case = cases.get(case_id)
+        if case is None:
+            violations.append(f"{where}: unknown case_id {case_id!r}")
+            continue
+
+        kind = str(case.get("kind") or "").strip()
+        if kind == SUPPLEMENT_KIND:
+            supplemental.append({"case_id": case_id, "human_verdict": verdict,
+                                 "human_label_id": label})
+            if verdict and verdict not in VERDICTS:
+                violations.append(
+                    f"{where}: invalid human_verdict {verdict!r}; expected one of "
+                    f"{', '.join(VERDICTS)}")
+            continue
+        if kind != GATE_KIND:
+            violations.append(
+                f"{where}: case_id {case_id!r} maps to kind {kind!r}, which is not part "
+                f"of the human gate (expected {GATE_KIND!r})")
+            continue
+
+        if not verdict:
+            violations.append(f"{where}: human_verdict is empty")
+        elif verdict not in VERDICTS:
+            violations.append(
+                f"{where}: invalid human_verdict {verdict!r}; expected one of "
+                f"{', '.join(VERDICTS)}")
+
+        label_set = None
+        raw_labels = case.get("label_ids")
+        if isinstance(raw_labels, list):
+            label_set = {str(x).strip() for x in raw_labels if str(x).strip()}
+        if verdict == "CONFIRMED":
+            if not label:
+                violations.append(f"{where}: CONFIRMED requires human_label_id")
+            elif label_set is None:
+                violations.append(
+                    f"{where}: no item label set is available to validate "
+                    f"human_label_id {label!r}")
+            elif label not in label_set:
+                violations.append(
+                    f"{where}: human_label_id {label!r} is not valid for case {case_id!r}")
+        elif verdict in ("PLAUSIBLE", "FABRICATED") and label:
+            violations.append(f"{where}: {verdict} requires an empty human_label_id")
+
+        run_id = str(case.get("run_id") or "").strip()
+        claim_rid = str(case.get("claim_rid") or "").strip()
+        if not run_id or not claim_rid:
+            violations.append(
+                f"{where}: case_id {case_id!r} has no complete run_id + claim_rid mapping")
+            continue
+        judge_key = (run_id, claim_rid)
+        if judge_key in seen_judge_keys:
+            violations.append(
+                f"{where}: duplicate resolved judge key {run_id!r} + {claim_rid!r} "
+                f"(first seen on row {seen_judge_keys[judge_key]})")
+            continue
+        seen_judge_keys[judge_key] = line_number
+        judge_row = judge.get(judge_key)
+        if judge_row is None:
+            violations.append(
+                f"{where}: no judge record for {run_id!r} + {claim_rid!r}")
+            continue
+        if verdict in VERDICTS:
+            compared.append({
+                "case_id": case_id,
+                "human_verdict": verdict,
+                "human_label_id": label,
+                "panel_verdict": str(judge_row.get("verdict") or "").strip().upper(),
+                "panel_label_id": str(judge_row.get("label_id") or "").strip(),
+            })
+
+    gating_seen = len(compared) + sum(
+        1 for cid in seen_case_ids
+        if str((cases.get(cid) or {}).get("kind") or "").strip() == GATE_KIND
+        and cid not in {row["case_id"] for row in compared})
+    if gating_seen != expect_gating:
+        violations.append(
+            f"the gate is the frozen {expect_gating} {GATE_KIND} rows, found {gating_seen}")
+    return compared, supplemental, violations
+
+
+def calibration_agreement(compared: list[dict]) -> dict:
+    """Every figure the section 8 gate reports, from one list of paired judgements."""
+    verdict_kappa, verdict_raw = cohens_kappa(
+        [r["human_verdict"] for r in compared], [r["panel_verdict"] for r in compared])
+    both = [r for r in compared if r["human_verdict"] == r["panel_verdict"] == "CONFIRMED"]
+    human_labels = [r["human_label_id"] for r in both]
+    panel_labels = [r["panel_label_id"] for r in both]
+    label_kappa, label_raw = cohens_kappa(human_labels, panel_labels) if both \
+        else (float("nan"), float("nan"))
+    composite_kappa, composite_raw = cohens_kappa(
+        [f"CONFIRMED:{r['human_label_id']}" if r["human_verdict"] == "CONFIRMED"
+         else r["human_verdict"] for r in compared],
+        [f"CONFIRMED:{r['panel_label_id']}" if r["panel_verdict"] == "CONFIRMED"
+         else r["panel_verdict"] for r in compared])
+    return {"n": len(compared), "verdict_kappa": verdict_kappa, "verdict_raw": verdict_raw,
+            "both_confirmed": len(both), "label_kappa": label_kappa, "label_raw": label_raw,
+            "label_single_category": bool(both) and
+            len(set(human_labels) | set(panel_labels)) == 1,
+            "composite_kappa": composite_kappa, "composite_raw": composite_raw}
+
+
 def cmd_kappa(args) -> int:
-    judge = {
-        (str(j["run_id"]).strip(), str(j["claim_rid"]).strip()): j
-        for j in _read_jsonl(args.judge)
-    }
+    judge, violations = load_judge_index(args.judge)
+    supplemental: list[dict] = []
+
+    if args.case_map is not None:
+        # Blinded case-id packet: one loader, shared with preflight.
+        compared, supplemental, packet_violations = blinded_calibration_pairs(
+            args.calibration, args.case_map, judge, expect_gating=args.expect_rows)
+        violations.extend(packet_violations)
+        return _report_calibration(compared, supplemental, violations)
+
     rows = _read_csv(args.calibration)
-    violations = []
     if len(rows) != args.expect_rows:
         violations.append(
             f"expected exactly {args.expect_rows} rows, found {len(rows)}")
@@ -649,25 +853,31 @@ def cmd_kappa(args) -> int:
                 for label in item.get("labels", [])
                 if str(label.get("label_id", "")).strip()
             }
-    elif args.case_map is None:
+    else:
         violations.append(
             "--corpus is required for legacy run_id + claim_rid packets")
 
-    cases: dict[str, dict] = {}
-    duplicate_case_ids: set[str] = set()
-    if args.case_map is not None:
-        for case in _read_jsonl(args.case_map):
-            case_id = str(case.get("case_id", "")).strip()
-            if not case_id:
-                continue
-            if case_id in cases:
-                duplicate_case_ids.add(case_id)
-            else:
-                cases[case_id] = case
+    # The frozen 60-claim selection carries the retired timestamp suffix on every
+    # run_id, so an exact join against a current judge file matches nothing --
+    # `auto_reliability._run_stem` documents the change. That module already owns the
+    # sound resolution (exact first, then a stem that identifies exactly one run,
+    # refusing an ambiguous stem rather than guessing), so reuse it instead of
+    # rewriting the packet: those ids are also the audit's selection provenance.
+    selection_keys = [
+        (str(row.get("run_id") or "").strip(), str(row.get("claim_rid") or "").strip())
+        for row in rows
+        if str(row.get("run_id") or "").strip() and str(row.get("claim_rid") or "").strip()
+    ]
+    resolved_keys: dict[tuple[str, str], tuple[str, str]] = {}
+    if selection_keys and judge:
+        import auto_reliability
+        resolved_keys, stem_problems = auto_reliability.resolve_selection(
+            selection_keys, judge)
+        violations.extend(f"selection key: {problem}" for problem in stem_problems)
 
     seen_packet_keys: dict[tuple[str, ...], int] = {}
     seen_judge_keys: dict[tuple[str, str], int] = {}
-    compared = []
+    compared: list[dict] = []
     for line_number, row in enumerate(rows, start=2):
         verdict = str(row.get("human_verdict") or "").strip().upper()
         human_label = str(row.get("human_label_id") or "").strip()
@@ -678,80 +888,34 @@ def cmd_kappa(args) -> int:
                 f"CSV row {line_number}: invalid human_verdict {verdict!r}; "
                 f"expected one of {', '.join(VERDICTS)}")
 
-        item_id = ""
-        label_set: set[str] | None = None
         judge_key: tuple[str, str] | None = None
-        if args.case_map is not None:
-            case_id = str(row.get("case_id") or "").strip()
-            if not case_id:
-                violations.append(f"CSV row {line_number}: missing case_id")
-            else:
-                packet_key = ("case_id", case_id)
-                if packet_key in seen_packet_keys:
-                    violations.append(
-                        f"CSV row {line_number}: duplicate case_id {case_id!r} "
-                        f"(first seen on row {seen_packet_keys[packet_key]})")
-                else:
-                    seen_packet_keys[packet_key] = line_number
-
-                case = cases.get(case_id)
-                if case_id in duplicate_case_ids:
-                    violations.append(
-                        f"CSV row {line_number}: case_id {case_id!r} is duplicated "
-                        "in the case map")
-                elif case is None:
-                    violations.append(
-                        f"CSV row {line_number}: unknown case_id {case_id!r}")
-                else:
-                    if case.get("kind") != "case":
-                        violations.append(
-                            f"CSV row {line_number}: case_id {case_id!r} maps to "
-                            f"kind {case.get('kind')!r}, not 'case'")
-                    run_id = str(case.get("run_id") or "").strip()
-                    claim_rid = str(case.get("claim_rid") or "").strip()
-                    if not run_id or not claim_rid:
-                        violations.append(
-                            f"CSV row {line_number}: case_id {case_id!r} has no "
-                            "complete run_id + claim_rid mapping")
-                    else:
-                        judge_key = (run_id, claim_rid)
-                    item_id = str(case.get("item_id") or "").strip()
-                    if "label_ids" in case:
-                        raw_labels = case["label_ids"]
-                        if isinstance(raw_labels, list):
-                            label_set = {
-                                str(label_id).strip()
-                                for label_id in raw_labels
-                                if str(label_id).strip()
-                            }
-                    elif item_id:
-                        label_set = corpus_labels.get(item_id)
+        run_id = str(row.get("run_id") or "").strip()
+        claim_rid = str(row.get("claim_rid") or "").strip()
+        if not run_id or not claim_rid:
+            violations.append(
+                f"CSV row {line_number}: missing run_id + claim_rid key")
         else:
-            run_id = str(row.get("run_id") or "").strip()
-            claim_rid = str(row.get("claim_rid") or "").strip()
-            if not run_id or not claim_rid:
+            packet_key = ("run_id+claim_rid", run_id, claim_rid)
+            if packet_key in seen_packet_keys:
                 violations.append(
-                    f"CSV row {line_number}: missing run_id + claim_rid key")
+                    f"CSV row {line_number}: duplicate run_id + claim_rid "
+                    f"{run_id!r} + {claim_rid!r} "
+                    f"(first seen on row {seen_packet_keys[packet_key]})")
             else:
-                packet_key = ("run_id+claim_rid", run_id, claim_rid)
-                if packet_key in seen_packet_keys:
-                    violations.append(
-                        f"CSV row {line_number}: duplicate run_id + claim_rid "
-                        f"{run_id!r} + {claim_rid!r} "
-                        f"(first seen on row {seen_packet_keys[packet_key]})")
-                else:
-                    seen_packet_keys[packet_key] = line_number
-                judge_key = (run_id, claim_rid)
-            item_id = str(row.get("item_id") or "").strip()
-            if item_id:
-                label_set = corpus_labels.get(item_id)
+                seen_packet_keys[packet_key] = line_number
+            judge_key = (run_id, claim_rid)
+        item_id = str(row.get("item_id") or "").strip()
+        label_set = corpus_labels.get(item_id) if item_id else None
+
+        # Resolve before the duplicate check: two packet rows that land on one claim
+        # are one calibration observation however their ids were spelled.
+        if judge_key is not None:
+            judge_key = resolved_keys.get(judge_key, judge_key)
 
         judge_row = None
         if judge_key is not None:
             if judge_key in seen_judge_keys:
                 first = seen_judge_keys[judge_key]
-                # Distinct blinded IDs that resolve to one claim are still the same
-                # calibration observation and must not count twice.
                 if first != line_number:
                     violations.append(
                         f"CSV row {line_number}: duplicate resolved judge key "
@@ -784,66 +948,57 @@ def cmd_kappa(args) -> int:
 
         if judge_row is not None and verdict in VERDICTS:
             compared.append({
+                "case_id": "",
                 "human_verdict": verdict,
                 "human_label_id": human_label,
                 "panel_verdict": str(judge_row.get("verdict") or "").strip().upper(),
                 "panel_label_id": str(judge_row.get("label_id") or "").strip(),
             })
 
+    return _report_calibration(compared, supplemental, violations)
+
+
+def _report_calibration(compared: list[dict], supplemental: list[dict],
+                        violations: list[str]) -> int:
+    """Print the section 8 figures, or the reasons the packet cannot produce them."""
     if violations:
         print(f"invalid calibration packet ({len(violations)} violation(s)):", file=sys.stderr)
         for violation in violations:
             print(f"  - {violation}", file=sys.stderr)
         return 2
 
+    m = calibration_agreement(compared)
     human = [row["human_verdict"] for row in compared]
     panel = [row["panel_verdict"] for row in compared]
-    verdict_kappa, verdict_raw = cohens_kappa(human, panel)
 
-    both_confirmed = [
-        row for row in compared
-        if row["human_verdict"] == row["panel_verdict"] == "CONFIRMED"
-    ]
-    human_labels = [row["human_label_id"] for row in both_confirmed]
-    panel_labels = [row["panel_label_id"] for row in both_confirmed]
-
-    human_composite = [
-        f"CONFIRMED:{row['human_label_id']}"
-        if row["human_verdict"] == "CONFIRMED" else row["human_verdict"]
-        for row in compared
-    ]
-    panel_composite = [
-        f"CONFIRMED:{row['panel_label_id']}"
-        if row["panel_verdict"] == "CONFIRMED" else row["panel_verdict"]
-        for row in compared
-    ]
-    composite_kappa, composite_raw = cohens_kappa(human_composite, panel_composite)
-
-    print(f"calibration pairs: {len(compared)}")
+    print(f"calibration pairs: {m['n']}")
+    if supplemental:
+        labelled = sum(1 for row in supplemental if row["human_verdict"])
+        print(f"supplemental cases (not in the gate): {len(supplemental)} "
+              f"({labelled} labelled)")
     print("\nverdict agreement:")
-    print(f"  raw agreement : {verdict_raw:.3f}")
-    print(f"  Cohen's kappa : {verdict_kappa:.3f}")
+    print(f"  raw agreement : {m['verdict_raw']:.3f}")
+    print(f"  Cohen's kappa : {m['verdict_kappa']:.3f}")
 
     print("\nexact matched-label agreement conditional on CONFIRMED:")
-    print(f"  n             : {len(both_confirmed)}")
-    if not both_confirmed:
+    print(f"  n             : {m['both_confirmed']}")
+    if not m["both_confirmed"]:
         print("  raw agreement : n/a (no row was CONFIRMED by both raters)")
         print("  Cohen's kappa : n/a (no row was CONFIRMED by both raters)")
     else:
-        label_kappa, label_raw = cohens_kappa(human_labels, panel_labels)
-        print(f"  raw agreement : {label_raw:.3f}")
-        if len(set(human_labels) | set(panel_labels)) == 1:
+        print(f"  raw agreement : {m['label_raw']:.3f}")
+        if m["label_single_category"]:
             print("  Cohen's kappa : n/a (only one label category was observed)")
         else:
-            print(f"  Cohen's kappa : {label_kappa:.3f}")
+            print(f"  Cohen's kappa : {m['label_kappa']:.3f}")
 
     print(f"\nGATE (section 8): kappa >= 0.70 -> "
-          f"{'PASS' if verdict_kappa >= 0.70 else 'FAIL'}")
-    print(f"composite kappa: {composite_kappa:.3f} "
-          f"(raw agreement {composite_raw:.3f})")
+          f"{'PASS' if m['verdict_kappa'] >= 0.70 else 'FAIL'}")
+    print(f"composite kappa: {m['composite_kappa']:.3f} "
+          f"(raw agreement {m['composite_raw']:.3f})")
     print("A composite below the verdict figure means the panel and rater are "
           "matching different defects.")
-    if verdict_kappa < 0.70:
+    if m["verdict_kappa"] < 0.70:
         print("At this kappa the headline numbers are judge noise. SWE-PRBench reported\n"
               "0.75 against its rubric and 0.616 across judges, so 0.70 is achievable --\n"
               "but no amount of bootstrapping repairs a panel that misses it.")
@@ -924,9 +1079,13 @@ def main() -> int:
     k.add_argument("--calibration", type=Path, required=True)
     k.add_argument("--judge", type=Path, required=True)
     k.add_argument("--expect-rows", type=int, default=60,
-                   help="exact packet size required before agreement is computed")
+                   help="gate size required before agreement is computed. With "
+                        "--case-map this counts only `kind == case` rows, so a 65-row "
+                        "packet holding 5 case_supplement rows still satisfies 60")
     k.add_argument("--case-map", type=Path, default=None,
-                   help="blinded case_id -> judge key JSONL; controls are rejected")
+                   help="blinded case_id -> judge key JSONL. `case` rows are the gate, "
+                        "`case_supplement` rows are reported but never scored, and "
+                        "`control` rows are rejected")
     k.add_argument("--corpus", type=Path, default=None,
                    help="item labels; required for legacy run_id + claim_rid packets")
     k.set_defaults(fn=cmd_kappa)
