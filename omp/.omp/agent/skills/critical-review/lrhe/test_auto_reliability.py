@@ -575,3 +575,88 @@ def test_18_controls_are_mechanically_falsifiable(tmp_path: Path):
     result = _build(inputs, out, controls)
     assert result.returncode == 0, result.stdout + result.stderr
     assert len(_read_jsonl(out / "controls.jsonl")) == 1
+
+
+def _margin_votes(*spec):
+    """('CONFIRMED','L1'), ('PLAUSIBLE','') -> vote dicts."""
+    return [{"verdict": v, "label_id": lid} for v, lid in spec]
+
+
+def test_19_bare_majority_is_never_recorded_as_settled():
+    """3-of-5 clears the threshold by exactly one vote, so it is one flip from a tie.
+
+    Measured across two independent 5-voter panels on auto-reliability-v1: consensus
+    accuracy is 0.72 at a bare majority against 0.96 at 4-1 and 0.99 at 5-0, and the
+    bare bucket holds 13 of 16 observed consensus errors.
+    """
+    bare = _margin_votes(
+        ("FABRICATED", ""), ("FABRICATED", ""), ("FABRICATED", ""),
+        ("PLAUSIBLE", ""), ("PLAUSIBLE", ""),
+    )
+    result = auto_reliability.aggregate_case(bare, 3)
+    assert result["verdict"] == "FABRICATED"
+    assert result["n_top"] == 3
+    assert result["needs_resolution"] is True, "a bare majority must escalate"
+    # the verdict itself is unchanged -- this flags, it does not withhold
+    assert result["label_id"] == ""
+
+
+def test_20_a_clear_majority_still_settles():
+    """4-1 and 5-0 must not be dragged into the queue by the margin rule."""
+    for n_top in (4, 5):
+        votes = _margin_votes(
+            *([("FABRICATED", "")] * n_top + [("PLAUSIBLE", "")] * (5 - n_top))
+        )
+        result = auto_reliability.aggregate_case(votes, 3)
+        assert result["verdict"] == "FABRICATED"
+        assert result["n_top"] == n_top
+        assert result["needs_resolution"] is False, f"{n_top}-{5 - n_top} should settle"
+
+
+def test_21_label_split_stays_keyed_to_label_disagreement():
+    """`label_split` reports which defects a CONFIRMED majority disagreed about.
+
+    It was previously gated on `needs_resolution`. Broadening that flag to cover margin
+    would silently start populating `label_split` on every bare majority, changing the
+    meaning of a field the label-recall figures read.
+    """
+    # bare majority, but the winners agree on the label -> escalate, no label split
+    agreed = _margin_votes(
+        ("CONFIRMED", "L1"), ("CONFIRMED", "L1"), ("CONFIRMED", "L1"),
+        ("PLAUSIBLE", ""), ("FABRICATED", ""),
+    )
+    result = auto_reliability.aggregate_case(agreed, 3)
+    assert result["needs_resolution"] is True   # because the margin is bare
+    assert result["label_split"] == []          # but the labels did not disagree
+    assert result["label_id"] == "L1"
+
+    # comfortable majority whose winners named different defects -> escalate on labels
+    disagreed = _margin_votes(
+        ("CONFIRMED", "L1"), ("CONFIRMED", "L2"), ("CONFIRMED", "L3"),
+        ("CONFIRMED", "L1"), ("PLAUSIBLE", ""),
+    )
+    result = auto_reliability.aggregate_case(disagreed, 3)
+    assert result["n_top"] == 4
+    assert result["needs_resolution"] is True
+    assert result["label_split"] == ["L1", "L2", "L3"]
+    assert result["label_id"] == ""
+
+
+def test_22_aggregate_rows_declare_the_policy_that_produced_them():
+    """A derivative aggregate must say which producer policy it came from.
+
+    `aggregate-fresh.jsonl` was produced under v1, where a bare majority was recorded as
+    settled. Any recomputation is a versioned derivative, so the rows carry the version
+    rather than relying on a filename to date them.
+    """
+    assert auto_reliability.AGGREGATION_POLICY_VERSION == 2
+
+    bare = _margin_votes(
+        ("FABRICATED", ""), ("FABRICATED", ""), ("FABRICATED", ""),
+        ("PLAUSIBLE", ""), ("PLAUSIBLE", ""),
+    )
+    # v1 recorded this as settled; v2 escalates it. That difference is the whole reason
+    # the version exists, so pin both halves here.
+    result = auto_reliability.aggregate_case(bare, 3)
+    assert result["n_top"] == 3
+    assert result["needs_resolution"] is True

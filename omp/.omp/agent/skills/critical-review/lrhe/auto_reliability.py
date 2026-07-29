@@ -765,6 +765,20 @@ def cmd_ingest(args) -> int:
 
 # --------------------------------------------------------------- aggregate
 
+# Bumped when `aggregate_case` changes what it will record as settled, so a derivative
+# aggregate says which policy produced it instead of being dated by filename.
+#
+#   v1  `needs_resolution` fired only on a CONFIRMED majority whose voters named
+#       different label_ids. Vote margin was not consulted, so a 3-2 split was recorded
+#       identically to a 5-0 and `human_queue.jsonl` stayed empty over 22 bare majorities.
+#   v2  a majority that clears the threshold by exactly one vote also escalates, and
+#       `label_split` is keyed to label ambiguity rather than to `needs_resolution`.
+#
+# `aggregate-fresh.jsonl` was produced under v1 and is preserved as-is. A v2 recomputation
+# is a versioned derivative (`aggregate-fresh-v2.jsonl`), never an overwrite.
+AGGREGATION_POLICY_VERSION = 2
+
+
 def aggregate_case(votes: list[dict], min_majority: int) -> dict:
     """3-of-5 absolute majority, no tie-order, and no forced result at 2-2-1.
 
@@ -772,6 +786,10 @@ def aggregate_case(votes: list[dict], min_majority: int) -> dict:
     order, which is right when the aggregate has to be total. Here it would invent
     a decision the jury did not reach, and the unresolved rate is one of the
     findings, so a plurality below the threshold stays UNRESOLVED.
+
+    A majority that clears the threshold by exactly one vote still returns its verdict,
+    but is escalated via `needs_resolution` rather than recorded as settled. See the
+    comment on that assignment for the measurement behind it.
     """
     tally = Counter(v["verdict"] for v in votes)
     best = max(tally.values()) if tally else 0
@@ -780,14 +798,21 @@ def aggregate_case(votes: list[dict], min_majority: int) -> dict:
         verdict = leaders[0]
         winners = [v for v in votes if v["verdict"] == verdict]
         label_votes = Counter(v["label_id"] for v in winners if v["label_id"])
-        needs_resolution = verdict == "CONFIRMED" and len(label_votes) != 1
+        label_ambiguous = verdict == "CONFIRMED" and len(label_votes) != 1
+        # A majority that only just clears the threshold is one vote from a tie, and
+        # measured on this corpus that is where the consensus errors live: pooled over
+        # two independent 5-voter panels, accuracy is 0.72 at a bare majority against
+        # 0.96 at 4-1 and 0.99 at 5-0, and the bare bucket holds 13 of 16 errors.
+        # Recording it as settled is what left `human_queue.jsonl` empty while six
+        # verdicts were wrong. Triage, not a filter: 3 of the 15 carried a wider margin.
+        needs_resolution = label_ambiguous or best == min_majority
         label_id = label_votes.most_common(1)[0][0] if len(label_votes) == 1 else ""
         # A CONFIRMED majority whose voters named different defects has a verdict and
         # no matched label. That is a different failure from a split verdict and it
         # corrupts the 1:1 matching the recall figures rest on.
         return {"verdict": verdict, "label_id": label_id,
                 "n_top": best, "needs_resolution": needs_resolution,
-                "label_split": sorted(label_votes) if needs_resolution else []}
+                "label_split": sorted(label_votes) if label_ambiguous else []}
     return {"verdict": UNRESOLVED, "label_id": "", "n_top": best,
             "needs_resolution": True, "label_split": []}
 
@@ -833,6 +858,7 @@ def cmd_aggregate(args) -> int:
         meta = cmap.get(cid, {})
         rows.append({
             "case_id": cid, "kind": meta.get("kind", ""),
+            "aggregation_policy_version": AGGREGATION_POLICY_VERSION,
             "fresh_verdict": agg["verdict"], "fresh_label_id": agg["label_id"],
             "n_top": agg["n_top"], "n_votes": len(votes),
             "needs_resolution": agg["needs_resolution"], "label_split": agg["label_split"],
