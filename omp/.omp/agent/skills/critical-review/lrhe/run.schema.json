@@ -31,8 +31,10 @@
     "measurement_status"
   ],
   "properties": {
-    "schema_version": {"type": "integer", "const": 2},
-
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
     "measurement_status": {
       "type": "object",
       "additionalProperties": false,
@@ -47,93 +49,217 @@
         "dispatch_policy_digest"
       ],
       "properties": {
-        "status": {"enum": ["valid", "invalidated"]},
-        "invalidation_reason": {"type": ["string", "null"],
-          "description": "null exactly when status is valid. `unenforced_reviewer_tool_surface` is the pre-2026-07-28 cohort; `observed_tool_invocation` is a single run that reached for a tool under the enforced surface"},
-        "eligible_for_primary_scoring": {"type": "boolean"},
-        "eligible_for_pooling": {"type": "boolean"},
-        "exploratory_use_only": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "replaces_run_id": {"type": ["string", "null"],
-          "description": "the invalidated run this one stands in for. Null for an original"},
-        "dispatch_policy_digest": {"type": ["string", "null"],
-          "description": "digest over the agent definitions, tool surfaces, workspace policy, runner and packet renderer this run was dispatched under. Two runs with different digests are two conditions and do not pool"}
+        "status": {
+          "enum": [
+            "valid",
+            "invalidated"
+          ]
+        },
+        "invalidation_reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "null exactly when status is valid. `unenforced_reviewer_tool_surface` is the pre-2026-07-28 cohort; `observed_tool_invocation` is a single run that reached for a tool under the enforced surface"
+        },
+        "eligible_for_primary_scoring": {
+          "type": "boolean"
+        },
+        "eligible_for_pooling": {
+          "type": "boolean"
+        },
+        "exploratory_use_only": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "replaces_run_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "the invalidated run this one stands in for. Null for an original"
+        },
+        "dispatch_policy_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "digest over the agent definitions, tool surfaces, workspace policy, runner and packet renderer this run was dispatched under. Two runs with different digests are two conditions and do not pool"
+        }
       }
     },
-
-    "experiment_id": {"type": "string", "minLength": 1,
-      "description": "scoring and analysis refuse to run across more than one. The original three-family result set is a different experiment from the OpenCode floor panel and must never be silently pooled with it"},
-    "panel_id": {"type": "string", "minLength": 1,
-      "description": "a family comparison is only meaningful within one complete, declared panel"},
-
-    "run_id": {"type": "string", "minLength": 1},
-    "item_id": {"type": "string", "minLength": 1,
-      "description": "the corpus item under review. There is deliberately no separate review_id: the ledger coalesces review_id -> item_id -> run_id, so on a production run against real work rather than a corpus item, set this to the review's own id. Adding a parallel field would let the two disagree, and the ledger would have to guess which one the finding belongs to"},
-    "arm": {"type": "string", "minLength": 1,
-      "description": "defined in panels.yaml, not here. R = cold refutation: unlike A-D it is scheduled per disputed claim rather than per item, so it costs nothing on reviews where nothing is disputed"},
-    "family": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$",
-      "description": "stable lineage id, deliberately short: gpt, claude, gemini, grok, kimi, glm, minimax, deepseek. The vendor prefix adds nothing a lineage id needs; route and model identity are separate fields under `reviewer`, which is the distinction that actually matters. Adding families scales arms C/D linearly and inflates 'unique verified findings' by pure arithmetic -- grow arm T with the council or section 7's warning bites harder"},
-    "lens": {"type": "string", "pattern": "^[a-z0-9_]*$",
-      "description": "vocabulary lives in panels.yaml. A closed enum here silently drops whatever a later panel adds -- the handoff's own draft dropped `independent` and `refuter`, both of which this harness schedules"},
-    "role": {"type": "string", "enum": ["author", "critic", "refuter", "judge"],
-      "description": "derivable from arm via panels.yaml; recorded when the emitter knows it. The council is asymmetric, and conflating roles is what makes six families look like six votes when it is four first-pass critics, one conditional refuter and one accountable integrator"},
-    "replicate": {"type": "string",
-      "description": "set1..setN for arm D, rep1..repN for arm T. Part of the condition key: drop it and N independent runs of one family collapse into a single cell, which deletes the empirical null while still printing the number"},
-    "context_config": {"type": "string", "enum": ["minimal", "expanded", "retrieval"],
-      "description": "'retrieval' = minimal packet plus read/grep/glob/lsp/ast_grep"},
-
-    "prompt_version": {"type": "string", "minLength": 1},
-    "artifact_digest": {"type": "string", "minLength": 1,
-      "description": "what the reviewer actually saw. A run whose digest no longer matches the packet is stale, not comparable"},
-    "assignment_manifest_digest": {"type": "string", "minLength": 1,
-      "description": "ties the run to the frozen matrix that scheduled it"},
-    "evidence_cap": {"type": "integer", "minimum": 1, "default": 12},
-
+    "experiment_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "scoring and analysis refuse to run across more than one. The original three-family result set is a different experiment from the OpenCode floor panel and must never be silently pooled with it"
+    },
+    "panel_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "a family comparison is only meaningful within one complete, declared panel"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the corpus item under review. There is deliberately no separate review_id: the ledger coalesces review_id -> item_id -> run_id, so on a production run against real work rather than a corpus item, set this to the review's own id. Adding a parallel field would let the two disagree, and the ledger would have to guess which one the finding belongs to"
+    },
+    "arm": {
+      "type": "string",
+      "minLength": 1,
+      "description": "defined in panels.yaml, not here. R = cold refutation: unlike A-D it is scheduled per disputed claim rather than per item, so it costs nothing on reviews where nothing is disputed"
+    },
+    "family": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "description": "stable lineage id, deliberately short: gpt, claude, gemini, grok, kimi, glm, minimax, deepseek. The vendor prefix adds nothing a lineage id needs; route and model identity are separate fields under `reviewer`, which is the distinction that actually matters. Adding families scales arms C/D linearly and inflates 'unique verified findings' by pure arithmetic -- grow arm T with the council or section 7's warning bites harder"
+    },
+    "lens": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]*$",
+      "description": "vocabulary lives in panels.yaml. A closed enum here silently drops whatever a later panel adds -- the handoff's own draft dropped `independent` and `refuter`, both of which this harness schedules"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "author",
+        "critic",
+        "refuter",
+        "judge"
+      ],
+      "description": "derivable from arm via panels.yaml; recorded when the emitter knows it. The council is asymmetric, and conflating roles is what makes six families look like six votes when it is four first-pass critics, one conditional refuter and one accountable integrator"
+    },
+    "replicate": {
+      "type": "string",
+      "description": "set1..setN for arm D, rep1..repN for arm T. Part of the condition key: drop it and N independent runs of one family collapse into a single cell, which deletes the empirical null while still printing the number"
+    },
+    "context_config": {
+      "type": "string",
+      "enum": [
+        "minimal",
+        "expanded",
+        "retrieval"
+      ],
+      "description": "'retrieval' = minimal packet plus read/grep/glob/lsp/ast_grep"
+    },
+    "prompt_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_digest": {
+      "type": "string",
+      "minLength": 1,
+      "description": "what the reviewer actually saw. A run whose digest no longer matches the packet is stale, not comparable"
+    },
+    "assignment_manifest_digest": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ties the run to the frozen matrix that scheduled it"
+    },
+    "evidence_cap": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 12
+    },
     "reviewer": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "provider_route",
         "account_type",
-        "requested_model",
-        "served_model",
-        "identity_verified",
-        "fallback_detected",
-        "omp_version",
-        "provider_client_version",
-        "product_route",
         "billing_route",
-        "provider_fingerprint"
+        "fallback_detected",
+        "identity_verified",
+        "omp_version",
+        "product_route",
+        "provider_client_version",
+        "provider_fingerprint",
+        "provider_fingerprint_observation",
+        "provider_route",
+        "requested_model",
+        "served_model"
       ],
       "properties": {
-        "provider_route": {"type": "string", "minLength": 1},
-        "account_type": {"type": "string", "minLength": 1},
-        "requested_model": {"type": "string", "minLength": 1,
-          "description": "the pinned selector that was asked for"},
-        "served_model": {"type": ["string", "null"],
-          "description": "what the provider reported serving. Mismatch or absence is a silent fallback and a hard gate failure; a Fable request answered by Opus is an Opus result"},
-        "identity_verified": {"type": "boolean"},
-        "fallback_detected": {"type": "boolean"},
-        "omp_version": {"type": "string", "minLength": 1},
-        "provider_client_version": {"type": "string", "minLength": 1},
+        "provider_route": {
+          "type": "string",
+          "minLength": 1
+        },
+        "account_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requested_model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "the pinned selector that was asked for"
+        },
+        "served_model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "what the provider reported serving. Mismatch or absence is a silent fallback and a hard gate failure; a Fable request answered by Opus is an Opus result"
+        },
+        "identity_verified": {
+          "type": "boolean"
+        },
+        "fallback_detected": {
+          "type": "boolean"
+        },
+        "omp_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_client_version": {
+          "type": "string",
+          "minLength": 1
+        },
         "provider_fingerprint": {
-          "type": ["string", "null"],
-          "description": "whatever the provider exposes that identifies the checkpoint behind the selector, and null when it exposes nothing. A stable alias is not a stable model: if a provider swaps the checkpoint behind `opencode-go/kimi-k3` mid-matrix, every pre/post comparison is invalid and freeze_lock.py cannot see it -- the lock pins the toolchain, both repositories, the corpus and the terms, and nothing about the weights. Recording it per run is what lets the analysis refuse to pool across a change instead of averaging over one. OpenCode returns no fingerprint today, so this is null on every OpenCode run: an unmeasured risk on the record rather than a control that looks passed"
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "the provider's checkpoint identifier, or null. NULL DOES NOT MEAN THE PROVIDER SENDS NONE -- see provider_fingerprint_observation. Every LRHE run to date carries null because the OMP session record has no field for it, which is a gap in what was retained and not a fact about the provider"
         },
         "product_route": {
           "type": "string",
-          "enum": ["opencode-go", "opencode-zen", "anthropic-subscription",
-                   "google-antigravity", "supergrok-subscription", "unknown"],
+          "enum": [
+            "opencode-go",
+            "opencode-zen",
+            "anthropic-subscription",
+            "google-antigravity",
+            "supergrok-subscription",
+            "unknown"
+          ],
           "description": "which product or tier of the provider served this. Section 7 wrote it as opencode-go|opencode-zen because it was drafted for the OpenCode expansion, and a two-value enum forced every other route to record one of them -- a Claude run was being stamped `opencode-zen`, a fabricated provenance field on three of the five configured routes. `unknown` is legal; guessing is not"
         },
         "billing_route": {
           "type": "string",
-          "enum": ["go_allowance", "zen_overflow", "direct_zen",
-                   "subscription_included", "not_applicable", "unknown"],
+          "enum": [
+            "go_allowance",
+            "zen_overflow",
+            "direct_zen",
+            "subscription_included",
+            "not_applicable",
+            "unknown"
+          ],
           "description": "who is billed this request. `unknown` means the signal was unavailable and is legal; absence is illegal, and inference is forbidden -- a fabricated billing route reconciles against the dashboard and nobody looks again"
+        },
+        "provider_fingerprint_observation": {
+          "enum": [
+            "observed_present",
+            "observed_absent",
+            "not_observed"
+          ],
+          "description": "how `provider_fingerprint` came to be what it is. `not_observed` is the honest value for every run so far: the session record retains responseId, runtimeRequestId, provider, model and usage, and has NO system_fingerprint field and no raw headers, so nothing here can distinguish a provider that sent no fingerprint from a persistence path that dropped one. Establishing `observed_absent` needs a raw-wire probe against live headers/SSE, and this harness has no live transport by design. Until then the witness arm is the control, and it is the control whether absence is real or merely unverified"
         }
       }
     },
-
     "execution": {
       "type": "object",
       "additionalProperties": false,
@@ -155,106 +281,303 @@
         "tool_trace_digest"
       ],
       "properties": {
-        "started_at": {"type": "string", "format": "date-time"},
-        "completed_at": {"type": "string", "format": "date-time"},
-        "latency_ms": {"type": "integer", "minimum": 0},
-        "input_tokens": {"type": ["integer", "null"], "minimum": 0},
-        "cached_input_tokens": {"type": ["integer", "null"], "minimum": 0},
-        "output_tokens": {"type": ["integer", "null"], "minimum": 0},
-        "list_cost_estimate_usd": {"type": ["number", "null"], "minimum": 0,
-          "description": "token-derived list price. Record alongside the observed allowance delta, never instead of it: they disagree, and only one of them is billing"},
-        "provider_reported_cost_usd": {"type": ["number", "null"], "minimum": 0},
-        "quota_pool": {"type": ["string", "null"],
-          "description": "which allowance the call was charged to. Capture both dashboards around a canary before trusting this"},
-        "allowance_before": {"type": ["number", "string", "null"]},
-        "allowance_after": {"type": ["number", "string", "null"]},
-        "zen_balance_before": {"type": ["number", "null"], "minimum": 0},
-        "zen_balance_after": {"type": ["number", "null"], "minimum": 0},
-        "raw_output_digest": {"type": ["string", "null"], "minLength": 1,
-          "description": "sha256 digest of the provider's raw output artifact"},
-        "tool_trace_digest": {"type": ["string", "null"], "minLength": 1,
-          "description": "sha256 digest of captured tool trace provenance"}
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "latency_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cached_input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "list_cost_estimate_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "token-derived list price. Record alongside the observed allowance delta, never instead of it: they disagree, and only one of them is billing"
+        },
+        "provider_reported_cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "quota_pool": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "which allowance the call was charged to. Capture both dashboards around a canary before trusting this"
+        },
+        "allowance_before": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ]
+        },
+        "allowance_after": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ]
+        },
+        "zen_balance_before": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "zen_balance_after": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "raw_output_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "sha256 digest of the provider's raw output artifact"
+        },
+        "tool_trace_digest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "sha256 digest of captured tool trace provenance"
+        },
+        "provider_response_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "the responseIds the session record shows for this run. Per-CALL identifiers -- 6 runs produced 9 distinct values -- so they pin a request and never a checkpoint. Recorded because they are the only provider-side identifiers actually retained, and because a later raw-wire probe needs something to correlate against"
+        }
       }
     },
-
     "safety": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "telemetry_complete",
-        "schema_valid",
-        "tool_violations",
-        "malformed_tool_calls",
-        "wrote_to_repo",
-        "spawned_subagent",
         "consumed_peer_output",
-        "repo_digest_before",
+        "malformed_tool_calls",
+        "named_tools",
+        "provider_error",
         "repo_digest_after",
+        "repo_digest_before",
+        "schema_valid",
+        "spawned_subagent",
+        "telemetry_complete",
         "timed_out",
-        "provider_error"
+        "tool_violations",
+        "wrote_to_repo"
       ],
       "properties": {
-        "telemetry_complete": {"type": "boolean",
-          "description": "the emitter asserting it captured every field below. False means the run is unscoreable, not that it passed the parts that were captured"},
-        "schema_valid": {"type": "boolean"},
-        "tool_violations": {"type": "integer", "minimum": 0,
-          "description": "calls that NAMED a tool, whether or not that tool then errored. Headless task agents run at approval mode yolo, so a prompt saying 'do not edit' is not a control -- this counter is. A call that named a tool and got `Path not found` still counts: the reviewer reached past the packet and only the filesystem stopped it"},
-        "malformed_tool_calls": {"type": "integer", "minimum": 0,
-          "description": "calls naming no tool at all, which the runtime rejected with `Tool  not found`. No information crossed the boundary, so these are NOT violations -- counting them as such invalidated a GLM witness run that had merely emitted its terminal response twice in the wrong shape before getting it right. Recorded separately because it is the same lane-quality signal MiniMax is held for, and it had nowhere to live"},
-        "wrote_to_repo": {"type": "boolean"},
-        "spawned_subagent": {"type": "boolean"},
-        "consumed_peer_output": {"type": "boolean",
-          "description": "independence violation; round one must be blind"},
-        "repo_digest_before": {"type": "string", "minLength": 1},
-        "repo_digest_after": {"type": "string", "minLength": 1,
-          "description": "the measurement behind wrote_to_repo. A reviewer that mutated the tree and reported otherwise is caught here and nowhere else"},
-        "timed_out": {"type": "boolean",
-          "description": "a timed-out reviewer is MISSING, never APPROVED"},
-        "provider_error": {"type": ["string", "null"]}
+        "telemetry_complete": {
+          "type": "boolean",
+          "description": "the emitter asserting it captured every field below. False means the run is unscoreable, not that it passed the parts that were captured"
+        },
+        "schema_valid": {
+          "type": "boolean"
+        },
+        "tool_violations": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "calls that NAMED a tool, whether or not that tool then errored. Headless task agents run at approval mode yolo, so a prompt saying 'do not edit' is not a control -- this counter is. A call that named a tool and got `Path not found` still counts: the reviewer reached past the packet and only the filesystem stopped it"
+        },
+        "malformed_tool_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "calls naming no tool at all, which the runtime rejected with `Tool  not found`. No information crossed the boundary, so these are NOT violations -- counting them as such invalidated a GLM witness run that had merely emitted its terminal response twice in the wrong shape before getting it right. Recorded separately because it is the same lane-quality signal MiniMax is held for, and it had nowhere to live"
+        },
+        "wrote_to_repo": {
+          "type": "boolean",
+          "description": "derived from the tool names in the session record: true when the run called any of write/edit/ast_edit/patch/apply_patch/bash/shell. Was a `False` literal, so `no_write_compliance` read 1.00 in every report by assertion"
+        },
+        "spawned_subagent": {
+          "type": "boolean",
+          "description": "derived the same way from task/agent/subagent. Was also a `False` literal behind `no_recursion_compliance`"
+        },
+        "consumed_peer_output": {
+          "type": "boolean",
+          "description": "a property of the RENDERER, not of the reply: `render_packet` emits no peer-review section, so no reviewer can consume one. Held to that by a cross-file test rather than by telemetry, because the reviewer has no way to report what it was not shown"
+        },
+        "repo_digest_before": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repo_digest_after": {
+          "type": "string",
+          "minLength": 1,
+          "description": "NOT a measurement of mutation, despite what this field said before: the emitter sets it equal to repo_digest_before, so it is identical by construction and catches nothing. A per-run workspace digest is not takeable under a four-wide rolling pool without racing the other three workers, so the real control is `wrote_to_repo` above, derived from the transcript. Kept as the packet identity both sides of the call rather than deleted, because a schema that drops a field silently reinterprets every record written under it"
+        },
+        "timed_out": {
+          "type": "boolean",
+          "description": "a timed-out reviewer is MISSING, never APPROVED"
+        },
+        "provider_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "named_tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "every tool name the session record shows this run invoking, `yield` excluded. The single source for tool_violations, wrote_to_repo and spawned_subagent -- three gates from one harvest, rather than three independent claims that can disagree"
+        }
       }
     },
-
-    "data_rights": {"$ref": "lrhe/data-rights.schema.json"},
-
-    "summary": {"type": "string"},
+    "data_rights": {
+      "$ref": "lrhe/data-rights.schema.json"
+    },
+    "summary": {
+      "type": "string"
+    },
     "evidence": {
       "type": "array",
-      "items": {"type": "string"},
+      "items": {
+        "type": "string"
+      },
       "description": "raw contract strings: R<ID>|P<0-3>|conf=..|claim=..|evidence=..|impact=..|verify=.. -- an empty array is a legitimate result, and on an S5 null item it is the correct one"
     },
-    "unresolved": {"type": "array", "items": {"type": "string"}},
-
-    "input_rights_record_id": {"type": "string", "minLength": 1,
-      "description": "foreign key to data_rights.record_id for the decision used by this run"},
-    "clarification_snapshot_id": {"type": ["string", "null"], "minLength": 1,
-      "description": "snapshot id for provider documentation clarifications that arrive after terms snapshotting"},
-    "provider_documentation_snapshot_id": {"type": ["string", "null"], "minLength": 1,
-      "description": "snapshot id of provider documentation for the run-level claims in this run"},
+    "unresolved": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "input_rights_record_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "foreign key to data_rights.record_id for the decision used by this run"
+    },
+    "clarification_snapshot_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "snapshot id for provider documentation clarifications that arrive after terms snapshotting"
+    },
+    "provider_documentation_snapshot_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "snapshot id of provider documentation for the run-level claims in this run"
+    },
     "router_dataset_example_ids": {
       "type": "array",
-      "items": {"type": "string", "minLength": 1},
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "description": "row ids in the router-ready dataset derived from this run"
     }
   },
-
   "allOf": [
     {
       "$comment": "Claiming verified identity commits you to the evidence for it.",
-      "if": {"required": ["reviewer"],
-             "properties": {"reviewer": {"properties": {"identity_verified": {"const": true}}}}},
-      "then": {"properties": {"reviewer": {"properties": {
-        "served_model": {"type": "string", "minLength": 1},
-        "fallback_detected": {"const": false}
-      }}}}
+      "if": {
+        "required": [
+          "reviewer"
+        ],
+        "properties": {
+          "reviewer": {
+            "properties": {
+              "identity_verified": {
+                "const": true
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "reviewer": {
+            "properties": {
+              "served_model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fallback_detected": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
     },
     {
       "$comment": "Incomplete telemetry cannot also be a clean run. This is the fail-closed rule expressed in the schema rather than left to the scorer, so a record that lies about itself does not validate.",
-      "if": {"required": ["safety"],
-             "properties": {"safety": {"properties": {"telemetry_complete": {"const": true}}}}},
-      "then": {"properties": {"safety": {"properties": {
-        "provider_error": {"type": "null"},
-        "timed_out": {"const": false}
-      }}}}
+      "if": {
+        "required": [
+          "safety"
+        ],
+        "properties": {
+          "safety": {
+            "properties": {
+              "telemetry_complete": {
+                "const": true
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "safety": {
+            "properties": {
+              "provider_error": {
+                "type": "null"
+              },
+              "timed_out": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }

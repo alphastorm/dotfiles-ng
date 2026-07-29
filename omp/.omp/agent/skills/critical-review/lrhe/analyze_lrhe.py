@@ -510,6 +510,24 @@ def fp_burden(runs: pd.DataFrame, claims: pd.DataFrame, B: int,
             "claims_per_run": float(sub["n_claims"].mean()),
             "promoted_per_run": float(sub["n_promoted"].mean()),
         }
+
+    # Per family, clustered by item, on the council arms. The promote/drop decision is
+    # per lane, and this section had only per-ARM numbers -- so the false-positive burden
+    # of an individual family could be read off raw counts (DeepSeek 19 FABRICATED, GLM 11,
+    # Kimi 2) with no interval and no correction for the fact that DeepSeek also emits the
+    # most claims. A raw count is a volume measurement wearing a quality label, which is
+    # the same error `trap_promoted` made.
+    council = runs[runs["arm"].isin(council_arms)]
+    if len(council):
+        out["by_family"] = {
+            str(fam): {
+                "fabrication_rate": cluster_bootstrap(
+                    sub, lambda d: float(d["fabrication_rate"].mean()), B=B),
+                "claims_per_run": round(float(sub["n_claims"].mean()), 4),
+                "n_runs": int(len(sub)),
+            }
+            for fam, sub in council.groupby("family", observed=True)
+        }
     # `trap_promoted` is None wherever the trap's sites cover every file in scope, because
     # there a severe claim at a site distinguishes nothing -- the flag reduces to "made any
     # P0/P1 claim". That is all nine trap items in the current corpus, so this section is

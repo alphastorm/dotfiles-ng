@@ -1356,3 +1356,38 @@ def test_a_judgement_from_an_unrequested_model_drops_its_claim(tmp_path: Path):
     assert raw[0]["served_model"] == "opencode-go/kimi-k3"
     assert not [x for x in out.read_text().splitlines() if x.strip()], (
         "an unverified judgement reached the aggregate scoring reads")
+
+
+def test_false_positive_burden_is_reported_per_family_with_an_interval(tmp_path: Path):
+    """Promote/drop is a per-lane decision, and a raw count is not a rate.
+
+    This section had only per-arm numbers, so the burden of an individual family could only
+    be read off raw FABRICATED counts -- 19 DeepSeek, 11 GLM, 2 Kimi -- with no interval
+    and no correction for DeepSeek also emitting the most claims per run. That is a volume
+    measurement wearing a quality label, the same error `trap_promoted` made. With
+    intervals the ordering turns out not to be established at this n, which is the finding.
+    """
+    sys.path.insert(0, str(HERE))
+    import analyze_lrhe
+    import pandas as pd
+
+    runs = pd.DataFrame([
+        {"run_id": f"r{i}", "item_id": f"S1-{i//2}", "arm": "OC_FULL", "family": fam,
+         "lens": "floor", "replicate": "", "fabrication_rate": rate, "refutation_rate": 0.0,
+         "n_claims": 3, "n_promoted": 0, "trap_promoted": None,
+         "trap_site_severe_claim": None, "trap_sites_discriminate": None, "null_item_fp": None}
+        for i, (fam, rate) in enumerate(
+            [("kimi", 0.0), ("kimi", 0.1), ("glm", 0.2), ("glm", 0.1),
+             ("deepseek", 0.3), ("deepseek", 0.2)])
+    ])
+    out = analyze_lrhe.fp_burden(runs, pd.DataFrame(), B=64, council_arms=("OC_FULL",))
+    assert "by_family" in out, sorted(out)
+    assert set(out["by_family"]) == {"kimi", "glm", "deepseek"}
+    for fam, v in out["by_family"].items():
+        fr = v["fabrication_rate"]
+        assert fr["lo"] <= fr["point"] <= fr["hi"], (fam, fr)
+        assert v["n_runs"] == 2, (fam, v)
+    # An arm outside the council pool contributes nothing to a per-family lane statistic.
+    other = runs.assign(arm="OC_SCREEN")
+    assert "by_family" not in analyze_lrhe.fp_burden(
+        other, pd.DataFrame(), B=64, council_arms=("OC_FULL",))

@@ -356,6 +356,9 @@ def to_v2(run: dict, experiment_id: str = EXPERIMENT_ID, panel_id: str = PANEL_I
             # evidence that cannot satisfy the schema governing the real thing is how
             # the stub came to emit evidence ids no reviewer is permitted to return.
             "provider_fingerprint": run.get("provider_fingerprint"),
+            "provider_fingerprint_observation": run.get(
+                "provider_fingerprint_observation",
+                "observed_present" if run.get("provider_fingerprint") else "not_observed"),
         },
         "execution": {
             "started_at": "2026-07-27T00:00:00Z",
@@ -377,12 +380,14 @@ def to_v2(run: dict, experiment_id: str = EXPERIMENT_ID, panel_id: str = PANEL_I
             "tool_trace_digest": run.get(
                 "tool_trace_digest", f"sha256:fixture-tool-trace-{run['item_id']}"
             ),
+            "provider_response_ids": run.get("provider_response_ids", []),
         },
         "safety": {
             "telemetry_complete": True,
             "schema_valid": run["schema_valid"],
             "tool_violations": run["tool_violations"],
             "malformed_tool_calls": run.get("malformed_tool_calls", 0),
+            "named_tools": run.get("named_tools", ["read"] * run["tool_violations"]),
             "wrote_to_repo": run["wrote_to_repo"],
             "spawned_subagent": run["spawned_subagent"],
             "consumed_peer_output": False,
