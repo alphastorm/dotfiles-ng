@@ -7,6 +7,7 @@ provider calls. Real corpus records come from build_corpus.py.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 from pathlib import Path
@@ -221,38 +222,74 @@ runs = [
 ]
 
 # ---------------------------------------------------------------- judge
+# `claim_rid` must be the rid `ev()` emits, unpadded. These literals said "01" while
+# the evidence strings said "1", so nothing joined: the fixture set reported
+# judge_coverage 0.0 and exec_coverage 0.0 and every claim fell through to the
+# unadjudicated path. A fixture that exercises none of the branches it names is the
+# same defect as a gate that passes by assertion, so the ids are derived from `ev`'s
+# now rather than restated.
 judge = [
-    {"run_id": "r-s1-claude-arch", "claim_rid": "01", "verdict": "CONFIRMED",
+    {"run_id": "r-s1-claude-arch", "claim_rid": "1", "verdict": "CONFIRMED",
      "label_id": "L1", "affinity": 0.81, "panel": ["gemini", "grok"], "unanimous": True},
-    {"run_id": "r-s1-claude-arch", "claim_rid": "02", "verdict": "CONFIRMED",
+    {"run_id": "r-s1-claude-arch", "claim_rid": "2", "verdict": "CONFIRMED",
      "label_id": "L1", "affinity": 0.62, "panel": ["gemini", "grok"], "unanimous": True},
-    {"run_id": "r-s1-claude-arch", "claim_rid": "03", "verdict": "FABRICATED",
+    {"run_id": "r-s1-claude-arch", "claim_rid": "3", "verdict": "FABRICATED",
      "label_id": "", "affinity": 0.0, "panel": ["gemini", "grok"], "unanimous": True},
-    {"run_id": "r-s1-claude-arch", "claim_rid": "05", "verdict": "PLAUSIBLE",
+    {"run_id": "r-s1-claude-arch", "claim_rid": "5", "verdict": "PLAUSIBLE",
      "label_id": "", "affinity": 0.31, "panel": ["gemini", "grok"], "unanimous": False},
-    {"run_id": "r-s2-grok-adv", "claim_rid": "01", "verdict": "CONFIRMED",
+    {"run_id": "r-s2-grok-adv", "claim_rid": "1", "verdict": "CONFIRMED",
      "label_id": "L1", "affinity": 0.88, "panel": ["claude", "gemini"], "unanimous": True},
-    {"run_id": "r-s2-grok-adv", "claim_rid": "02", "verdict": "CONFIRMED",
+    {"run_id": "r-s2-grok-adv", "claim_rid": "2", "verdict": "CONFIRMED",
      "label_id": "", "affinity": 0.44, "panel": ["claude", "gemini"], "unanimous": False},
-    {"run_id": "r-s3-gemini-repo", "claim_rid": "01", "verdict": "CONFIRMED",
+    {"run_id": "r-s3-gemini-repo", "claim_rid": "1", "verdict": "CONFIRMED",
      "label_id": "L1", "affinity": 0.79, "panel": ["claude", "grok"], "unanimous": True},
-    {"run_id": "r-s4-claude-adv", "claim_rid": "01", "verdict": "PLAUSIBLE",
+    {"run_id": "r-s4-claude-adv", "claim_rid": "1", "verdict": "PLAUSIBLE",
      "label_id": "", "affinity": 0.20, "panel": ["gemini", "grok"], "unanimous": False},
-    {"run_id": "r-s5-grok-arch", "claim_rid": "01", "verdict": "PLAUSIBLE",
+    {"run_id": "r-s5-grok-arch", "claim_rid": "1", "verdict": "PLAUSIBLE",
      "label_id": "", "affinity": 0.10, "panel": ["claude", "gemini"], "unanimous": True},
 ]
 
 # ---------------------------------------------------------------- exec
+# `exec-evidence.schema.json` is closed and demands what only a runner can supply:
+# the command, both output digests, the repository epoch either side, the runner
+# build, and a real interval. Synthesising those here is the point -- a fixture
+# generator may attest to a run it staged, and no model reply can satisfy the shape.
+EXEC_RUNNER = "fixture-runner/0"
+
+
+def synthetic_exec_evidence(
+    run_id: str, claim_rid: str, command: str, reproduced: bool,
+    *, started_at: str = "2026-07-26T00:00:00Z", finished_at: str = "2026-07-26T00:00:04Z",
+    repo_digest: str = "sha256:fixture-epoch", notes: str | None = None,
+) -> dict:
+    """One schema-valid execution record for a command this generator staged.
+
+    `reproduced` drives the whole precedence branch, so `exit_code` is derived from
+    it rather than passed: a check that reproduced the predicted failure exits
+    nonzero, and a fixture whose two disagreed would be describing nothing real.
+    """
+    digest = lambda s: hashlib.sha256(s.encode()).hexdigest()  # noqa: E731
+    row = {
+        "run_id": run_id, "claim_rid": claim_rid, "ran": True, "command": command,
+        "exit_code": 1 if reproduced else 0, "reproduced": reproduced,
+        "stdout_sha256": digest(f"{run_id}|{claim_rid}|stdout|{reproduced}"),
+        "stderr_sha256": digest(f"{run_id}|{claim_rid}|stderr|{reproduced}"),
+        "repo_digest_before": repo_digest, "repo_digest_after": repo_digest,
+        "runner_version": EXEC_RUNNER,
+        "started_at": started_at, "finished_at": finished_at,
+    }
+    if notes:
+        row["notes"] = notes
+    return row
+
+
 execres = [
-    {"run_id": "r-s2-grok-adv", "claim_rid": "01", "reproduced": True,
-     "cmd": "pytest ...::test_scalar_conversion", "exit_code": 1},
+    synthetic_exec_evidence("r-s2-grok-adv", "1", "pytest ...::test_scalar_conversion", True),
     # The high-confidence "race" claim does not reproduce. Execution must win.
-    {"run_id": "r-s2-grok-adv", "claim_rid": "02", "reproduced": False,
-     "cmd": "tsan import loop x2000", "exit_code": 0},
-    {"run_id": "r-s3-gemini-repo", "claim_rid": "01", "reproduced": True,
-     "cmd": "arvo repro 25402", "exit_code": 1},
-    {"run_id": "r-s4-claude-adv", "claim_rid": "01", "reproduced": False,
-     "cmd": "timing harness 10k inputs, KS test p=0.71", "exit_code": 0},
+    synthetic_exec_evidence("r-s2-grok-adv", "2", "tsan import loop x2000", False),
+    synthetic_exec_evidence("r-s3-gemini-repo", "1", "arvo repro 25402", True),
+    synthetic_exec_evidence("r-s4-claude-adv", "1",
+                            "timing harness 10k inputs, KS test p=0.71", False),
 ]
 
 

@@ -524,6 +524,96 @@ def _score(tmp_path: Path, runs: list[dict], *extra: str, corpus=None):
         cwd=HERE, capture_output=True, text=True, env=dict(os.environ))
 
 
+# ------------------------------------------------- 6. execution evidence hygiene
+
+def test_model_refuter_opinion_cannot_enter_execution_precedence(tmp_path: Path):
+    """A proposed command is not proof that it ran, even when the opinion says it did."""
+    opinion_path = tmp_path / "refuter-opinions.jsonl"
+    _write_jsonl(opinion_path, [{
+        "run_id": "r1",
+        "claim_rid": "1",
+        "ran": True,
+        "reproduced": False,
+        "cmd": "pytest tests/test_widget.py::test_failure",
+        "refuter_family": "glm",
+        "exit_code": 0,
+    }])
+    run = _one_run(evidence=[
+        "R1|P1|conf=0.90|claim=widget fails|evidence=src/widget.py:1 "
+        "observed|impact=incorrect result|verify=run the regression test",
+    ])
+
+    p = _score(tmp_path, [run], "--exec", str(opinion_path))
+
+    assert p.returncode != 0
+    assert f"{opinion_path}:1:" in p.stderr
+    assert "invalid execution-evidence requirement(s)" in p.stderr
+    assert "refusing to score" in p.stderr
+    assert not (tmp_path / "c.csv").exists(), "opinion reached claim scoring"
+    assert not (tmp_path / "r.csv").exists(), "opinion reached run scoring"
+    assert not (tmp_path / "rep.json").exists(), "opinion produced a score report"
+
+
+def test_ingest_refutation_writes_diagnostic_opinions_without_execution_fields(
+    tmp_path: Path,
+):
+    """Every cold-refuter outcome stays diagnostic, including unresolved answers."""
+    prompts_path = tmp_path / "prompts.jsonl"
+    responses_path = tmp_path / "responses.jsonl"
+    opinions_path = tmp_path / "opinions.jsonl"
+    outcomes = ("confirmed", "falsified", "unresolved")
+    _write_jsonl(prompts_path, [
+        {
+            "refute_id": f"rf-{outcome}",
+            "run_id": "r1",
+            "claim_rid": str(i),
+            "family": "glm",
+        }
+        for i, outcome in enumerate(outcomes, 1)
+    ])
+    _write_jsonl(responses_path, [
+        {
+            "refute_id": f"rf-{outcome}",
+            "outcome": outcome,
+            "primary_evidence": "e" * 450,
+            "verification_procedure": "v" * 450,
+            "rationale": "r" * 450,
+        }
+        for outcome in outcomes
+    ])
+
+    p = _run([
+        "judge_lrhe.py",
+        "ingest-refutation",
+        "--prompts",
+        str(prompts_path),
+        "--responses",
+        str(responses_path),
+        "--out",
+        str(opinions_path),
+    ])
+
+    rows = _read_jsonl(opinions_path)
+    expected_keys = {
+        "run_id",
+        "claim_rid",
+        "kind",
+        "outcome",
+        "refuter_family",
+        "primary_evidence",
+        "proposed_verification",
+        "rationale",
+    }
+    assert len(rows) == 3
+    assert {row["outcome"] for row in rows} == set(outcomes)
+    assert all(set(row) == expected_keys for row in rows)
+    assert all(row["kind"] == "model_opinion" for row in rows)
+    assert all(len(row["primary_evidence"]) == 400 for row in rows)
+    assert all(len(row["proposed_verification"]) == 400 for row in rows)
+    assert all(len(row["rationale"]) == 400 for row in rows)
+    assert "not execution evidence" in p.stdout
+
+
 def test_analysis_refuses_mixed_panels(scored, tmp_path: Path):
     """Two experiments in one file must stop the analysis, not be averaged.
 
@@ -1285,6 +1375,115 @@ def test_the_judge_schema_and_the_runner_agree_on_the_label_field():
     sys.path.insert(0, str(HERE))
     import judge_lrhe
     assert set(schema["properties"]["verdict"]["enum"]) == set(judge_lrhe.VERDICTS)
+
+
+def _run_kappa_packet(
+        tmp_path: Path, rows: list[dict], judge: list[dict], *,
+        case_map: list[dict] | None = None,
+        corpus: list[dict] | None = None) -> subprocess.CompletedProcess:
+    packet_path = tmp_path / "calibration.csv"
+    judge_path = tmp_path / "judge.jsonl"
+    fields = [
+        "case_id", "run_id", "claim_rid", "item_id",
+        "human_verdict", "human_label_id",
+    ]
+    with packet_path.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    _write_jsonl(judge_path, judge)
+
+    args = [
+        PY, "judge_lrhe.py", "kappa",
+        "--calibration", str(packet_path),
+        "--judge", str(judge_path),
+        "--expect-rows", str(len(rows)),
+    ]
+    if case_map is not None:
+        case_map_path = tmp_path / "case-map.jsonl"
+        _write_jsonl(case_map_path, case_map)
+        args.extend(["--case-map", str(case_map_path)])
+    if corpus is not None:
+        corpus_path = tmp_path / "corpus.jsonl"
+        _write_jsonl(corpus_path, corpus)
+        args.extend(["--corpus", str(corpus_path)])
+    return subprocess.run(args, cwd=HERE, capture_output=True, text=True)
+
+
+def test_kappa_refuses_a_partially_labelled_packet(tmp_path: Path):
+    """Leaving inconvenient rows blank cannot turn a partial calibration into a gate."""
+    rows = [
+        {"run_id": "r1", "claim_rid": "1", "item_id": "S1",
+         "human_verdict": "CONFIRMED", "human_label_id": "L1"},
+        {"run_id": "r1", "claim_rid": "2", "item_id": "S2",
+         "human_verdict": "", "human_label_id": ""},
+    ]
+    judge = [
+        {"run_id": "r1", "claim_rid": "1", "verdict": "CONFIRMED", "label_id": "L1"},
+        {"run_id": "r1", "claim_rid": "2", "verdict": "PLAUSIBLE", "label_id": ""},
+    ]
+    corpus = [
+        {"item_id": "S1", "labels": [{"label_id": "L1"}]},
+        {"item_id": "S2", "labels": [{"label_id": "L2"}]},
+    ]
+
+    res = _run_kappa_packet(tmp_path, rows, judge, corpus=corpus)
+    assert res.returncode == 2, res.stdout + res.stderr
+    assert "human_verdict is empty" in res.stderr
+    assert "Cohen's kappa" not in res.stdout + res.stderr
+
+
+def test_kappa_refuses_confirmed_label_outside_the_item_label_set(tmp_path: Path):
+    """Verdict agreement cannot hide that the human matched a different item defect."""
+    rows = [
+        {"case_id": "AR-0001", "human_verdict": "confirmed",
+         "human_label_id": "L99"},
+    ]
+    judge = [
+        {"run_id": "r1", "claim_rid": "1", "verdict": "CONFIRMED", "label_id": "L1"},
+    ]
+    case_map = [
+        {"case_id": "AR-0001", "run_id": "r1", "claim_rid": "1",
+         "item_id": "S1", "label_ids": ["L1"], "kind": "case"},
+    ]
+
+    res = _run_kappa_packet(tmp_path, rows, judge, case_map=case_map)
+    assert res.returncode == 2, res.stdout + res.stderr
+    assert "human_label_id 'L99' is not valid for item 'S1'" in res.stderr
+    assert "Cohen's kappa" not in res.stdout + res.stderr
+
+
+def test_kappa_composite_is_below_verdict_when_confirmed_labels_differ(
+        tmp_path: Path):
+    """Same verdict but a different defect is disagreement in the composite figure."""
+    rows = [
+        {"case_id": "AR-0001", "human_verdict": "CONFIRMED",
+         "human_label_id": "L1"},
+        {"case_id": "AR-0002", "human_verdict": "CONFIRMED",
+         "human_label_id": "L2"},
+        {"case_id": "AR-0003", "human_verdict": "PLAUSIBLE",
+         "human_label_id": ""},
+    ]
+    judge = [
+        {"run_id": "r1", "claim_rid": "1", "verdict": "CONFIRMED", "label_id": "L2"},
+        {"run_id": "r1", "claim_rid": "2", "verdict": "CONFIRMED", "label_id": "L1"},
+        {"run_id": "r1", "claim_rid": "3", "verdict": "PLAUSIBLE", "label_id": ""},
+    ]
+    case_map = [
+        {"case_id": f"AR-000{i}", "run_id": "r1", "claim_rid": str(i),
+         "item_id": f"S{i}", "label_ids": ["L1", "L2"], "kind": "case"}
+        for i in range(1, 4)
+    ]
+
+    res = _run_kappa_packet(tmp_path, rows, judge, case_map=case_map)
+    assert res.returncode == 0, res.stdout + res.stderr
+    verdict_section = res.stdout.split(
+        "verdict agreement:", 1)[1].split("exact matched-label", 1)[0]
+    verdict_kappa = float(re.search(
+        r"Cohen's kappa\s*:\s*(-?\d+\.\d+)", verdict_section).group(1))
+    composite_kappa = float(re.search(
+        r"composite kappa:\s*(-?\d+\.\d+)", res.stdout).group(1))
+    assert composite_kappa < verdict_kappa, res.stdout
 
 
 # The agent definitions live in the PRIVATE package; this repository is public and its CI

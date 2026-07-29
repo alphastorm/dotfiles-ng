@@ -6,7 +6,7 @@ Consumes:
   --corpus   corpus.jsonl   one record per review item (see schema/item.schema.json)
   --runs     runs.jsonl     one record per reviewer run (see schema/run.schema.json)
   --judge    judge.jsonl    optional: cross-family panel verdicts, one per claim
-  --exec     exec.jsonl     optional: execution results for claim `verify=` checks
+  --exec     exec-evidence.jsonl  optional: schema-validated commands that actually ran
 
 Emits:
   --out-claims claims.csv   one row per parsed claim, fully adjudicated
@@ -532,6 +532,14 @@ def build_validator(schema_dir: Path):
     return Draft202012Validator(docs[0], registry=registry, format_checker=FormatChecker())
 
 
+def build_exec_validator():
+    """Draft 2020-12 validator for command-runner execution evidence."""
+    from jsonschema import Draft202012Validator, FormatChecker
+
+    schema = json.loads((HERE / "exec-evidence.schema.json").read_text())
+    return Draft202012Validator(schema, format_checker=FormatChecker())
+
+
 def gate_failures(run: dict, manifest_digest: str | None) -> list[str]:
     """Every way a run disqualifies itself as evidence.
 
@@ -649,12 +657,60 @@ def read_jsonl(p: Path | None) -> list[dict]:
     return out
 
 
+def read_exec_evidence(p: Path | None) -> list[dict]:
+    """Load every execution row only after the complete file validates."""
+    if p is None:
+        return []
+    if not p.exists():
+        raise FileNotFoundError(p)
+
+    validator = build_exec_validator()
+    out: list[dict] = []
+    violations: list[str] = []
+    for ln, raw_line in enumerate(p.read_text().splitlines(), 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as e:
+            violations.append(f"  {p}:{ln}: bad JSON: {e}")
+            continue
+        errors = sorted(validator.iter_errors(row), key=lambda e: list(e.absolute_path))
+        if errors:
+            violations.extend(
+                f"  {p}:{ln}: {error.json_path} {error.message}"
+                for error in errors
+            )
+            continue
+        out.append(row)
+
+    if violations:
+        # Fail before scoring or writing anything. Silently skipping an invalid row
+        # can turn REFUTED into non-REFUTED invisibly, the same class of defect as
+        # allowing an unevaluated model opinion into execution precedence.
+        print(
+            f"{len(violations)} invalid execution-evidence requirement(s); "
+            "refusing to score:\n" + "\n".join(violations),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--corpus", required=True, type=Path)
     ap.add_argument("--runs", required=True, type=Path)
     ap.add_argument("--judge", type=Path, default=None)
-    ap.add_argument("--exec", dest="execres", type=Path, default=None)
+    ap.add_argument(
+        "--exec",
+        dest="execres",
+        type=Path,
+        default=None,
+        help="execution records validated against exec-evidence.schema.json; "
+             "model opinions are refused",
+    )
     ap.add_argument("--out-claims", type=Path, default=Path("claims.csv"))
     ap.add_argument("--out-runs", type=Path, default=Path("runs.csv"))
     ap.add_argument("--out-report", type=Path, default=Path("report.json"))
@@ -673,6 +729,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--schema-dir", type=Path, default=HERE,
                     help="where run.schema.json and data-rights.schema.json live")
     args = ap.parse_args(argv)
+
+    exec_rows = read_exec_evidence(args.execres)
 
     corpus = {it["item_id"]: it for it in read_jsonl(args.corpus)}
     runs = resolve_panel(read_jsonl(args.runs), args.experiment_id, args.panel_id)
@@ -706,7 +764,7 @@ def main(argv: list[str] | None = None) -> int:
     for j in read_jsonl(args.judge):
         judge_idx[(j["run_id"], str(j["claim_rid"]))] = j
     exec_idx: dict[tuple[str, str], dict] = {}
-    for e in read_jsonl(args.execres):
+    for e in exec_rows:
         exec_idx[(e["run_id"], str(e["claim_rid"]))] = e
 
     all_claims: list[Claim] = []
@@ -752,8 +810,8 @@ def main(argv: list[str] | None = None) -> int:
                 c.judge_unanimous = jv.get("unanimous")
             ev = exec_idx.get((run["run_id"], c.rid))
             if ev:
-                c.exec_ran = True
-                c.exec_reproduced = bool(ev.get("reproduced"))
+                c.exec_ran = ev["ran"]
+                c.exec_reproduced = ev["reproduced"]
 
             decide(c, args.require_hunk)
             claims.append(c)

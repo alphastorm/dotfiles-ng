@@ -392,6 +392,37 @@ def check_lock_state() -> Result:
     return Result(PASS, f"no {LOCK.name} yet -- it is listed below; {note}")
 
 
+def check_automated_audit() -> Result:
+    """The automated reliability audit's own state, kept strictly beside the human gate.
+
+    This gate can never make the canonical preflight green. The section 8 step below is
+    judge-versus-human agreement; the audit is model-versus-model, and reporting the two
+    through one predicate is exactly the "done because the artifact exists" shape that
+    put four false completions in this file. So it reports UNKNOWN when the namespace is
+    absent, and on success says only what it measured.
+    """
+    d = DATA / "auto-reliability-v1"
+    if not d.is_dir():
+        return Result(UNKNOWN, "no auto-reliability-v1 namespace; the audit has not been run")
+    receipt, agreement = d / "completion-receipt.json", d / "agreement.json"
+    if not (receipt.is_file() and agreement.is_file()):
+        return Result(FAIL, "audit namespace exists with no completion receipt or agreement.json")
+    try:
+        rec = json.loads(receipt.read_text(encoding="utf-8"))
+        agr = json.loads(agreement.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return Result(FAIL, f"audit artifacts unreadable: {exc}")
+    if rec.get("canonical_artifacts_mutated") is not False:
+        return Result(FAIL, "the audit receipt does not attest that canonical artifacts are intact")
+    for doc in (rec, agr):
+        if doc.get("human_judge_reliability", {}).get("status") != "not_measured":
+            return Result(FAIL, "an audit artifact claims human judge reliability was measured")
+    band = (agr.get("band") or {}).get("band", "?")
+    stage_b = (agr.get("stage_b_triggers") or {}).get("triggered")
+    return Result(PASS, f"band {band}, stage B triggered {stage_b}, canonical intact, "
+                        f"human reliability still not_measured")
+
+
 GATES = (
     ("lint", check_lint),
     ("cross-file invariants", check_consistency),
@@ -402,6 +433,7 @@ GATES = (
     ("model selectors", check_model_selectors),
     ("omp version", check_omp_version),
     ("freeze lock", check_lock_state),
+    ("automated audit", check_automated_audit),
 )
 
 

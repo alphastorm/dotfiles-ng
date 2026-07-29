@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lrhe/exec-evidence.schema.json",
+  "title": "LRHE execution evidence record",
+  "description": "One record per claim verification command that actually ran. The closed, runner-attested shape prevents a model's textual opinion from entering the execution-precedence branch that can force a REFUTED verdict.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "claim_rid",
+    "ran",
+    "command",
+    "exit_code",
+    "reproduced",
+    "stdout_sha256",
+    "stderr_sha256",
+    "repo_digest_before",
+    "repo_digest_after",
+    "runner_version",
+    "started_at",
+    "finished_at"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "description": "Joins the command result to exactly one reviewer run; without it execution could override the wrong claim."
+    },
+    "claim_rid": {
+      "type": "string",
+      "description": "Joins the command result to exactly one claim within the run; execution precedence must never apply by inference."
+    },
+    "ran": {
+      "type": "boolean",
+      "const": true,
+      "description": "Attests that a runner actually invoked the command; only true execution may enter the REFUTED precedence branch."
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Records the non-empty command that ran so the result is reproducible rather than a model's proposed verification."
+    },
+    "exit_code": {
+      "type": "integer",
+      "description": "Captures the process result independently of prose so success or failure cannot be invented by interpretation."
+    },
+    "reproduced": {
+      "type": "boolean",
+      "description": "States whether the predicted failure occurred; false is load-bearing because it forces the REFUTED verdict."
+    },
+    "stdout_sha256": {
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{64}$",
+      "description": "Commits to exact standard output without embedding it, making the runner's observed evidence tamper-evident."
+    },
+    "stderr_sha256": {
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{64}$",
+      "description": "Commits to exact standard error so a claimed process outcome can be checked against its diagnostic evidence."
+    },
+    "repo_digest_before": {
+      "type": "string",
+      "description": "Identifies the repository state the command started from so execution evidence cannot silently target another epoch."
+    },
+    "repo_digest_after": {
+      "type": "string",
+      "description": "Identifies the repository state after execution so mutations that could change the result remain observable."
+    },
+    "runner_version": {
+      "type": "string",
+      "description": "Identifies the implementation that captured the evidence so changes in execution semantics are auditable."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Anchors the execution start in time so stale or reordered evidence can be detected."
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Anchors completion in time so the record proves a bounded runner invocation rather than an unstarted proposal."
+    },
+    "case_id": {
+      "type": "string",
+      "description": "Links private audit cases by opaque identifier without exposing corpus identity or allowing a case to substitute for a claim join."
+    },
+    "wall_time_s": {
+      "type": "number",
+      "description": "Records observed duration so timeouts and implausibly instant results remain diagnosable."
+    },
+    "network": {
+      "type": "boolean",
+      "description": "Discloses whether external state could have influenced the command result and its reproducibility."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Carries runner diagnostics only; it cannot replace any required machine-verifiable execution field."
+    }
+  }
+}

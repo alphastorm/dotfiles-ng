@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from make_fixtures import to_v2
+from make_fixtures import synthetic_exec_evidence, to_v2
 
 HERE = Path(__file__).parent
 # The repository is flat; the protocol's Files section describes a scripts/ layout.
@@ -181,9 +181,8 @@ def simulate(
                                       "panel": [x for x in FAMILIES if x != fam],
                                       "unanimous": True})
                         if lab.get("verify_cmd"):
-                            execres.append({"run_id": run_id, "claim_rid": rid,
-                                            "reproduced": True, "cmd": lab["verify_cmd"],
-                                            "exit_code": 1})
+                            execres.append(synthetic_exec_evidence(
+                                run_id, rid, lab["verify_cmd"], True))
                 # trap bait
                 if "trap" in _item and rng.random() < trap_bait[fam]:
                     rid_n += 1
@@ -199,8 +198,8 @@ def simulate(
                                   "label_id": "", "affinity": 0.2,
                                   "panel": [x for x in FAMILIES if x != fam],
                                   "unanimous": False})
-                    execres.append({"run_id": run_id, "claim_rid": rid, "reproduced": False,
-                                    "cmd": "timing harness", "exit_code": 0})
+                    execres.append(synthetic_exec_evidence(
+                        run_id, rid, "timing harness", False))
                 # noise claims
                 for _ in range(int(rng.poisson(2.0))):
                     rid_n += 1

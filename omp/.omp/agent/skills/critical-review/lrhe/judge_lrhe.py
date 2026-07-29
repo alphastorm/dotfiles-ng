@@ -3,10 +3,10 @@
 judge_lrhe.py -- cross-family adjudication and cold refutation, with the human
 reduced to a fixed, small, honest role.
 
-score_lrhe.py consumes judge.jsonl and exec.jsonl. Nothing produced either. The
+score_lrhe.py consumes judge.jsonl and separately supplied execution evidence. The
 judge panel in LRHE-PROTOCOL.md section 5.2 was a paragraph, so in practice every
-claim got hand-labeled; the REFUTED branch of section 5.3 was reachable only from
-container execution. This closes both gaps with the same plumbing.
+claim got hand-labeled. This closes that adjudication gap without weakening the
+REFUTED branch's requirement for a command that actually ran.
 
 Two channels, deliberately separate, because they answer different questions:
 
@@ -14,14 +14,14 @@ Two channels, deliberately separate, because they answer different questions:
       "Does this claim match a ground-truth defect?"  CONFIRMED / PLAUSIBLE /
       FABRICATED, decided by two families that did not author it.
 
-  COLD REFUTATION (`refute` / `ingest-refutation`) -> exec.jsonl
+  COLD REFUTATION (`refute` / `ingest-refutation`) -> refuter-opinions.jsonl
       "Can this claim be falsified against the code?"  confirmed / falsified /
       unresolved, decided by one family that sees only the normalized claim, its
       evidence, the repository epoch, and the test that would settle it.
 
-The second is what makes execution-free REFUTED possible, and it is where a cheap
-fifth family earns its place: it runs per disputed P0/P1 claim, not per review, so
-a review with nothing in dispute costs nothing.
+Cold-refuter output is diagnostic model opinion, never execution evidence. The
+REFUTED branch is reachable only from a schema-valid record of a command that
+actually ran.
 
 The human is not removable. Judge-human agreement (kappa >= 0.70) is a hard gate
 in section 8, and a panel calibrated against nothing measures nothing. What IS
@@ -51,68 +51,16 @@ from pathlib import Path
 
 import yaml
 
+# The adjudication prompt lives in judge_render so `auto_reliability.py` renders the
+# same bytes for the same claim. Re-exported here because this module's callers and
+# tests have always read RUBRIC/JUDGE_PROMPT off it.
+from judge_render import JUDGE_PROMPT, RUBRIC, render_judge
+
 VERDICTS = ("CONFIRMED", "PLAUSIBLE", "FABRICATED")
 VERDICT_TIE_ORDER = {v: i for i, v in enumerate(VERDICTS)}
 REFUTE_OUTCOMES = ("confirmed", "falsified", "unresolved")
 
-# Verbatim from SWE-PRBench `dataset/rubric.md` section 1. Reused rather than
-# reinvented: the protocol's comparison point is their published baseline, and a
-# different rubric would silently make the numbers incomparable.
-RUBRIC = """\
-CONFIRMED -- all of the following hold:
-  1. The comment identifies a specific issue in the code.
-  2. A ground-truth label describes the SAME underlying issue (wording may differ).
-  3. The issue concerns the same file or functional area.
-  4. The concern would lead to the same kind of code change as the label.
-
-PLAUSIBLE:
-  1. The comment is grounded in code visible in the provided context.
-  2. The observation is factually correct about the code.
-  3. A reasonable engineer might raise the concern.
-  4. NO ground-truth label describes this specific concern.
-
-FABRICATED -- any of the following holds:
-  1. References code, functions or behavior not present in the provided context.
-  2. Makes factually incorrect claims about the code.
-  3. Describes a bug that does not exist in the shown code.
-  4. Invents method signatures, variable names or behavior.
-"""
-
-JUDGE_PROMPT = """\
-You are adjudicating one code-review comment against the ground truth for a change.
-You did not write this comment. Judge it; do not improve it.
-
-{rubric}
-Return JSON only:
-  {{"verdict": "CONFIRMED"|"PLAUSIBLE"|"FABRICATED",
-    "label_id": "<id of the matched ground-truth label, or null>",
-    "confidence": 0.0-1.0,
-    "rationale": "<one sentence>"}}
-
-PLAUSIBLE is not a failure grade. Human review is not exhaustive, so a correct
-observation that no label happens to cover is PLAUSIBLE, never FABRICATED.
-Reserve FABRICATED for claims the code in front of you contradicts.
-
---- CHANGE UNDER REVIEW ---
-{goal}
-
-{problem}
-
---- FILES IN SCOPE ---
-{files}
-
---- DIFF ---
-{diff}
-
---- GROUND-TRUTH LABELS ---
-{labels}
-
---- COMMENT TO ADJUDICATE ---
-severity asserted: P{severity}   confidence asserted: {confidence}
-claim:    {claim}
-evidence: {evidence}
-impact:   {impact}
-"""
+__all__ = ["JUDGE_PROMPT", "RUBRIC"]
 
 # The cold refuter sees no ground truth and no peer output, by construction. It is
 # given the claim, its evidence, the immutable epoch, and the settling test -- and
@@ -312,21 +260,9 @@ def cmd_prompts(args) -> int:
     return 0
 
 
-def _render_judge(item: dict, claim: dict) -> str:
-    labels = item.get("labels") or []
-    label_txt = "\n".join(
-        f"  [{lab['label_id']}] severity P{lab.get('severity')} "
-        f"{'/'.join(s['path'] for s in lab.get('sites', []))}: "
-        f"{(lab.get('description') or '')[:400]}"
-        for lab in labels) or "  (none -- this item has no ground-truth defects)"
-    return JUDGE_PROMPT.format(
-        rubric=RUBRIC, goal=item.get("goal", ""),
-        problem=(item.get("problem_statement") or "")[:4000],
-        files="\n".join(f"  {p}" for p in item.get("repo_files", [])) or "  (unspecified)",
-        diff=(item.get("design_or_diff") or "")[:60000], labels=label_txt,
-        severity=claim.get("severity", ""), confidence=claim.get("confidence", ""),
-        claim=claim.get("claim_text", ""), evidence=claim.get("evidence_text", ""),
-        impact=claim.get("impact_text", ""))
+# The canonical panel's prompt IS the audit's prompt; see judge_render for why the
+# implementation is not allowed to live in two places.
+_render_judge = render_judge
 
 
 def _top_with_tiebreak(
@@ -585,17 +521,18 @@ def cmd_refute(args) -> int:
     print(f"wrote {args.out}\n")
     print("Respond with one JSON object per prompt carrying at least")
     print("  {refute_id, outcome, primary_evidence, verification_procedure}")
-    print("then run `judge_lrhe.py ingest-refutation`.")
+    print("then run `judge_lrhe.py ingest-refutation` to record diagnostic opinions.")
     return 0
 
 
 def cmd_ingest_refutation(args) -> int:
-    """Fold refutation outcomes into exec.jsonl, which drives the REFUTED branch.
+    """Record cold-refutation outcomes as diagnostic model opinions.
 
-    Section 5.3 puts REFUTED above every judge verdict: a claim three families
-    raised at conf=0.95 is REFUTED if the check comes back clean. That precedence is
-    the mechanism the whole design rests on, so only `falsified` writes a refutation
-    -- `unresolved` deliberately writes nothing rather than resolving by silence.
+    Section 5.3 puts REFUTED above every judge verdict. Treating a model's textual
+    answer as though its proposed verification had run let one opinion force that
+    verdict without execution. This command avoids that precedence hazard by
+    emitting no execution fields; only runner-attested evidence may reach the
+    REFUTED branch. Unresolved opinions remain useful diagnostics and are retained.
     """
     prompts = {p["refute_id"]: p for p in _read_jsonl(args.prompts)}
     rows, stats, unmatched = [], Counter(), 0
@@ -606,17 +543,15 @@ def cmd_ingest_refutation(args) -> int:
             unmatched += 1
             continue
         stats[outcome] += 1
-        if outcome == "unresolved":
-            continue
         rows.append({
-            "run_id": p["run_id"], "claim_rid": p["claim_rid"],
-            "ran": True,
-            # exec_reproduced False == the predicted failure did not occur == REFUTED.
-            "reproduced": outcome == "confirmed",
-            "cmd": (r.get("verification_procedure") or "")[:400],
+            "run_id": p["run_id"],
+            "claim_rid": p["claim_rid"],
+            "kind": "model_opinion",
+            "outcome": outcome,
             "refuter_family": p["family"],
             "primary_evidence": (r.get("primary_evidence") or "")[:400],
-            "exit_code": 0,
+            "proposed_verification": (r.get("verification_procedure") or "")[:400],
+            "rationale": (r.get("rationale") or "")[:400],
         })
     _write_jsonl(args.out, rows)
     total = sum(stats.values())
@@ -625,9 +560,9 @@ def cmd_ingest_refutation(args) -> int:
         print(f"  {k:<12} {stats[k]:>5}  ({stats[k] / max(total, 1):.0%})")
     if unmatched:
         print(f"  unmatched  {unmatched}")
-    print(f"\nwrote {len(rows)} exec records -> {args.out}")
-    print("`unresolved` writes nothing on purpose: an unsettled claim must not be")
-    print("resolved by silence in either direction.")
+    print(f"\nwrote {len(rows)} refuter opinions -> {args.out}")
+    print("These are diagnostic opinions, not execution evidence.")
+    print("`score_lrhe.py --exec` will refuse them.")
     if stats["unresolved"]:
         print(f"\n{stats['unresolved']} unresolved P0/P1 claims are what you actually have to read.")
     return 0
@@ -695,29 +630,224 @@ def cohens_kappa(a: list[str], b: list[str]) -> tuple[float, float]:
 
 
 def cmd_kappa(args) -> int:
-    judge = {(j["run_id"], str(j["claim_rid"])): j for j in _read_jsonl(args.judge)}
-    rows = [r for r in _read_csv(args.calibration) if (r.get("human_verdict") or "").strip()]
-    if not rows:
-        print("no labeled rows in the calibration file", file=sys.stderr)
+    judge = {
+        (str(j["run_id"]).strip(), str(j["claim_rid"]).strip()): j
+        for j in _read_jsonl(args.judge)
+    }
+    rows = _read_csv(args.calibration)
+    violations = []
+    if len(rows) != args.expect_rows:
+        violations.append(
+            f"expected exactly {args.expect_rows} rows, found {len(rows)}")
+
+    corpus_labels: dict[str, set[str]] = {}
+    if args.corpus is not None:
+        for item in _read_jsonl(args.corpus):
+            item_id = str(item.get("item_id", "")).strip()
+            corpus_labels[item_id] = {
+                str(label.get("label_id", "")).strip()
+                for label in item.get("labels", [])
+                if str(label.get("label_id", "")).strip()
+            }
+    elif args.case_map is None:
+        violations.append(
+            "--corpus is required for legacy run_id + claim_rid packets")
+
+    cases: dict[str, dict] = {}
+    duplicate_case_ids: set[str] = set()
+    if args.case_map is not None:
+        for case in _read_jsonl(args.case_map):
+            case_id = str(case.get("case_id", "")).strip()
+            if not case_id:
+                continue
+            if case_id in cases:
+                duplicate_case_ids.add(case_id)
+            else:
+                cases[case_id] = case
+
+    seen_packet_keys: dict[tuple[str, ...], int] = {}
+    seen_judge_keys: dict[tuple[str, str], int] = {}
+    compared = []
+    for line_number, row in enumerate(rows, start=2):
+        verdict = str(row.get("human_verdict") or "").strip().upper()
+        human_label = str(row.get("human_label_id") or "").strip()
+        if not verdict:
+            violations.append(f"CSV row {line_number}: human_verdict is empty")
+        elif verdict not in VERDICTS:
+            violations.append(
+                f"CSV row {line_number}: invalid human_verdict {verdict!r}; "
+                f"expected one of {', '.join(VERDICTS)}")
+
+        item_id = ""
+        label_set: set[str] | None = None
+        judge_key: tuple[str, str] | None = None
+        if args.case_map is not None:
+            case_id = str(row.get("case_id") or "").strip()
+            if not case_id:
+                violations.append(f"CSV row {line_number}: missing case_id")
+            else:
+                packet_key = ("case_id", case_id)
+                if packet_key in seen_packet_keys:
+                    violations.append(
+                        f"CSV row {line_number}: duplicate case_id {case_id!r} "
+                        f"(first seen on row {seen_packet_keys[packet_key]})")
+                else:
+                    seen_packet_keys[packet_key] = line_number
+
+                case = cases.get(case_id)
+                if case_id in duplicate_case_ids:
+                    violations.append(
+                        f"CSV row {line_number}: case_id {case_id!r} is duplicated "
+                        "in the case map")
+                elif case is None:
+                    violations.append(
+                        f"CSV row {line_number}: unknown case_id {case_id!r}")
+                else:
+                    if case.get("kind") != "case":
+                        violations.append(
+                            f"CSV row {line_number}: case_id {case_id!r} maps to "
+                            f"kind {case.get('kind')!r}, not 'case'")
+                    run_id = str(case.get("run_id") or "").strip()
+                    claim_rid = str(case.get("claim_rid") or "").strip()
+                    if not run_id or not claim_rid:
+                        violations.append(
+                            f"CSV row {line_number}: case_id {case_id!r} has no "
+                            "complete run_id + claim_rid mapping")
+                    else:
+                        judge_key = (run_id, claim_rid)
+                    item_id = str(case.get("item_id") or "").strip()
+                    if "label_ids" in case:
+                        raw_labels = case["label_ids"]
+                        if isinstance(raw_labels, list):
+                            label_set = {
+                                str(label_id).strip()
+                                for label_id in raw_labels
+                                if str(label_id).strip()
+                            }
+                    elif item_id:
+                        label_set = corpus_labels.get(item_id)
+        else:
+            run_id = str(row.get("run_id") or "").strip()
+            claim_rid = str(row.get("claim_rid") or "").strip()
+            if not run_id or not claim_rid:
+                violations.append(
+                    f"CSV row {line_number}: missing run_id + claim_rid key")
+            else:
+                packet_key = ("run_id+claim_rid", run_id, claim_rid)
+                if packet_key in seen_packet_keys:
+                    violations.append(
+                        f"CSV row {line_number}: duplicate run_id + claim_rid "
+                        f"{run_id!r} + {claim_rid!r} "
+                        f"(first seen on row {seen_packet_keys[packet_key]})")
+                else:
+                    seen_packet_keys[packet_key] = line_number
+                judge_key = (run_id, claim_rid)
+            item_id = str(row.get("item_id") or "").strip()
+            if item_id:
+                label_set = corpus_labels.get(item_id)
+
+        judge_row = None
+        if judge_key is not None:
+            if judge_key in seen_judge_keys:
+                first = seen_judge_keys[judge_key]
+                # Distinct blinded IDs that resolve to one claim are still the same
+                # calibration observation and must not count twice.
+                if first != line_number:
+                    violations.append(
+                        f"CSV row {line_number}: duplicate resolved judge key "
+                        f"{judge_key[0]!r} + {judge_key[1]!r} "
+                        f"(first seen on row {first})")
+            else:
+                seen_judge_keys[judge_key] = line_number
+            judge_row = judge.get(judge_key)
+            if judge_row is None:
+                violations.append(
+                    f"CSV row {line_number}: no judge record for "
+                    f"{judge_key[0]!r} + {judge_key[1]!r}")
+
+        if verdict == "CONFIRMED":
+            if not human_label:
+                violations.append(
+                    f"CSV row {line_number}: CONFIRMED requires human_label_id")
+            elif label_set is None:
+                violations.append(
+                    f"CSV row {line_number}: no item label set is available to "
+                    f"validate human_label_id {human_label!r}")
+            elif human_label not in label_set:
+                violations.append(
+                    f"CSV row {line_number}: human_label_id {human_label!r} is "
+                    f"not valid for item {item_id!r}")
+        elif verdict in ("PLAUSIBLE", "FABRICATED") and human_label:
+            violations.append(
+                f"CSV row {line_number}: {verdict} requires an empty "
+                "human_label_id")
+
+        if judge_row is not None and verdict in VERDICTS:
+            compared.append({
+                "human_verdict": verdict,
+                "human_label_id": human_label,
+                "panel_verdict": str(judge_row.get("verdict") or "").strip().upper(),
+                "panel_label_id": str(judge_row.get("label_id") or "").strip(),
+            })
+
+    if violations:
+        print(f"invalid calibration packet ({len(violations)} violation(s)):", file=sys.stderr)
+        for violation in violations:
+            print(f"  - {violation}", file=sys.stderr)
         return 2
 
-    pairs = [(r["human_verdict"].strip().upper(),
-              judge[(r["run_id"], str(r["claim_rid"]))]["verdict"])
-             for r in rows if (r["run_id"], str(r["claim_rid"])) in judge]
-    if not pairs:
-        print("no labeled row matched a judge record", file=sys.stderr)
-        return 2
-    human, panel = [p[0] for p in pairs], [p[1] for p in pairs]
-    k, po = cohens_kappa(human, panel)
+    human = [row["human_verdict"] for row in compared]
+    panel = [row["panel_verdict"] for row in compared]
+    verdict_kappa, verdict_raw = cohens_kappa(human, panel)
 
-    print(f"calibration pairs: {len(pairs)}")
-    print(f"raw agreement    : {po:.3f}")
-    print(f"Cohen's kappa    : {k:.3f}")
-    print(f"\nGATE (section 8): kappa >= 0.70 -> {'PASS' if k >= 0.70 else 'FAIL'}")
-    if k < 0.70:
+    both_confirmed = [
+        row for row in compared
+        if row["human_verdict"] == row["panel_verdict"] == "CONFIRMED"
+    ]
+    human_labels = [row["human_label_id"] for row in both_confirmed]
+    panel_labels = [row["panel_label_id"] for row in both_confirmed]
+
+    human_composite = [
+        f"CONFIRMED:{row['human_label_id']}"
+        if row["human_verdict"] == "CONFIRMED" else row["human_verdict"]
+        for row in compared
+    ]
+    panel_composite = [
+        f"CONFIRMED:{row['panel_label_id']}"
+        if row["panel_verdict"] == "CONFIRMED" else row["panel_verdict"]
+        for row in compared
+    ]
+    composite_kappa, composite_raw = cohens_kappa(human_composite, panel_composite)
+
+    print(f"calibration pairs: {len(compared)}")
+    print("\nverdict agreement:")
+    print(f"  raw agreement : {verdict_raw:.3f}")
+    print(f"  Cohen's kappa : {verdict_kappa:.3f}")
+
+    print("\nexact matched-label agreement conditional on CONFIRMED:")
+    print(f"  n             : {len(both_confirmed)}")
+    if not both_confirmed:
+        print("  raw agreement : n/a (no row was CONFIRMED by both raters)")
+        print("  Cohen's kappa : n/a (no row was CONFIRMED by both raters)")
+    else:
+        label_kappa, label_raw = cohens_kappa(human_labels, panel_labels)
+        print(f"  raw agreement : {label_raw:.3f}")
+        if len(set(human_labels) | set(panel_labels)) == 1:
+            print("  Cohen's kappa : n/a (only one label category was observed)")
+        else:
+            print(f"  Cohen's kappa : {label_kappa:.3f}")
+
+    print(f"\nGATE (section 8): kappa >= 0.70 -> "
+          f"{'PASS' if verdict_kappa >= 0.70 else 'FAIL'}")
+    print(f"composite kappa: {composite_kappa:.3f} "
+          f"(raw agreement {composite_raw:.3f})")
+    print("A composite below the verdict figure means the panel and rater are "
+          "matching different defects.")
+    if verdict_kappa < 0.70:
         print("At this kappa the headline numbers are judge noise. SWE-PRBench reported\n"
               "0.75 against its rubric and 0.616 across judges, so 0.70 is achievable --\n"
               "but no amount of bootstrapping repairs a panel that misses it.")
+    pairs = list(zip(human, panel, strict=True))
     cats = sorted(set(human) | set(panel))
     print("\nconfusion (rows human, cols panel):")
     print("            " + "".join(f"{c[:9]:>11}" for c in cats))
@@ -773,10 +903,13 @@ def main() -> int:
     r.add_argument("--out", type=Path, default=Path("refute_prompts.jsonl"))
     r.set_defaults(fn=cmd_refute)
 
-    ir = sub.add_parser("ingest-refutation", help="fold refutations into exec.jsonl")
+    ir = sub.add_parser(
+        "ingest-refutation",
+        help="record cold-refuter responses as diagnostic model opinions",
+    )
     ir.add_argument("--prompts", type=Path, required=True)
     ir.add_argument("--responses", type=Path, required=True)
-    ir.add_argument("--out", type=Path, default=Path("exec.jsonl"))
+    ir.add_argument("--out", type=Path, default=Path("refuter-opinions.jsonl"))
     ir.set_defaults(fn=cmd_ingest_refutation)
 
     c = sub.add_parser("calibrate", help="sample claims for blind hand-labeling")
@@ -790,6 +923,12 @@ def main() -> int:
     k = sub.add_parser("kappa", help="judge-human agreement against the section 8 gate")
     k.add_argument("--calibration", type=Path, required=True)
     k.add_argument("--judge", type=Path, required=True)
+    k.add_argument("--expect-rows", type=int, default=60,
+                   help="exact packet size required before agreement is computed")
+    k.add_argument("--case-map", type=Path, default=None,
+                   help="blinded case_id -> judge key JSONL; controls are rejected")
+    k.add_argument("--corpus", type=Path, default=None,
+                   help="item labels; required for legacy run_id + claim_rid packets")
     k.set_defaults(fn=cmd_kappa)
 
     args = ap.parse_args()

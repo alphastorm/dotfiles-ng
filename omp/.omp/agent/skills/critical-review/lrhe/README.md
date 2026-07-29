@@ -192,11 +192,19 @@ pool two fingerprints under one selector, failing closed exactly as it does on a
 mixed panel. `freeze_lock.py` records each enabled lane's selector under
 `model_pins`, with `fingerprint: null`.
 
-**OpenCode exposes no fingerprint.** The session record carries `responseId`,
-`runtimeRequestId`, usage and cost, and nothing that names the checkpoint — so this
-is `null` on every OpenCode run today, and the control is a detector for later plus
-an unmeasured risk on the record. It is deliberately not a solved problem: a field
-that reads `null` is a stated gap, where an absent field is one nobody has noticed.
+**No fingerprint has been observed in the retained session record.** That record keeps
+`responseId`, `runtimeRequestId`, `logicalTurnId`, `provider`, `model` and usage, and
+carries no `system_fingerprint` field and no raw headers — so this is `null` on every
+OpenCode run today, and the control is a detector for later plus an unmeasured risk on
+the record. What that does **not** establish is that the provider sends nothing:
+`provider_fingerprint_observation` is `not_observed`, never `observed_absent`, because
+nothing here can distinguish a provider that emits no checkpoint identifier from a
+persistence path that drops one. Earlier prose in this file read "OpenCode exposes no
+fingerprint"; that was a conclusion about the provider drawn from a gap in our own
+retention. Settling it needs authenticated raw headers compared against the record,
+which needs a live transport this harness deliberately does not have. It is
+deliberately not a solved problem: a field that reads `null` is a stated gap, where an
+absent field is one nobody has noticed.
 
 The guard's own first version refused every analysis it touched. An unpopulated
 column reads back as `NaN`, `NaN` never equals itself, and a set of them has one
