@@ -340,7 +340,7 @@ def test_a_finished_step_stops_being_printed():
     reconstruct it by hand. Every step whose completion a gate can see now
     answers for itself.
     """
-    done = {"omp version": preflight.Result(preflight.PASS, "omp 17.1.6")}
+    done = {"omp version": preflight.Result(preflight.PASS, "omp 17.1.8")}
     upgrade = next(todo for step, _why, todo in preflight.MANUAL_STEPS if "upgrade" in step)
     assert upgrade(done) is False
     assert upgrade({"omp version": preflight.Result(preflight.FAIL, "17.1.4")}) is True
