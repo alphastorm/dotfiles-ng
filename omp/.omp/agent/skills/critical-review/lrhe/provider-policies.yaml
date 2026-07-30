@@ -134,7 +134,7 @@ policies:
     routerTrainingAllowed: false
     modelTrainingAllowed: false
     publicCorpusAllowed: true
-    carrythroughOwnedInternalAllowed: false
+    carrythroughOwnedInternalAllowed: true
     customerDataAllowed: false
     thirdPartyConfidentialAllowed: false
     termsClearanceStatus: operator_risk_accepted_pending_written_clarification
@@ -149,11 +149,11 @@ policies:
       recordSha256: 7a817ffba857f699d59f09b090188a680c9d254410bb3c428fb338bc5fb27055
     notes:
       - >-
-        carrythroughOwnedInternalAllowed is FALSE here and true elsewhere. The
-        standing rule is that Antigravity is a remote provider and must never
-        receive material marked local-only or confidential-to-device; public
-        benchmark corpus only until that boundary is written down somewhere it can
-        be cited.
+        carrythroughOwnedInternalAllowed is TRUE under the dated operator
+        authorization for owned repository work and research. Customer data and
+        third-party confidential data remain separately disallowed until their
+        owners grant explicit rights; those fields are explicit data-rights gates,
+        not inferred OMP routing categories. An explicit NO_CLOUD marker still blocks.
       - >-
         Terms ARE now snapshotted (Antigravity's own Terms of Service plus Google's
         Generative AI Additional Terms, which is the governing data-use document
@@ -175,7 +175,7 @@ policies:
     routerTrainingAllowed: false
     modelTrainingAllowed: false
     publicCorpusAllowed: true
-    carrythroughOwnedInternalAllowed: false
+    carrythroughOwnedInternalAllowed: true
     customerDataAllowed: false
     thirdPartyConfidentialAllowed: false
     termsClearanceStatus: operator_risk_accepted_pending_written_clarification

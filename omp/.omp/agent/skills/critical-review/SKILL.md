@@ -24,10 +24,10 @@ Live reviewer membership and roles are configuration, not prose:
 
 Before dispatch:
 
-1. Classify the repository and review material as public, cloud-eligible, or local-only from existing context.
+1. Treat repository work and research as cloud-permitted by default. Block hosted review only when the user, repository, or applicable customer policy explicitly marks the task or material `NO_CLOUD`; do not infer a separate confidential or local-only category.
 2. Read `skill://critical-review/qualification.yml`. A provider is enabled only when its family is in the required `liveDispatch` role, its reviewer entry says `dispatchEnabled: true`, its canary and read-only gates pass, its exact model selector still resolves, and the packet authorizes that provider.
 3. Treat an explicit provider list in the user's current `/skill:critical-review` request as authorization for only those providers and this review epoch.
-4. If hosted-provider authorization is absent or unclear, invoke Ask before transmitting material. Recommend the safest qualified subset. Include a no-effect/local-only option. Never send local-only material to a hosted reviewer.
+4. If hosted-provider authorization is absent or unclear, invoke Ask before transmitting material. Recommend the safest qualified subset and include a no-effect/non-cloud option. Never send `NO_CLOUD` material to a hosted reviewer.
 5. Never include credential values, private keys, tokens, cookies, environment dumps, secret files, or generated credential stores in a packet. A source file containing secret-handling code may be reviewed only when the chosen providers are authorized for it; redact actual values without changing the reviewed semantics.
 
 A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is `missing`, never `approved`. Do not substitute another GPT model for an unavailable external family.
@@ -157,6 +157,13 @@ in the current request or an Ask gate.
    It verifies the frozen subject both before and after the command and emits no
    receipt on failure or drift. The fixed skill-development `full` wrapper
    delegates to this same producer.
+
+   Iteration MAY run a standalone fast or repository-default check before the
+   subject is frozen. After the final subject freeze, run the final
+   repository-default `just check` exactly once through `make_receipt.py` and
+   use that subject-bound receipt as the proof; do not run the same unbound
+   `just check` and then repeat it against unchanged frozen bytes solely to mint
+   the receipt.
 7. Run `python3 lrhe/review_sequence.py review-record.json`. A nonzero result
    prohibits provider dispatch.
 8. Create `packet.md` from the validated record. The packet records only the
