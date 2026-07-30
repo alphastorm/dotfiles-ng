@@ -319,8 +319,8 @@ def check_model_selectors() -> Result:
     return Result(PASS, f"{resolved} reviewer selectors resolve against the installed build")
 
 
-def check_isolated_reviewer_contracts() -> Result:
-    """Bind inline lanes to the active model, empty surface, and trace receipt."""
+def check_reviewer_evidence_contracts() -> Result:
+    """Bind explicit evidence lanes to their active model, tools, and trace receipt."""
     try:
         document = load_qualification(SKILL / "qualification.yml")
         qualified = qualification_reviewers(document)
@@ -337,14 +337,20 @@ def check_isolated_reviewer_contracts() -> Result:
     problems: list[str] = []
     checked = 0
     for family, value in sorted(qualified.items()):
-        if not isinstance(value, dict) or value.get("evidenceDelivery") != "inline":
+        if not isinstance(value, dict) or "canaryReceipt" not in value:
             continue
         checked += 1
         agent = value.get("agent")
         selector = value.get("model")
+        evidence_delivery = value.get("evidenceDelivery")
         tools = value.get("tools")
-        if not isinstance(agent, str) or not isinstance(selector, str):
-            problems.append(f"{family}: agent or model absent")
+        if (
+            not isinstance(agent, str)
+            or not isinstance(selector, str)
+            or not isinstance(evidence_delivery, str)
+            or not isinstance(tools, list)
+        ):
+            problems.append(f"{family}: agent, model, evidence delivery, or tools absent")
             continue
         definition = AGENTS / f"{agent}.md"
         try:
@@ -362,18 +368,22 @@ def check_isolated_reviewer_contracts() -> Result:
             problems.append(
                 f"{family}: active override {overrides.get(agent)!r} != qualification {selector!r}"
             )
-        if tools != [] or front.get("tools") != tools:
+        if front.get("tools") != tools:
             problems.append(
-                f"{family}: qualification tools {tools!r}, agent tools {front.get('tools')!r}; "
-                "inline review requires both empty"
+                f"{family}: qualification tools {tools!r} != agent tools "
+                f"{front.get('tools')!r}"
             )
         if front.get("thinkingLevel") != effort:
             problems.append(
                 f"{family}: thinkingLevel {front.get('thinkingLevel')!r} != selector effort {effort!r}"
             )
-        for marker in ("CRITICAL_REVIEWER_READ_ONLY_V1", "CRITICAL_REVIEWER_INLINE_ISOLATED_V1"):
-            if marker not in text:
-                problems.append(f"{family}: agent is missing {marker}")
+        if "CRITICAL_REVIEWER_READ_ONLY_V1" not in text:
+            problems.append(f"{family}: agent is missing CRITICAL_REVIEWER_READ_ONLY_V1")
+        isolated_marker = "CRITICAL_REVIEWER_INLINE_ISOLATED_V1"
+        if evidence_delivery == "inline" and isolated_marker not in text:
+            problems.append(f"{family}: inline agent is missing {isolated_marker}")
+        if evidence_delivery == "repository" and isolated_marker in text:
+            problems.append(f"{family}: repository agent still carries {isolated_marker}")
 
         receipt_name = value.get("canaryReceipt")
         if not isinstance(receipt_name, str):
@@ -381,13 +391,19 @@ def check_isolated_reviewer_contracts() -> Result:
             continue
         try:
             receipt = canary.validate_trace_receipt(
-                SKILL / receipt_name, definition, agent, selector
+                SKILL / receipt_name,
+                definition,
+                agent,
+                selector,
+                evidence_delivery,
             )
         except canary.TraceCanaryError as exc:
             problems.append(f"{family}: {exc}")
             continue
         measured = value.get("canary")
         expected_summary = {
+            "evidenceDelivery": receipt["evidence_delivery"],
+            "agentTools": receipt["agent_tools"],
             "declaredTools": receipt["declared_tools"],
             "forbiddenToolAttempts": receipt["forbidden_tool_attempts"],
             "forbiddenToolExecutions": receipt["forbidden_tool_executions"],
@@ -406,7 +422,7 @@ def check_isolated_reviewer_contracts() -> Result:
                 )
     if problems:
         return Result(FAIL, "; ".join(problems))
-    return Result(PASS, f"{checked} inline reviewer contract(s) match active config and trace")
+    return Result(PASS, f"{checked} reviewer evidence contract(s) match active config and trace")
 
 
 def check_canary_ledger_integrity() -> Result:
@@ -565,7 +581,7 @@ GATES = (
     ("no live transport", check_no_live_transport),
     ("lanes held", check_lanes_held),
     ("model selectors", check_model_selectors),
-    ("isolated reviewer contracts", check_isolated_reviewer_contracts),
+    ("reviewer evidence contracts", check_reviewer_evidence_contracts),
     ("canary ledger integrity", check_canary_ledger_integrity),
     ("omp version", check_omp_version),
     ("freeze lock", check_lock_state),

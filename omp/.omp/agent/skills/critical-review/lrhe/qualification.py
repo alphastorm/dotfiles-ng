@@ -30,6 +30,7 @@ CANARY_AUTHORITIES = frozenset(
     {"historical-non-scoring", "evaluation", "live-qualification"}
 )
 PROVIDER_CANARY_AUTHORITIES = frozenset({"evaluation", "live-qualification"})
+READ_ONLY_REPOSITORY_TOOLS = ("read", "grep", "glob", "lsp", "ast_grep")
 LIVE_GROUPS = {
     "initialCritics": ("primary_critic", True),
     "targetedRefuters": ("targeted_refuter", True),
@@ -201,17 +202,23 @@ def validate_qualification(document: object) -> Mapping[str, object]:
                 missing_contract = [name for name in contract_fields if name not in entry]
                 if missing_contract:
                     raise QualificationError(
-                        f"reviewers.{family} incomplete isolated contract: "
+                        f"reviewers.{family} incomplete evidence contract: "
                         f"missing {', '.join(missing_contract)}"
                     )
-                if entry.get("evidenceDelivery") != "inline":
+                evidence_delivery = entry.get("evidenceDelivery")
+                if evidence_delivery not in ("inline", "repository"):
                     raise QualificationError(
-                        f"reviewers.{family}.evidenceDelivery must be 'inline' "
-                        "when an isolated contract is declared"
+                        f"reviewers.{family}.evidenceDelivery must be 'inline' or "
+                        f"'repository', got {evidence_delivery!r}"
                     )
-                if _names(entry.get("tools"), f"reviewers.{family}.tools"):
+                tools = _names(entry.get("tools"), f"reviewers.{family}.tools")
+                expected_tools = (
+                    () if evidence_delivery == "inline" else READ_ONLY_REPOSITORY_TOOLS
+                )
+                if tools != expected_tools:
                     raise QualificationError(
-                        f"reviewers.{family}.tools must be empty for inline delivery"
+                        f"reviewers.{family}.tools must be {list(expected_tools)!r} for "
+                        f"{evidence_delivery} delivery, got {list(tools)!r}"
                     )
                 receipt = entry.get("canaryReceipt")
                 if not isinstance(receipt, str) or not receipt.strip():

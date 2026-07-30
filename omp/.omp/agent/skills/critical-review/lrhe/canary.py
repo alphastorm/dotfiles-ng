@@ -67,6 +67,7 @@ import yaml
 from qualification import (
     PROVIDER_CANARY_AUTHORITIES,
     QualificationError,
+    READ_ONLY_REPOSITORY_TOOLS,
     load_qualification,
     reviewers as qualification_reviewers,
 )
@@ -91,7 +92,7 @@ NON_EGRESS = frozenset({"none", "stub"})
 # `evidence=<path>:<line>` -- the anchor a reviewer claims to have read.
 ANCHOR = re.compile(r"\|evidence=([^\s|:]+):")
 
-TRACE_RECEIPT_SCHEMA = "lrhe-live-review-trace-v1"
+TRACE_RECEIPT_SCHEMA = "lrhe-live-review-trace-v2"
 TRACE_RECEIPT_KEYS = {
     "schema",
     "result",
@@ -99,6 +100,8 @@ TRACE_RECEIPT_KEYS = {
     "requested_selector",
     "requested_model",
     "thinking_level",
+    "evidence_delivery",
+    "agent_tools",
     "served_models",
     "declared_tools",
     "tool_attempts",
@@ -855,12 +858,42 @@ def _trace_yield(rows: list[dict[str, Any]]) -> Any:
     return results[-1]
 
 
+def _contract_tools(evidence_delivery: str) -> list[str]:
+    if evidence_delivery == "inline":
+        return []
+    if evidence_delivery == "repository":
+        return list(READ_ONLY_REPOSITORY_TOOLS)
+    raise TraceCanaryError(
+        f"evidence delivery must be 'inline' or 'repository', got {evidence_delivery!r}"
+    )
+def _declared_contract_tools(evidence_delivery: str) -> list[str]:
+    if evidence_delivery == "inline":
+        return ["yield"]
+    if evidence_delivery == "repository":
+        # Task reviewers expose repository traversal; LSP and AST tools remain
+        # configured allowlist entries but are disabled in the read-only runtime.
+        return ["read", "grep", "glob", "yield"]
+    raise TraceCanaryError(
+        f"evidence delivery must be 'inline' or 'repository', got {evidence_delivery!r}"
+    )
+
+
+
+
 def capture_trace_receipt(
-    trace: Path, agent_definition: Path, agent: str, selector: str
+    trace: Path,
+    agent_definition: Path,
+    agent: str,
+    selector: str,
+    evidence_delivery: str,
 ) -> dict[str, Any]:
     rows = _trace_rows(trace)
     front = _agent_frontmatter(agent_definition)
     requested_model, effort = _selector_parts(selector)
+    agent_tools = _contract_tools(evidence_delivery)
+    allowed_tools = [*agent_tools, "yield"]
+    declared_tools = _declared_contract_tools(evidence_delivery)
+    required_tools = {"yield"} | ({"read"} if evidence_delivery == "repository" else set())
     if front.get("name") != agent:
         raise TraceCanaryError(f"agent definition names {front.get('name')!r}, not {agent!r}")
     if front.get("model") != [selector]:
@@ -871,12 +904,23 @@ def capture_trace_receipt(
         raise TraceCanaryError(
             f"agent thinkingLevel must be {effort!r}, got {front.get('thinkingLevel')!r}"
         )
-    if front.get("tools") != []:
-        raise TraceCanaryError(f"agent tools must be empty, got {front.get('tools')!r}")
+    if front.get("tools") != agent_tools:
+        raise TraceCanaryError(
+            f"agent tools must be {agent_tools!r} for {evidence_delivery} delivery, "
+            f"got {front.get('tools')!r}"
+        )
 
-    declared = [row.get("tools") for row in rows if row.get("type") == "session_init"]
-    if declared != [["yield"]]:
-        raise TraceCanaryError(f"declared tools must be ['yield'], got {declared!r}")
+    sessions = [row for row in rows if row.get("type") == "session_init"]
+    if len(sessions) != 1:
+        raise TraceCanaryError(f"trace must contain one session_init, got {len(sessions)}")
+    if sessions[0].get("allowedTools") != allowed_tools:
+        raise TraceCanaryError(
+            f"allowed tools must be {allowed_tools!r}, got {sessions[0].get('allowedTools')!r}"
+        )
+    if sessions[0].get("tools") != declared_tools:
+        raise TraceCanaryError(
+            f"declared tools must be {declared_tools!r}, got {sessions[0].get('tools')!r}"
+        )
     model_changes = [row.get("model") for row in rows if row.get("type") == "model_change"]
     if not model_changes or any(model != requested_model for model in model_changes):
         raise TraceCanaryError(
@@ -906,21 +950,24 @@ def capture_trace_receipt(
         raise TraceCanaryError("trace has no served model telemetry")
 
     attempts, executions = _trace_tool_names(rows)
-    forbidden_attempts = [name for name in attempts if name != "yield"]
-    forbidden_executions = [name for name in executions if name != "yield"]
-    failures = grade_tool_surface(
-        "",
-        {},
-        {
-            "tool_calls": len(forbidden_executions),
-            "declared_tools": ["yield"],
-            "forbidden_tool_attempts": len(forbidden_attempts),
-            "forbidden_tool_executions": len(forbidden_executions),
-            "fallback_used": served != {requested_model},
-        },
-    )
-    if "yield" not in attempts or "yield" not in executions:
-        failures.append("trace must contain both a yield attempt and execution")
+    allowed = set(declared_tools)
+    forbidden_attempts = [name for name in attempts if name not in allowed]
+    forbidden_executions = [name for name in executions if name not in allowed]
+    failures: list[str] = []
+    if served != {requested_model}:
+        failures.append(
+            f"fallback_used must be false: served {sorted(served)!r}, expected {requested_model!r}"
+        )
+    for field, values in (("attempt", attempts), ("execution", executions)):
+        missing = sorted(required_tools - set(values))
+        if missing:
+            failures.append(f"trace must contain {field}s for {missing!r}")
+    if forbidden_attempts:
+        failures.append(f"forbidden_tool_attempts must be zero, got {forbidden_attempts!r}")
+    if forbidden_executions:
+        failures.append(
+            f"forbidden tool call(s) reached a tool: {forbidden_executions!r}"
+        )
     if failures:
         raise TraceCanaryError("; ".join(failures))
 
@@ -943,8 +990,10 @@ def capture_trace_receipt(
         "requested_selector": selector,
         "requested_model": requested_model,
         "thinking_level": effort,
+        "evidence_delivery": evidence_delivery,
+        "agent_tools": agent_tools,
         "served_models": sorted(served),
-        "declared_tools": ["yield"],
+        "declared_tools": declared_tools,
         "tool_attempts": attempts,
         "tool_executions": executions,
         "forbidden_tool_attempts": len(forbidden_attempts),
@@ -959,7 +1008,11 @@ def capture_trace_receipt(
 
 
 def validate_trace_receipt(
-    path: Path, agent_definition: Path, agent: str, selector: str
+    path: Path,
+    agent_definition: Path,
+    agent: str,
+    selector: str,
+    evidence_delivery: str,
 ) -> dict[str, Any]:
     try:
         receipt = json.loads(path.read_text(encoding="utf-8"))
@@ -973,6 +1026,9 @@ def validate_trace_receipt(
             f"canary receipt shape mismatch: missing={sorted(missing)}, extra={sorted(extra)}"
         )
     requested_model, effort = _selector_parts(selector)
+    agent_tools = _contract_tools(evidence_delivery)
+    declared_tools = _declared_contract_tools(evidence_delivery)
+    required_tools = {"yield"} | ({"read"} if evidence_delivery == "repository" else set())
     sha = hashlib.sha256(agent_definition.read_bytes()).hexdigest()
     expected = {
         "schema": TRACE_RECEIPT_SCHEMA,
@@ -981,8 +1037,10 @@ def validate_trace_receipt(
         "requested_selector": selector,
         "requested_model": requested_model,
         "thinking_level": effort,
+        "evidence_delivery": evidence_delivery,
+        "agent_tools": agent_tools,
         "served_models": [requested_model],
-        "declared_tools": ["yield"],
+        "declared_tools": declared_tools,
         "forbidden_tool_attempts": 0,
         "forbidden_tool_executions": 0,
         "fallback_used": False,
@@ -994,10 +1052,17 @@ def validate_trace_receipt(
         for key, value in expected.items()
         if receipt.get(key) != value
     ]
+    allowed = set(declared_tools)
     for key in ("tool_attempts", "tool_executions"):
         values = receipt.get(key)
-        if not isinstance(values, list) or not values or any(value != "yield" for value in values):
-            failures.append(f"{key} must be a non-empty yield-only list, got {values!r}")
+        if not isinstance(values, list) or not values:
+            failures.append(f"{key} must be a non-empty list, got {values!r}")
+            continue
+        if any(not isinstance(value, str) or value not in allowed for value in values):
+            failures.append(f"{key} contains a tool outside {declared_tools!r}: {values!r}")
+        missing_tools = sorted(required_tools - set(values))
+        if missing_tools:
+            failures.append(f"{key} is missing required tools {missing_tools!r}")
     for key in ("session_file", "session_sha256", "observed_at"):
         if not isinstance(receipt.get(key), str) or not receipt[key]:
             failures.append(f"{key} must be a non-empty string")
@@ -1012,14 +1077,27 @@ def validate_trace_receipt(
 def cmd_trace_receipt(args: argparse.Namespace) -> int:
     try:
         receipt = capture_trace_receipt(
-            args.trace, args.agent_definition, args.agent, args.selector
+            args.trace,
+            args.agent_definition,
+            args.agent,
+            args.selector,
+            args.evidence_delivery,
         )
         _write_new(args.out, json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-        validate_trace_receipt(args.out, args.agent_definition, args.agent, args.selector)
+        validate_trace_receipt(
+            args.out,
+            args.agent_definition,
+            args.agent,
+            args.selector,
+            args.evidence_delivery,
+        )
     except (TraceCanaryError, OutputRefusal) as exc:
         print(f"failed: {exc}", file=sys.stderr)
         return EXIT_FAILED
-    print(f"passed: {args.agent} {args.selector}; trace boundary and output schema verified")
+    print(
+        f"passed: {args.agent} {args.selector}; {args.evidence_delivery} trace boundary "
+        "and output schema verified"
+    )
     return EXIT_OK
 
 
@@ -1090,6 +1168,9 @@ def main(argv: list[str] | None = None) -> int:
     receipt.add_argument("--agent-definition", type=Path, required=True)
     receipt.add_argument("--agent", required=True)
     receipt.add_argument("--selector", required=True)
+    receipt.add_argument(
+        "--evidence-delivery", choices=("inline", "repository"), required=True
+    )
     receipt.add_argument("--out", type=Path, required=True)
     receipt.set_defaults(fn=cmd_trace_receipt)
 

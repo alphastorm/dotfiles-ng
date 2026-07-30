@@ -540,19 +540,19 @@ needs_agents = pytest.mark.skipif(
 
 
 @needs_agents
-def test_live_inline_reviewer_contract_matches_active_config_and_receipt():
-    result = preflight.check_isolated_reviewer_contracts()
+def test_live_evidence_contract_matches_active_config_and_receipt():
+    result = preflight.check_reviewer_evidence_contracts()
     assert result.state == preflight.PASS, result.detail
 
 
 @needs_agents
-def test_inline_reviewer_contract_rejects_an_active_model_override_drift(tmp_path, monkeypatch):
+def test_evidence_contract_rejects_an_active_model_override_drift(tmp_path, monkeypatch):
     config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))
     config["task"]["agentModelOverrides"]["review-grok"] = "xai-oauth/grok-build"
     wrong = tmp_path / "config.yml"
     wrong.write_text(yaml.safe_dump(config), encoding="utf-8")
     monkeypatch.setattr(preflight, "CONFIG", wrong)
-    result = preflight.check_isolated_reviewer_contracts()
+    result = preflight.check_reviewer_evidence_contracts()
     assert result.state == preflight.FAIL
     assert "active override" in result.detail
 
@@ -1131,11 +1131,20 @@ def test_a_lane_that_used_a_tool_fails_the_surface_probe(tmp_path):
     assert failures and "1 tool call" in failures[0]
 
 
-def _write_trace_agent(path: Path, selector: str) -> None:
+def _write_trace_agent(path: Path, selector: str, evidence_delivery: str = "inline") -> None:
+    tool_lines = "tools: []\n" if evidence_delivery == "inline" else (
+        "tools:\n"
+        + "".join(f"  - {tool}\n" for tool in qualification.READ_ONLY_REPOSITORY_TOOLS)
+    )
+    marker = (
+        "CRITICAL_REVIEWER_INLINE_ISOLATED_V1\n"
+        if evidence_delivery == "inline"
+        else ""
+    )
     path.write_text(
         "---\n"
         "name: review-grok\n"
-        "tools: []\n"
+        f"{tool_lines}"
         f"model: [{selector}]\n"
         "thinkingLevel: xhigh\n"
         "output:\n"
@@ -1148,14 +1157,23 @@ def _write_trace_agent(path: Path, selector: str) -> None:
         "    unresolved: {type: array, items: {type: string}}\n"
         "---\n"
         "CRITICAL_REVIEWER_READ_ONLY_V1\n"
-        "CRITICAL_REVIEWER_INLINE_ISOLATED_V1\n",
+        f"{marker}",
         encoding="utf-8",
     )
 
 
 def _write_trace(
-    path: Path, *, served: str = "grok-4.5", attempted: str = "yield", executed: str = "yield"
+    path: Path,
+    *,
+    evidence_delivery: str = "inline",
+    served: str = "grok-4.5",
+    attempted: str | tuple[str, ...] = "yield",
+    executed: str | tuple[str, ...] = "yield",
 ) -> None:
+    attempts = [attempted] if isinstance(attempted, str) else list(attempted)
+    executions = [executed] if isinstance(executed, str) else list(executed)
+    agent_tools = canary._contract_tools(evidence_delivery)
+    declared_tools = canary._declared_contract_tools(evidence_delivery)
     rows = [
         {
             "type": "model_change",
@@ -1167,7 +1185,12 @@ def _write_trace(
             "thinkingLevel": "xhigh",
             "timestamp": "2026-07-30T00:00:01Z",
         },
-        {"type": "session_init", "tools": ["yield"], "timestamp": "2026-07-30T00:00:02Z"},
+        {
+            "type": "session_init",
+            "tools": declared_tools,
+            "allowedTools": [*agent_tools, "yield"],
+            "timestamp": "2026-07-30T00:00:02Z",
+        },
         {
             "type": "message",
             "timestamp": "2026-07-30T00:00:03Z",
@@ -1175,15 +1198,18 @@ def _write_trace(
                 "role": "assistant",
                 "provider": "xai-oauth",
                 "model": served,
-                "content": [{"type": "toolCall", "name": attempted}],
+                "content": [{"type": "toolCall", "name": name} for name in attempts],
             },
         },
-        {
-            "type": "custom",
-            "customType": "tool_execution_start",
-            "timestamp": "2026-07-30T00:00:04Z",
-            "data": {"toolName": executed},
-        },
+        *[
+            {
+                "type": "custom",
+                "customType": "tool_execution_start",
+                "timestamp": "2026-07-30T00:00:04Z",
+                "data": {"toolName": name},
+            }
+            for name in executions
+        ],
         {
             "type": "message",
             "timestamp": "2026-07-30T00:00:05Z",
@@ -1205,19 +1231,59 @@ def _write_trace(
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
 
-def test_trace_receipt_proves_exact_model_empty_surface_and_configured_schema(tmp_path):
+def test_trace_receipt_proves_exact_model_inline_surface_and_configured_schema(tmp_path):
     selector = "xai-oauth/grok-4.5:xhigh"
     agent = tmp_path / "review-grok.md"
     trace = tmp_path / "trace.jsonl"
     receipt_path = tmp_path / "receipt.json"
     _write_trace_agent(agent, selector)
     _write_trace(trace)
-    receipt = canary.capture_trace_receipt(trace, agent, "review-grok", selector)
+    receipt = canary.capture_trace_receipt(
+        trace, agent, "review-grok", selector, "inline"
+    )
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
     assert (
-        canary.validate_trace_receipt(receipt_path, agent, "review-grok", selector)["result"]
+        canary.validate_trace_receipt(
+            receipt_path, agent, "review-grok", selector, "inline"
+        )["result"]
         == "passed"
     )
+
+
+def test_trace_receipt_proves_repository_read_and_read_only_surface(tmp_path):
+    selector = "xai-oauth/grok-4.5:xhigh"
+    agent = tmp_path / "review-grok.md"
+    trace = tmp_path / "trace.jsonl"
+    receipt_path = tmp_path / "receipt.json"
+    _write_trace_agent(agent, selector, "repository")
+    _write_trace(
+        trace,
+        evidence_delivery="repository",
+        attempted=("read", "yield"),
+        executed=("read", "yield"),
+    )
+    receipt = canary.capture_trace_receipt(
+        trace, agent, "review-grok", selector, "repository"
+    )
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    validated = canary.validate_trace_receipt(
+        receipt_path, agent, "review-grok", selector, "repository"
+    )
+    assert validated["agent_tools"] == ["read", "grep", "glob", "lsp", "ast_grep"]
+    assert validated["declared_tools"] == ["read", "grep", "glob", "yield"]
+    assert "read" in validated["tool_executions"]
+
+
+def test_repository_trace_receipt_requires_an_observed_read(tmp_path):
+    selector = "xai-oauth/grok-4.5:xhigh"
+    agent = tmp_path / "review-grok.md"
+    trace = tmp_path / "trace.jsonl"
+    _write_trace_agent(agent, selector, "repository")
+    _write_trace(trace, evidence_delivery="repository")
+    with pytest.raises(canary.TraceCanaryError, match="read"):
+        canary.capture_trace_receipt(
+            trace, agent, "review-grok", selector, "repository"
+        )
 
 
 @pytest.mark.parametrize(
@@ -1237,4 +1303,6 @@ def test_trace_receipt_rejects_fallback_and_forbidden_tool_activity(
     _write_trace_agent(agent, selector)
     _write_trace(trace, served=served, attempted=attempted, executed=executed)
     with pytest.raises(canary.TraceCanaryError, match=re.escape(failure)):
-        canary.capture_trace_receipt(trace, agent, "review-grok", selector)
+        canary.capture_trace_receipt(
+            trace, agent, "review-grok", selector, "inline"
+        )

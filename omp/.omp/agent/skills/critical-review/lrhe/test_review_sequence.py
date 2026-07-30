@@ -517,7 +517,7 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
     )
     grok = next(item for item in live_reviewers(document, "initial") if item.family == "grok")
     assert grok.model == "xai-oauth/grok-4.5:xhigh"
-    assert grok.evidence_delivery == "inline"
+    assert grok.evidence_delivery == "repository"
 
 
 @pytest.mark.parametrize("group", ("initialCritics", "targetedRefuters"))
@@ -545,12 +545,21 @@ def test_private_qualification_live_gate_fails_closed() -> None:
         validate_qualification(current)
 
 
-def test_qualification_rejects_an_incomplete_isolated_contract() -> None:
+def test_qualification_rejects_an_incomplete_evidence_contract() -> None:
     if not QUALIFICATION.is_file():
         pytest.skip("private qualification authority is not present in this checkout")
     current = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
     current["reviewers"]["grok"].pop("canaryReceipt")
-    with pytest.raises(QualificationError, match="incomplete isolated contract"):
+    with pytest.raises(QualificationError, match="incomplete evidence contract"):
+        validate_qualification(current)
+
+
+def test_qualification_rejects_repository_delivery_without_repository_tools() -> None:
+    if not QUALIFICATION.is_file():
+        pytest.skip("private qualification authority is not present in this checkout")
+    current = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
+    current["reviewers"]["grok"]["tools"] = []
+    with pytest.raises(QualificationError, match="for repository delivery"):
         validate_qualification(current)
 
 
