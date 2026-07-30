@@ -32,6 +32,18 @@ Before dispatch:
 
 A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is `missing`, never `approved`. Do not substitute another GPT model for an unavailable external family.
 
+### Internal resource compatibility
+
+When inspecting resources below `skill://critical-review/`:
+
+- Enumerate fixture files by reading the directory URL, for example
+  `read skill://critical-review/lrhe/fixtures`, then read the returned file URLs
+  explicitly. Never pass an internal URL glob to `glob`.
+- Read multiple `skill://` files with separate parallel `read` calls. Never
+  semicolon-delimit internal URLs in one `read` path.
+- If glob matching is still needed, use the resolved filesystem path displayed
+  by the directory `read` as the glob root instead of the internal URL.
+
 ## Sequence and readiness gate
 
 Every consequential change has one `review_sequence_id`. Every frozen epoch has
