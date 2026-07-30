@@ -218,6 +218,40 @@ def _model_pins(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _canary_ledger_pins(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
+    """Verify sealed ledgers and append-only prefixes declared by qualification."""
+    qualification = Path(getattr(args, "qualification", None) or DEFAULT_QUALIFICATION)
+    if not qualification.is_file():
+        return {"unreadable": {"path": str(qualification), "mode": "unreadable"}}
+    document = load_qualification(qualification)
+    declared = document["canaryLedgers"]
+    pins: dict[str, dict[str, Any]] = {}
+    for name, raw_entry in sorted(declared.items()):
+        entry = dict(raw_entry)
+        path = qualification.parent / entry["path"]
+        if not path.is_file():
+            raise RuntimeError(f"protected canary ledger is missing: {path}")
+        if entry["mode"] == "sealed":
+            actual = _sha256_file(path)
+            expected = entry["sha256"]
+        else:
+            rows = entry["prefixRows"]
+            lines = path.read_bytes().splitlines(keepends=True)
+            if len(lines) < rows:
+                raise RuntimeError(
+                    f"protected canary ledger {path} has {len(lines)} rows, "
+                    f"fewer than pinned prefix {rows}"
+                )
+            actual = hashlib.sha256(b"".join(lines[:rows])).hexdigest()
+            expected = entry["prefixSha256"]
+        if actual != expected:
+            raise RuntimeError(
+                f"protected canary ledger drift: {path} expected {expected}, got {actual}"
+            )
+        pins[name] = entry
+    return pins
+
+
 def _collect_inputs(args: argparse.Namespace) -> dict[str, Any]:
     terms_manifest_sha, term_items = _parse_manifest_terms(args.terms_dir)
     corpus = args.corpus
@@ -244,6 +278,7 @@ def _collect_inputs(args: argparse.Namespace) -> dict[str, Any]:
             "claude_code": _run_command_version("claude"),
         },
         "model_pins": _model_pins(args),
+        "canary_ledgers": _canary_ledger_pins(args),
         "terms": {
             "manifest_path": str(args.terms_dir / MANIFEST_NAME),
             "manifest_sha256": terms_manifest_sha,

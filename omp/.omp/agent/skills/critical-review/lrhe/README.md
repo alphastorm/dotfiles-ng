@@ -596,10 +596,17 @@ provider has no cached catalogue, and the gate says so by name.
 
 ```bash
 python3 canary.py selftest                     # graders vs replies built to fail them
-python3 canary.py run --transport stub         # every lane, no egress
+python3 canary.py run --transport stub --out canary-apparatus-vN.jsonl
 python3 canary.py prompts --out cp.jsonl       # ... answered through the agent lane ...
-python3 canary.py grade --prompts cp.jsonl --responses cr.jsonl
+python3 canary.py grade --prompts cp.jsonl --responses cr.jsonl --out canary-vN.jsonl
 ```
+
+Every output path is explicit. Probe and trace generation refuses to replace an
+existing file; grading appends only to valid canary ledgers. `qualification.yml`
+seals historical ledgers by whole-file SHA-256 and pins the accepted prefix of
+an active append-only ledger. Preflight and the experiment freeze both reject
+digest drift. The writer itself refuses sealed targets and refuses apparatus
+verdicts in provider-evidence ledgers.
 
 `qualification.yml` records `schemaValid`, `readOnlyBoundary` and `providerCanary`
 per lane, and nothing produced any of them. Three probes do, each built so the

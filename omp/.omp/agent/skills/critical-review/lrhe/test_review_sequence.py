@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Focused regression tests for critical-review convergence controls."""
+
 from __future__ import annotations
 
 import hashlib
@@ -12,8 +13,19 @@ import yaml
 
 import review_checks
 import make_receipt
-from qualification import QualificationError, live_reviewers, load_qualification, validate_qualification
-from review_sequence import PROOF_CLASSES, SESSION_LOCAL_ROOT, proof_subject_digest, readiness_errors, select_review_action
+from qualification import (
+    QualificationError,
+    live_reviewers,
+    load_qualification,
+    validate_qualification,
+)
+from review_sequence import (
+    PROOF_CLASSES,
+    SESSION_LOCAL_ROOT,
+    proof_subject_digest,
+    readiness_errors,
+    select_review_action,
+)
 
 QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
 SKILL = Path(__file__).resolve().parent.parent / "SKILL.md"
@@ -99,9 +111,7 @@ def _ready_record(tmp_path: Path, mode: str = "initial") -> dict[str, object]:
         "artifact_digest": _sha256(artifact),
         "changed_files": changed_files,
         "changed_file_digests": changed_file_digests,
-        "proof_receipts": {
-            "focused-proof": {"path": str(receipt), "sha256": _sha256(receipt)}
-        },
+        "proof_receipts": {"focused-proof": {"path": str(receipt), "sha256": _sha256(receipt)}},
         "touched_risk_domains": ["architecture", "documentation-policy"],
         "invariant_proof_matrix": [
             {
@@ -140,7 +150,11 @@ def _ready_record(tmp_path: Path, mode: str = "initial") -> dict[str, object]:
                     "changed_paths": changed_files,
                 },
                 "lead_verification": [
-                    {"finding_id": "P1-001", "result": "resolved", "evidence": "focused proof passed"}
+                    {
+                        "finding_id": "P1-001",
+                        "result": "resolved",
+                        "evidence": "focused proof passed",
+                    }
                 ],
             }
         )
@@ -172,7 +186,9 @@ def test_frozen_file_and_receipt_digests_are_enforced(tmp_path: Path) -> None:
     record = _ready_record(tmp_path)
     Path(record["changed_files"][0]).write_text("changed after freeze\n", encoding="utf-8")
     decision = select_review_action(record)
-    assert any(reason.startswith("changed-file-digest-mismatch:") for reason in decision.reason_codes)
+    assert any(
+        reason.startswith("changed-file-digest-mismatch:") for reason in decision.reason_codes
+    )
 
     record = _ready_record(tmp_path / "receipt")
     receipt_path = Path(record["proof_receipts"]["focused-proof"]["path"])
@@ -259,7 +275,11 @@ def test_disputed_remediation_honestly_selects_one_refuter(tmp_path: Path) -> No
     record["resolved_finding_ids"] = []
     record["disputed_or_unresolved_p01"] = ["P1-001"]
     record["lead_verification"] = [
-        {"finding_id": "P1-001", "result": "disputed", "evidence": "direct reproducer is inconclusive"}
+        {
+            "finding_id": "P1-001",
+            "result": "disputed",
+            "evidence": "direct reproducer is inconclusive",
+        }
     ]
     decision = select_review_action(record)
     assert (decision.status, decision.action) == ("ready", "targeted-refuter")
@@ -356,7 +376,9 @@ def test_full_tier_runs_public_ci_under_clean_home(monkeypatch) -> None:
     assert "critical-review-ci-" in calls[1][2]
 
 
-def test_check_wrapper_writes_only_subject_bound_passing_receipts(tmp_path: Path, monkeypatch) -> None:
+def test_check_wrapper_writes_only_subject_bound_passing_receipts(
+    tmp_path: Path, monkeypatch
+) -> None:
     interpreter = tmp_path / "python"
     interpreter.touch()
     monkeypatch.setattr(review_checks, "VENV_PYTHON", interpreter)
@@ -388,9 +410,12 @@ def test_check_wrapper_writes_only_subject_bound_passing_receipts(tmp_path: Path
     subject_path = tmp_path / "subject.json"
     _write_json(subject_path, subject)
     receipt = tmp_path / "full-receipt.json"
-    assert review_checks.main(
+    assert (
+        review_checks.main(
         ["full", "--receipt", str(receipt), "--subject-record", str(subject_path)]
-    ) == 0
+        )
+        == 0
+    )
     payload = json.loads(receipt.read_text())
     assert payload["result"] == "passed"
     assert payload["exit_code"] == 0
@@ -399,9 +424,12 @@ def test_check_wrapper_writes_only_subject_bound_passing_receipts(tmp_path: Path
     assert len(calls) == 1
 
     changed.write_text("stale source\n", encoding="utf-8")
-    assert review_checks.main(
+    assert (
+        review_checks.main(
         ["full", "--receipt", str(receipt), "--subject-record", str(subject_path)]
-    ) == make_receipt.EXIT_SUBJECT_MISMATCH
+        )
+        == make_receipt.EXIT_SUBJECT_MISMATCH
+    )
     assert len(calls) == 1
 
 
@@ -410,7 +438,8 @@ def test_generic_receipt_runner_binds_and_rechecks_subject(tmp_path: Path) -> No
     record_path = tmp_path / "stable-record.json"
     _write_json(record_path, record)
     receipt = tmp_path / "generic-proof.json"
-    assert make_receipt.main(
+    assert (
+        make_receipt.main(
         [
             "--subject-record",
             str(record_path),
@@ -421,7 +450,9 @@ def test_generic_receipt_runner_binds_and_rechecks_subject(tmp_path: Path) -> No
             "-c",
             "print('proof passed')",
         ]
-    ) == 0
+        )
+        == 0
+    )
     payload = json.loads(receipt.read_text())
     assert payload["subject_digest"] == proof_subject_digest(record)
     assert payload["result"] == "passed"
@@ -431,7 +462,8 @@ def test_generic_receipt_runner_binds_and_rechecks_subject(tmp_path: Path) -> No
     _write_json(drifting_path, drifting)
     changed = Path(drifting["changed_files"][0])
     drift_receipt = tmp_path / "drifting-proof.json"
-    assert make_receipt.main(
+    assert (
+        make_receipt.main(
         [
             "--subject-record",
             str(drifting_path),
@@ -442,7 +474,9 @@ def test_generic_receipt_runner_binds_and_rechecks_subject(tmp_path: Path) -> No
             "-c",
             f"from pathlib import Path; Path({str(changed)!r}).write_text('drifted')",
         ]
-    ) == make_receipt.EXIT_SUBJECT_MISMATCH
+        )
+        == make_receipt.EXIT_SUBJECT_MISMATCH
+    )
     assert not drift_receipt.exists()
 
     malformed_path = tmp_path / "malformed-subject.json"
@@ -473,8 +507,17 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
     assert len(memberships) == len(set(memberships)) == len(reviewers)
     assert live["leadFamily"] not in live["initialCritics"]
     assert live["leadFamily"] not in live["targetedRefuters"]
-    assert all(reviewers[item.family]["dispatchEnabled"] is True for item in live_reviewers(document, "initial"))
-    assert all(reviewers[item.family]["dispatchEnabled"] is True for item in live_reviewers(document, "targeted-refuter"))
+    assert all(
+        reviewers[item.family]["dispatchEnabled"] is True
+        for item in live_reviewers(document, "initial")
+    )
+    assert all(
+        reviewers[item.family]["dispatchEnabled"] is True
+        for item in live_reviewers(document, "targeted-refuter")
+    )
+    grok = next(item for item in live_reviewers(document, "initial") if item.family == "grok")
+    assert grok.model == "xai-oauth/grok-4.5:xhigh"
+    assert grok.evidence_delivery == "inline"
 
 
 @pytest.mark.parametrize("group", ("initialCritics", "targetedRefuters"))
@@ -499,6 +542,15 @@ def test_private_qualification_live_gate_fails_closed() -> None:
     family = current["liveDispatch"]["initialCritics"][0]
     current["reviewers"][family]["readOnlyBoundary"] = "unknown"
     with pytest.raises(QualificationError, match="readOnlyBoundary"):
+        validate_qualification(current)
+
+
+def test_qualification_rejects_an_incomplete_isolated_contract() -> None:
+    if not QUALIFICATION.is_file():
+        pytest.skip("private qualification authority is not present in this checkout")
+    current = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
+    current["reviewers"]["grok"].pop("canaryReceipt")
+    with pytest.raises(QualificationError, match="incomplete isolated contract"):
         validate_qualification(current)
 
 

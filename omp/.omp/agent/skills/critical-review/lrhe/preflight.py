@@ -25,6 +25,7 @@ Three steps are order-sensitive and expensive to get wrong:
 Nothing here contacts a provider. The checks that would cost money are named as
 manual steps, not executed -- a preflight that can spend is not a preflight.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,11 +41,17 @@ import yaml
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 import freeze_lock  # noqa: E402  -- needs the path above
+import canary  # noqa: E402
 import run_review  # noqa: E402
-from qualification import QualificationError, load_qualification, reviewers as qualification_reviewers  # noqa: E402
+from qualification import (  # noqa: E402
+    QualificationError,
+    load_qualification,
+    reviewers as qualification_reviewers,
+)
 
 SKILL = Path.home() / ".omp/agent/skills/critical-review"
 AGENTS = Path.home() / ".omp/agent/agents"
+CONFIG = Path.home() / ".omp/agent/config.yml"
 DATA = SKILL / "lrhe-data"
 # OMP's model cache. Read-only, and the only local answer to "does this selector
 # resolve", short of spending a request to find out.
@@ -78,12 +85,19 @@ class Result:
 
 # --------------------------------------------------------------- gate checks
 
+
 def check_lint() -> Result:
     ruff = HERE / ".venv/bin/ruff"
     if not ruff.exists():
         return Result(UNKNOWN, "no ruff in .venv; pip install -r requirements.txt")
-    proc = subprocess.run([str(ruff), "check", "."], cwd=HERE, check=False,
-                          capture_output=True, text=True, timeout=300)
+    proc = subprocess.run(
+        [str(ruff), "check", "."],
+        cwd=HERE,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
     if proc.returncode == 0:
         return Result(PASS, "clean under the pinned rule set in ruff.toml")
     return Result(FAIL, (proc.stdout or proc.stderr).strip().splitlines()[-1])
@@ -99,12 +113,17 @@ def _pytest(target: list[str], timeout: int) -> Result:
     """
     if os.environ.get(REENTRY_FLAG):
         return Result(SKIP, "already inside preflight; not re-running pytest")
-    proc = subprocess.run([sys.executable, "-m", "pytest", *target, "-q"],
-                          cwd=HERE, check=False, capture_output=True, text=True,
-                          timeout=timeout, env={**os.environ, REENTRY_FLAG: "1"})
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", *target, "-q"],
+        cwd=HERE,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env={**os.environ, REENTRY_FLAG: "1"},
+    )
     tail = (proc.stdout or "").strip().splitlines()
-    return Result(PASS if proc.returncode == 0 else FAIL,
-                  tail[-1] if tail else "no output")
+    return Result(PASS if proc.returncode == 0 else FAIL, tail[-1] if tail else "no output")
 
 
 def check_consistency() -> Result:
@@ -161,6 +180,7 @@ def check_agent_definitions() -> Result:
             # and free text cannot be scored against a label.
             try:
                 from jsonschema import Draft202012Validator
+
                 Draft202012Validator.check_schema(out)
             except Exception as exc:  # noqa: BLE001 -- any schema error is the finding
                 problems.append(f"{path.name}: output schema invalid: {exc}")
@@ -284,7 +304,9 @@ def check_model_selectors() -> Result:
         model, _, effort = rest.partition(":")
         offered = catalogue.get(provider)
         if offered is None:
-            problems.append(f"{name}: provider {provider!r} has no cached catalogue; authenticate it first")
+            problems.append(
+                f"{name}: provider {provider!r} has no cached catalogue; authenticate it first"
+            )
         elif model not in offered:
             problems.append(f"{name}: {provider} serves no model {model!r}")
         elif effort and offered[model] and effort not in offered[model]:
@@ -295,6 +317,117 @@ def check_model_selectors() -> Result:
     if problems:
         return Result(FAIL, "; ".join(problems))
     return Result(PASS, f"{resolved} reviewer selectors resolve against the installed build")
+
+
+def check_isolated_reviewer_contracts() -> Result:
+    """Bind inline lanes to the active model, empty surface, and trace receipt."""
+    try:
+        document = load_qualification(SKILL / "qualification.yml")
+        qualified = qualification_reviewers(document)
+    except QualificationError as exc:
+        return Result(FAIL, str(exc))
+    try:
+        config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        return Result(FAIL, f"active config cannot be read: {exc}")
+    overrides = ((config or {}).get("task") or {}).get("agentModelOverrides")
+    if not isinstance(overrides, dict):
+        return Result(FAIL, "active config has no task.agentModelOverrides mapping")
+
+    problems: list[str] = []
+    checked = 0
+    for family, value in sorted(qualified.items()):
+        if not isinstance(value, dict) or value.get("evidenceDelivery") != "inline":
+            continue
+        checked += 1
+        agent = value.get("agent")
+        selector = value.get("model")
+        tools = value.get("tools")
+        if not isinstance(agent, str) or not isinstance(selector, str):
+            problems.append(f"{family}: agent or model absent")
+            continue
+        definition = AGENTS / f"{agent}.md"
+        try:
+            front = canary._agent_frontmatter(definition)
+            _, effort = canary._selector_parts(selector)
+        except canary.TraceCanaryError as exc:
+            problems.append(f"{family}: {exc}")
+            continue
+        text = definition.read_text(encoding="utf-8")
+        if front.get("model") != [selector]:
+            problems.append(
+                f"{family}: agent model {front.get('model')!r} != qualification [{selector!r}]"
+            )
+        if overrides.get(agent) != selector:
+            problems.append(
+                f"{family}: active override {overrides.get(agent)!r} != qualification {selector!r}"
+            )
+        if tools != [] or front.get("tools") != tools:
+            problems.append(
+                f"{family}: qualification tools {tools!r}, agent tools {front.get('tools')!r}; "
+                "inline review requires both empty"
+            )
+        if front.get("thinkingLevel") != effort:
+            problems.append(
+                f"{family}: thinkingLevel {front.get('thinkingLevel')!r} != selector effort {effort!r}"
+            )
+        for marker in ("CRITICAL_REVIEWER_READ_ONLY_V1", "CRITICAL_REVIEWER_INLINE_ISOLATED_V1"):
+            if marker not in text:
+                problems.append(f"{family}: agent is missing {marker}")
+
+        receipt_name = value.get("canaryReceipt")
+        if not isinstance(receipt_name, str):
+            problems.append(f"{family}: canaryReceipt absent")
+            continue
+        try:
+            receipt = canary.validate_trace_receipt(
+                SKILL / receipt_name, definition, agent, selector
+            )
+        except canary.TraceCanaryError as exc:
+            problems.append(f"{family}: {exc}")
+            continue
+        measured = value.get("canary")
+        expected_summary = {
+            "declaredTools": receipt["declared_tools"],
+            "forbiddenToolAttempts": receipt["forbidden_tool_attempts"],
+            "forbiddenToolExecutions": receipt["forbidden_tool_executions"],
+            "fallbackUsed": receipt["fallback_used"],
+            "servedModel": receipt["served_models"][0],
+        }
+        if not isinstance(measured, dict):
+            problems.append(f"{family}: qualification canary summary absent")
+        else:
+            mismatched = [
+                key for key, expected in expected_summary.items() if measured.get(key) != expected
+            ]
+            if mismatched:
+                problems.append(
+                    f"{family}: qualification canary disagrees with receipt on {mismatched}"
+                )
+    if problems:
+        return Result(FAIL, "; ".join(problems))
+    return Result(PASS, f"{checked} inline reviewer contract(s) match active config and trace")
+
+
+def check_canary_ledger_integrity() -> Result:
+    """Fail on sealed-ledger drift or a rewritten/truncated append-only prefix."""
+    try:
+        pins = freeze_lock._canary_ledger_pins(
+            argparse.Namespace(qualification=SKILL / "qualification.yml")
+        )
+    except (QualificationError, OSError, RuntimeError) as exc:
+        return Result(FAIL, str(exc))
+    sealed = sum(pin["mode"] == "sealed" for pin in pins.values())
+    if "unreadable" in pins:
+        return Result(
+            FAIL,
+            f"canary ledger qualification is unreadable: {pins['unreadable']['path']}",
+        )
+    active = sum(pin["mode"] == "append-only" for pin in pins.values())
+    return Result(
+        PASS,
+        f"{sealed} sealed canary ledger(s) and {active} append-only prefix(es) match",
+    )
 
 
 def check_no_live_transport() -> Result:
@@ -339,8 +472,11 @@ def check_omp_version() -> Result:
     if got is None:
         return Result(UNKNOWN, "omp did not answer --version")
     if got != EXPECTED_OMP:
-        return Result(FAIL, f"running {got}, preflight expects {EXPECTED_OMP}; "
-                            f"upgrade first or bump EXPECTED_OMP deliberately")
+        return Result(
+            FAIL,
+            f"running {got}, preflight expects {EXPECTED_OMP}; "
+            f"upgrade first or bump EXPECTED_OMP deliberately",
+        )
     return Result(PASS, f"omp {got}")
 
 
@@ -370,8 +506,11 @@ def check_lock_state() -> Result:
         stored = json.loads(LOCK.read_text(encoding="utf-8"))
         recorded = (stored.get("lock_inputs", {}).get("versions", {}) or {}).get("omp")
         if recorded != EXPECTED_OMP:
-            return Result(FAIL, f"{LOCK.name} was frozen under omp {recorded!r}, not {EXPECTED_OMP}; "
-                                f"a lock naming the wrong toolchain cannot start a result set")
+            return Result(
+                FAIL,
+                f"{LOCK.name} was frozen under omp {recorded!r}, not {EXPECTED_OMP}; "
+                f"a lock naming the wrong toolchain cannot start a result set",
+            )
         return Result(PASS, f"{LOCK.name} frozen under omp {recorded}")
 
     dirty = _uncommitted()
@@ -411,8 +550,11 @@ def check_automated_audit() -> Result:
             return Result(FAIL, "an audit artifact claims human judge reliability was measured")
     band = (agr.get("band") or {}).get("band", "?")
     stage_b = (agr.get("stage_b_triggers") or {}).get("triggered")
-    return Result(PASS, f"band {band}, stage B triggered {stage_b}, canonical intact, "
-                        f"human reliability still not_measured")
+    return Result(
+        PASS,
+        f"band {band}, stage B triggered {stage_b}, canonical intact, "
+        f"human reliability still not_measured",
+    )
 
 
 GATES = (
@@ -423,6 +565,8 @@ GATES = (
     ("no live transport", check_no_live_transport),
     ("lanes held", check_lanes_held),
     ("model selectors", check_model_selectors),
+    ("isolated reviewer contracts", check_isolated_reviewer_contracts),
+    ("canary ledger integrity", check_canary_ledger_integrity),
     ("omp version", check_omp_version),
     ("freeze lock", check_lock_state),
     ("automated audit", check_automated_audit),
@@ -471,15 +615,18 @@ def _judgeable() -> int:
     """
     try:
         import csv as _csv
+
         with (DATA / "floor/claims-floor.csv").open() as fh:
             rows = list(_csv.DictReader(fh))
     except OSError:
         return 0
-    return sum(1 for r in rows
+    return sum(
+        1
+        for r in rows
                if r.get("parse_status") != "fail"
                and r.get("verdict") not in ("UNPARSED", "REFUTED")
-               and not (str(r.get("has_anchor")) == "True"
-                        and str(r.get("anchor_paths_exist")) == "False"))
+        and not (str(r.get("has_anchor")) == "True" and str(r.get("anchor_paths_exist")) == "False")
+    )
 
 
 def _adjudicated() -> int:
@@ -523,6 +670,7 @@ def _calibration() -> tuple[int, int, float | None]:
     judge_path = DATA / "judge-floor-agg.jsonl"
     try:
         import csv as _csv
+
         with packet.open() as fh:
             rows = list(_csv.DictReader(fh))
     except OSError:
@@ -531,30 +679,37 @@ def _calibration() -> tuple[int, int, float | None]:
         return (0, len(rows), None)
 
     import judge_lrhe
+
     try:
         judge, judge_problems = judge_lrhe.load_judge_index(judge_path)
     except OSError:
         return (0, len(rows), None)
-    gate_size = sum(1 for case in _read_case_kinds(case_map)
-                    if case in {str(r.get("case_id") or "").strip() for r in rows})
+    gate_size = sum(
+        1
+        for case in _read_case_kinds(case_map)
+        if case in {str(r.get("case_id") or "").strip() for r in rows}
+    )
     labelled = sum(
-        1 for r in rows
+        1
+        for r in rows
         if (r.get("human_verdict") or "").strip()
-        and str(r.get("case_id") or "").strip() in _read_case_kinds(case_map))
+        and str(r.get("case_id") or "").strip() in _read_case_kinds(case_map)
+    )
     if judge_problems or labelled < gate_size or not gate_size:
         return (labelled, gate_size, None)
 
     compared, _supplemental, problems = judge_lrhe.blinded_calibration_pairs(
-        packet, case_map, judge, expect_gating=gate_size)
+        packet, case_map, judge, expect_gating=gate_size
+    )
     if problems or not compared:
         return (labelled, gate_size, None)
-    return (labelled, gate_size,
-            judge_lrhe.calibration_agreement(compared)["verdict_kappa"])
+    return (labelled, gate_size, judge_lrhe.calibration_agreement(compared)["verdict_kappa"])
 
 
 def _read_case_kinds(case_map) -> set[str]:
     """case_ids in the case map that belong to the human gate (`kind == "case"`)."""
     import judge_lrhe
+
     out = set()
     try:
         for line in Path(case_map).read_text(encoding="utf-8").splitlines():
@@ -592,53 +747,68 @@ def _authorization(kind: str) -> bool:
 # was to read the gates and reconstruct it. A step whose completion is visible
 # should be asked, not remembered.
 MANUAL_STEPS = (
-    ("upgrade OMP and restart the session",
+    (
+        "upgrade OMP and restart the session",
      "the reviewer definitions are version-sensitive and the lock must name the "
      "version that actually runs",
-     lambda r: r["omp version"].state != PASS),
-    ("run the three canaries on every lane that has not had them",
+        lambda r: r["omp version"].state != PASS,
+    ),
+    (
+        "run the three canaries on every lane that has not had them",
      "canary.py prompts, answered through the reviewer agent, then canary.py grade -- "
      "structured output, real citations, empty-evidence abstention. A lane stays held "
      "until all three pass, and `run` cannot qualify one: it refuses every transport "
      "that could leave the machine, so its verdict is always `apparatus`. A lane that "
      "was canaried and failed is parked, not outstanding: see its blockers",
-     lambda r: _uncanaried_lanes() != []),
-    ("freeze runs/LOCK.json, then run",
+        lambda r: _uncanaried_lanes() != [],
+    ),
+    (
+        "freeze runs/LOCK.json, then run",
      "freeze_lock.py freeze -- from committed trees, after everything that edits what "
      "it hashes and before anything it has to vouch for. Qualification edits "
      "qualification.yml and the terms snapshots, both of which the lock hashes, so a "
      "lock taken before the steps above drifts before the first measured run",
-     lambda r: not LOCK.is_file()),
-    ("the seven-item smoke pass",
+        lambda r: not LOCK.is_file(),
+    ),
+    (
+        "the seven-item smoke pass",
      "2xS1 + 2xS2 + 2xS3 + 1xS5, calibration items only, on an enabled lane. It is "
      "the first thing to exercise ARVO build/PoC wiring and a real packet end to end, "
      "and it is not a blind observation: do not score it unless the same condition is "
      "rerun cold later",
-     lambda r: not _has_rows(DATA / "runs-smoke.jsonl")),
-    ("the twelve-item four-family screen",
+        lambda r: not _has_rows(DATA / "runs-smoke.jsonl"),
+    ),
+    (
+        "the twelve-item four-family screen",
      "S1x4 + S2x3 + S3x2 + S4x2 + S5x1, frozen before any output exists, each item "
      "run by kimi, glm and deepseek independently on arm OC_SCREEN, lens floor, a "
      "fresh session and no peer output, plus the contamination probe per cell in a "
      "separate cold session. MiniMax is held on repeated schema noncompliance and is "
      "not one of the families. Do not prune on a 12-item recall ranking; drop a "
      "challenger only for operational failure",
-     lambda r: not _has_rows(DATA / "runs-screen.jsonl")),
-    ("record the promotion decision for kimi, glm and deepseek",
+        lambda r: not _has_rows(DATA / "runs-screen.jsonl"),
+    ),
+    (
+        "record the promotion decision for kimi, glm and deepseek",
      "the screen is evidence, not a verdict, and Commits 9 and 10 both spend real "
      "quota on whichever lanes proceed. No lane met an early-drop condition; that is a "
      "recommendation in lrhe-data/screen/RESULTS.md and not a decision. Write it to "
      "authorizations/ with a principal and a date, the same way the risk acceptance "
      "is recorded -- a permissive decision nobody owns is the thing that file exists "
      "to stop",
-     lambda r: not _authorization("promotion")),
-    ("the same-family null, three replicates",
+        lambda r: not _authorization("promotion"),
+    ),
+    (
+        "the same-family null, three replicates",
      "arm T_OC, family kimi, replicate rep1..rep3, lens floor, on the same twelve "
      "screen items. Three and not the pre-registered four: the four is derived from a "
      "four-family panel and MiniMax is held, so a four-sample null would make the "
      "caught-set Jaccard and union-coverage comparison unmatched. Deviation recorded "
      "in handoff/RECONCILIATION-2026-07-28.md",
-     lambda r: not _has_rows(DATA / "runs-null-toc.jsonl")),
-    (f"the 47-item floor panel ({_complete_against(DATA / 'runs-floor.jsonl', DATA / 'floor-manifest.jsonl')[0]}"
+        lambda r: not _has_rows(DATA / "runs-null-toc.jsonl"),
+    ),
+    (
+        f"the 47-item floor panel ({_complete_against(DATA / 'runs-floor.jsonl', DATA / 'floor-manifest.jsonl')[0]}"
      f"/{_complete_against(DATA / 'runs-floor.jsonl', DATA / 'floor-manifest.jsonl')[1]} reviews recorded)",
      "the remaining 35 items for every promoted family, arm OC_FULL, panel "
      "opencode-broad-v1, contamination probes continuing. Five declared batches of "
@@ -648,9 +818,13 @@ MANUAL_STEPS = (
      "longest window anything here runs over, which is why provider_fingerprint exists "
      "and why OpenCode exposing none is a stated risk rather than a closed control. "
      "Commit 12's lens rotation is optional and decided from this panel's analysis",
-     lambda r: _complete_against(DATA / "runs-floor.jsonl",
-                                 DATA / "floor-manifest.jsonl") != (105, 105)),
-    (f"Fable adjudication ({_adjudicated()}/{_judgeable()} floor claims adjudicated)",
+        lambda r: (
+            _complete_against(DATA / "runs-floor.jsonl", DATA / "floor-manifest.jsonl")
+            != (105, 105)
+        ),
+    ),
+    (
+        f"Fable adjudication ({_adjudicated()}/{_judgeable()} floor claims adjudicated)",
      "two non-authoring judges per surviving claim, keyed on family: the pool is "
      "claude/gemini/grok, disjoint from the OpenCode authors, so independence holds by "
      "construction and the routes are unaffected by the opencode-go spending limit. "
@@ -664,8 +838,10 @@ MANUAL_STEPS = (
      # predicate was `not judge-output.schema.json.is_file()`, so writing the file
      # reported adjudication complete with 0 of 279 claims judged -- the same defect
      # `ac4855e` fixed for the floor step, which called a panel one fifth finished done.
-     lambda r: _adjudicated() < _judgeable()),
-    (f"the kappa >= 0.70 human calibration ({_calibration()[0]}/{_calibration()[1]} "
+        lambda r: _adjudicated() < _judgeable(),
+    ),
+    (
+        f"the kappa >= 0.70 human calibration ({_calibration()[0]}/{_calibration()[1]} "
      f"labelled, kappa "
      f"{'n/a' if _calibration()[2] is None else format(_calibration()[2], '.2f')})",
      "the blinded packet is at lrhe-data/auto-reliability-v1/human-packet.csv: opaque "
@@ -685,13 +861,15 @@ MANUAL_STEPS = (
      "from adjudication on purpose: with 315 of 315 claims judged the combined predicate "
      "read done over a packet holding zero labelled rows, and preflight said nothing "
      "manual remained",
-     lambda r: (_calibration()[2] or 0.0) < 0.70),
+        lambda r: (_calibration()[2] or 0.0) < 0.70,
+    ),
 )
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--slow", action="store_true", help="also run the full test suite")
     args = ap.parse_args()
 

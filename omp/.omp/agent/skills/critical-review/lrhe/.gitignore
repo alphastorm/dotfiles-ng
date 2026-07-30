@@ -20,7 +20,7 @@ judge*.jsonl
 refute*.jsonl
 exec.jsonl
 human_queue.jsonl
-canary.jsonl
+canary*.jsonl
 calibration*.csv
 raw/
 probes/

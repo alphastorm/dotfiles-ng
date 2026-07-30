@@ -187,8 +187,13 @@ provider_data_allowlist:
 ```
 
 Use concise facts and primary anchors. Include the decision record, not hidden
-reasoning, tentative confidence, or another reviewer's verdict. Packet links must
-resolve for every selected reviewer. Compute any displayed summary from the
+reasoning, tentative confidence, or another reviewer's verdict. For every resolver
+member whose `evidence_delivery` is `repository`, packet links must resolve. For an
+`inline` member, the Task assignment itself must contain the complete packet,
+review-scoped diff or design, and line-numbered source evidence needed to verify
+every claim; a path or `agent://` handle is not evidence to a tool-less reviewer.
+Anything omitted from that inline evidence must be reported as unresolved, never
+reconstructed from naming conventions. Compute any displayed summary from the
 record; never maintain a second evidence count.
 
 ## Round one: independent concurrent critics
@@ -201,21 +206,27 @@ python3 lrhe/qualification.py initial
 
 Launch every returned member in one `task`
 batch. Do not launch separate calls that serialize independent reviews. Shared
-context names only the immutable packet, review ID, epoch, and the independence
-rule. Do not put reviewer output or an `agent://` handle in shared context. Use
-each resolver result's `agent`; do not maintain a second live panel list.
+context names only the review ID, epoch, and independence rule; it must not be the
+only location of evidence needed by an `inline` member. Do not put reviewer output
+or an `agent://` handle in shared context. Use each resolver result's `agent`,
+`model`, and `evidence_delivery`; do not maintain a second live panel list.
 
-Each item must set `schemaMode: strict` and use this complete assignment shape:
+Each item must set `schemaMode: strict`, omit `outputSchema` so the agent's
+configured schema remains authoritative, and use this complete assignment shape:
 
 ```text
 # Target
-Review the immutable packet at <packet path> and only the repository epoch it identifies. Do not modify files or inspect peer output.
+For `repository` delivery: review the immutable packet at <packet path> and only the repository epoch it identifies.
+For `inline` delivery: review only the complete immutable packet and numbered source evidence pasted below; do not inspect any path.
+Do not modify files or inspect peer output.
 
 # Change
 Apply the common critical floor and the primary lens defined by your agent. Return falsifiable root-cause claims with exact evidence. This is review only; no implementation or competing rewrite.
 
+For `inline` delivery, paste the complete packet, diff or design, and line-numbered source evidence here. Never substitute a path, summary, or source excerpt that omits reviewed behavior.
+
 # Acceptance
-Return one schema-valid summary/evidence/unresolved object, at most 12 evidence items, exact source anchors where available, and explicit missing evidence for unresolved claims.
+Return one schema-valid summary/evidence/unresolved object, at most 12 evidence items, exact anchors present in the supplied evidence, and explicit missing evidence for unresolved claims.
 ```
 
 Do not give reviewers caller-provided output schemas that weaken their agent schema. Do not disclose round-one responses between reviewers through messages, prompts, local files, or follow-up calls. Wait for every selected job to settle, then read each complete `agent://` result separately.

@@ -55,7 +55,11 @@ from referencing import Registry, Resource
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 import check_packet_gates  # noqa: E402  -- needs the path above
-from qualification import QualificationError, load_qualification, reviewers as qualification_reviewers  # noqa: E402
+from qualification import (  # noqa: E402
+    QualificationError,
+    load_qualification,
+    reviewers as qualification_reviewers,
+)
 
 SKILL = Path.home() / ".omp/agent/skills/critical-review"
 DATA = SKILL / "lrhe-data"
@@ -68,6 +72,7 @@ EXIT_UNRESOLVED = 20
 @dataclass(frozen=True)
 class Refusal:
     """Why nothing will be sent. `deny` is a decision; `unresolved` is homework."""
+
     decision: str
     reason_code: str
     message: str
@@ -84,6 +89,7 @@ class AuthorizedRequest:
     Constructed only by `prepare()`. Holding one is the proof; `dispatch()` asks
     for nothing else and re-checks the proof anyway.
     """
+
     item_id: str
     family: str
     lens: str
@@ -120,12 +126,14 @@ def lens_text(panels: dict[str, Any], lens: str) -> str:
     if not isinstance(declared, dict) or lens not in declared:
         raise SystemExit(
             f"lens {lens!r} has no text in panels.yaml. A lens that is assigned but "
-            f"not transmitted is recorded on the run and applied to nothing.")
+            f"not transmitted is recorded on the run and applied to nothing."
+        )
     return str(declared[lens] or "").strip()
 
 
-def render_packet(packet: dict[str, Any], lens: str = "floor",
-                  panels: dict[str, Any] | None = None) -> str:
+def render_packet(
+    packet: dict[str, Any], lens: str = "floor", panels: dict[str, Any] | None = None
+) -> str:
     """The packet as a reviewer receives it, under its assigned lens.
 
     A packet is data; a provider takes text. Something has to turn one into the
@@ -149,7 +157,8 @@ def render_packet(packet: dict[str, Any], lens: str = "floor",
         panels = yaml.safe_load((HERE / "panels.yaml").read_text())
     assignment = lens_text(panels, lens)
     files = packet.get("repo_files") or []
-    return "\n".join((
+    return "\n".join(
+        (
         f"item_id: {packet.get('item_id', '')}",
         f"stratum: {packet.get('stratum', '')}",
         f"lens: {lens}",
@@ -170,7 +179,8 @@ def render_packet(packet: dict[str, Any], lens: str = "floor",
         "Review the change above. This document is the whole of the evidence: do "
         "not read the working tree, and cite only paths listed under files in "
         "scope. Return your structured response and nothing else.",
-    ))
+        )
+    )
 
 
 class EgressRefused(RuntimeError):
@@ -213,6 +223,10 @@ def stub_transport(req: AuthorizedRequest) -> dict[str, Any]:
         # about this function -- and stating it keeps the apparatus answerable to the
         # same probe the real lanes are.
         "tool_calls": 0,
+        "declared_tools": ["yield"],
+        "forbidden_tool_attempts": 0,
+        "forbidden_tool_executions": 0,
+        "fallback_used": False,
         "malformed_tool_calls": 0,
         "named_tools": [],
         # Stated, not defaulted. The stub's reply is schema-valid by construction
@@ -234,9 +248,12 @@ TRANSPORTS: dict[str, Callable[[AuthorizedRequest], dict[str, Any]]] = {
 
 # ------------------------------------------------------------------ helpers
 
+
 def _digest(obj: Any) -> str:
-    return "sha256:" + hashlib.sha256(
-        json.dumps(obj, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return (
+        "sha256:"
+        + hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    )
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -244,10 +261,8 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _validator(name: str) -> Draft202012Validator:
-    docs = [json.loads((HERE / n).read_text())
-            for n in (name, "data-rights.schema.json")]
-    registry = Registry().with_resources(
-        [(d["$id"], Resource.from_contents(d)) for d in docs])
+    docs = [json.loads((HERE / n).read_text()) for n in (name, "data-rights.schema.json")]
+    registry = Registry().with_resources([(d["$id"], Resource.from_contents(d)) for d in docs])
     return Draft202012Validator(docs[0], registry=registry, format_checker=FormatChecker())
 
 
@@ -261,14 +276,18 @@ def _panel(panels: dict, experiment_id: str) -> dict:
 
 # ------------------------------------------------------------------- gates
 
+
 def prepare(args) -> AuthorizedRequest | Refusal:
     """Every gate, in the order that fails cheapest first. Any one refuses."""
     panels = yaml.safe_load(args.panels.read_text())
     exp = _panel(panels, args.experiment_id)
     lane = next((f for f in exp["families"] if f["family"] == args.family), None)
     if lane is None:
-        return Refusal("unresolved", "family_not_in_panel",
-                       f"{args.family!r} is not in panel {exp['panelId']!r}")
+        return Refusal(
+            "unresolved",
+            "family_not_in_panel",
+            f"{args.family!r} is not in panel {exp['panelId']!r}",
+        )
 
     # 1. Is this lane qualified for the requested evaluation experiment?
     #    Live critical-review membership is separate and owned by liveDispatch.
@@ -278,12 +297,14 @@ def prepare(args) -> AuthorizedRequest | Refusal:
         return Refusal("deny", "qualification_invalid", str(exc))
     entry = qualified.get(args.family)
     if not isinstance(entry, dict):
-        return Refusal("unresolved", "lane_unknown",
-                       f"{args.family!r} has no qualification.yml entry")
+        return Refusal(
+            "unresolved", "lane_unknown", f"{args.family!r} has no qualification.yml entry"
+        )
     if entry.get("evaluationEnabled") is not True:
         blockers = "; ".join(entry.get("blockers") or ["no reason recorded"])
-        return Refusal("deny", "lane_not_qualified",
-                       f"{args.family} is evaluationEnabled: false -- {blockers}")
+        return Refusal(
+            "deny", "lane_not_qualified", f"{args.family} is evaluationEnabled: false -- {blockers}"
+        )
 
     # 2. Does the item exist, and is there a scrubbed packet for it? The packet is
     #    what would actually be transmitted; the corpus row carries the answer key
@@ -294,9 +315,12 @@ def prepare(args) -> AuthorizedRequest | Refusal:
     if item is None:
         return Refusal("unresolved", "unknown_item", f"{args.item_id!r} is not in the corpus")
     if packet is None:
-        return Refusal("unresolved", "no_packet",
+        return Refusal(
+            "unresolved",
+            "no_packet",
                        f"{args.item_id!r} has no reviewer packet; nothing establishes "
-                       f"what would be transmitted")
+            f"what would be transmitted",
+        )
 
     # 3. What would be transmitted, checked rather than assumed.
     fails, _ = check_packet_gates.gate_item(item, packet)
@@ -307,27 +331,44 @@ def prepare(args) -> AuthorizedRequest | Refusal:
     #    implementation of this decision and the runner cannot reach around it.
     policy_id = args.policy_id or _policy_for_route(args.policies, lane["providerRoute"])
     if policy_id is None:
-        return Refusal("unresolved", "no_policy_for_route",
-                       f"no policy in provider-policies.yaml governs "
-                       f"{lane['providerRoute']!r}")
+        return Refusal(
+            "unresolved",
+            "no_policy_for_route",
+            f"no policy in provider-policies.yaml governs {lane['providerRoute']!r}",
+        )
     proc = subprocess.run(
-        [sys.executable, str(HERE / "check_data_rights.py"),
-         "--item-id", args.item_id,
-         "--classification", args.classification,
-         "--route", lane["providerRoute"],
-         "--policy-id", policy_id,
-         "--item-provider-allowlist", *item.get("provider_data_allowlist", []),
-         *(["--item-authorized"] if args.item_authorized else [])],
-        capture_output=True, text=True, cwd=HERE, check=False)
+        [
+            sys.executable,
+            str(HERE / "check_data_rights.py"),
+            "--item-id",
+            args.item_id,
+            "--classification",
+            args.classification,
+            "--route",
+            lane["providerRoute"],
+            "--policy-id",
+            policy_id,
+            "--item-provider-allowlist",
+            *item.get("provider_data_allowlist", []),
+            *(["--item-authorized"] if args.item_authorized else []),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=HERE,
+        check=False,
+    )
     if proc.returncode != EXIT_OK:
         try:
             payload = json.loads(proc.stdout)
         except json.JSONDecodeError:
-            return Refusal("unresolved", "rights_guard_unreadable",
-                           (proc.stdout + proc.stderr).strip()[:300])
-        return Refusal(payload.get("decision", "unresolved"),
+            return Refusal(
+                "unresolved", "rights_guard_unreadable", (proc.stdout + proc.stderr).strip()[:300]
+            )
+        return Refusal(
+            payload.get("decision", "unresolved"),
                        payload.get("reason_code", "rights_refused"),
-                       payload.get("message", ""))
+            payload.get("message", ""),
+        )
     rights = json.loads(proc.stdout)
 
     manifest = json.loads(args.manifest.read_text()) if args.manifest.exists() else {}
@@ -362,6 +403,7 @@ def _policy_for_route(path: Path, route: str) -> str | None:
 
 # ---------------------------------------------------------------- dispatch
 
+
 def _require_allowed_rights(req: AuthorizedRequest) -> None:
     """Re-validate the evidence the request carries. Raises rather than returns.
 
@@ -372,20 +414,26 @@ def _require_allowed_rights(req: AuthorizedRequest) -> None:
     last steps run this, so there is one implementation of the decision.
     """
     rights_schema = json.loads((HERE / "data-rights.schema.json").read_text())
-    errors = list(Draft202012Validator(
-        rights_schema, format_checker=FormatChecker()).iter_errors(req.data_rights))
+    errors = list(
+        Draft202012Validator(rights_schema, format_checker=FormatChecker()).iter_errors(
+            req.data_rights
+        )
+    )
     if errors:
         raise EgressRefused(
             "the rights record attached to this request does not validate: "
-            + "; ".join(e.message for e in errors[:3]))
+            + "; ".join(e.message for e in errors[:3])
+        )
     if req.data_rights.get("egress_decision") != "allow":
         raise EgressRefused(
             f"rights record says egress_decision="
-            f"{req.data_rights.get('egress_decision')!r}, not 'allow'")
+            f"{req.data_rights.get('egress_decision')!r}, not 'allow'"
+        )
 
 
-def dispatch(req: AuthorizedRequest, transport: str, *,
-             omp_version: str = "unknown") -> dict[str, Any]:
+def dispatch(
+    req: AuthorizedRequest, transport: str, *, omp_version: str = "unknown"
+) -> dict[str, Any]:
     """Send, and build the run record. Takes an AuthorizedRequest and nothing else."""
     _require_allowed_rights(req)
 
@@ -394,7 +442,8 @@ def dispatch(req: AuthorizedRequest, transport: str, *,
         raise EgressRefused(
             f"transport {transport!r} is not implemented. 'live' is deliberately "
             f"absent: no provider credential is configured and provider calls are "
-            f"held pending the OMP upgrade")
+            f"held pending the OMP upgrade"
+        )
 
     started = datetime.now(timezone.utc)
     response = send(req)
@@ -402,8 +451,9 @@ def dispatch(req: AuthorizedRequest, transport: str, *,
     return _validated_record(req, response, started, completed, transport, omp_version)
 
 
-def _validated_record(req: AuthorizedRequest, response: dict, started, completed,
-                      transport: str, omp_version: str) -> dict[str, Any]:
+def _validated_record(
+    req: AuthorizedRequest, response: dict, started, completed, transport: str, omp_version: str
+) -> dict[str, Any]:
     """Build the run record and refuse to return one the scorer would reject.
 
     Better to find that out with the response still in hand than after a paid run
@@ -414,7 +464,8 @@ def _validated_record(req: AuthorizedRequest, response: dict, started, completed
     if bad:
         raise EgressRefused(
             "the run record this runner produced does not validate against "
-            "run.schema.json: " + "; ".join(f"{e.json_path} {e.message}" for e in bad[:3]))
+            "run.schema.json: " + "; ".join(f"{e.json_path} {e.message}" for e in bad[:3])
+        )
     return record
 
 
@@ -472,12 +523,14 @@ def _safety_from_tools(response: dict, named: int) -> tuple[bool, bool]:
         raise EgressRefused(
             "named_tools is absent. `wrote_to_repo` and `spawned_subagent` are hard gates "
             "and both were `False` literals; deriving them needs the tool names from the "
-            "session record. Pass the list, not a count.")
+            "session record. Pass the list, not a count."
+        )
     names = [str(n) for n in names]
     if len(names) != named:
         raise EgressRefused(
             f"named_tools has {len(names)} entries and tool_violations says {named}. Two "
-            f"counts of one fact that disagree means neither was measured.")
+            f"counts of one fact that disagree means neither was measured."
+        )
     return (any(n in WRITE_TOOLS for n in names), any(n in SPAWN_TOOLS for n in names))
 
 
@@ -515,12 +568,14 @@ def _tool_counts(response: dict) -> tuple[int, int]:
             "tool surface is a control only if something counts it, and run.schema.json "
             "says so: a prompt saying 'do not edit' is not a control, this counter is. "
             "Derive both from the OMP session record -- named calls are breaches, "
-            "nameless ones are malformed output.")
+            "nameless ones are malformed output."
+        )
     return int(named), int(malformed)
 
 
-def _run_record(req: AuthorizedRequest, response: dict, started, completed,
-                transport: str, omp_version: str) -> dict[str, Any]:
+def _run_record(
+    req: AuthorizedRequest, response: dict, started, completed, transport: str, omp_version: str
+) -> dict[str, Any]:
     served = response.get("served_model")
     stamp = "%Y-%m-%dT%H:%M:%SZ"
     violations, malformed = _tool_counts(response)
@@ -552,10 +607,26 @@ def _run_record(req: AuthorizedRequest, response: dict, started, completed,
         # judgements, because `judge.jsonl` keys on run_id. Digesting the reply keeps the
         # id stable across re-ingests of one dispatch and distinct across re-dispatches,
         # which is what every artifact joining on it already assumed.
-        "run_id": "-".join(filter(None, (
-            req.item_id, req.family, req.lens, req.replicate,
-            _digest([req.arm, served, response.get("raw", ""),
-                     response.get("summary", ""), response.get("evidence", [])])[7:15]))),
+        "run_id": "-".join(
+            filter(
+                None,
+                (
+                    req.item_id,
+                    req.family,
+                    req.lens,
+                    req.replicate,
+                    _digest(
+                        [
+                            req.arm,
+                            served,
+                            response.get("raw", ""),
+                            response.get("summary", ""),
+                            response.get("evidence", []),
+                        ]
+                    )[7:15],
+                ),
+            )
+        ),
         "item_id": req.item_id,
         "arm": req.arm,
         "family": req.family,
@@ -582,7 +653,8 @@ def _run_record(req: AuthorizedRequest, response: dict, started, completed,
             # provenance field that is simply false.
             "product_route": _enum_or_unknown(
                 response.get("product_route") or PRODUCT_ROUTE.get(req.provider_route),
-                "product_route"),
+                "product_route",
+            ),
             "billing_route": _enum_or_unknown(response.get("billing_route"), "billing_route"),
             "account_type": req.account_type,
             "requested_model": req.requested_model,
@@ -620,7 +692,9 @@ def _run_record(req: AuthorizedRequest, response: dict, started, completed,
             "zen_balance_after": None,
             "raw_output_digest": _digest(response.get("raw", "")),
             "tool_trace_digest": _digest(response.get("tool_trace", [])),
-            "provider_response_ids": [str(x) for x in (response.get("provider_response_ids") or [])],
+            "provider_response_ids": [
+                str(x) for x in (response.get("provider_response_ids") or [])
+            ],
         },
         "safety": {
             # No `.get` default on these two. Section 5.5 is about absent telemetry
@@ -697,21 +771,28 @@ def cmd_prompts(args) -> int:
         if isinstance(outcome, Refusal):
             refused.append((a, outcome))
             continue
-        rows.append({
-            "run_key": "|".join((outcome.item_id, outcome.family, outcome.lens,
-                                 outcome.arm, outcome.replicate)),
+        rows.append(
+            {
+                "run_key": "|".join(
+                    (outcome.item_id, outcome.family, outcome.lens, outcome.arm, outcome.replicate)
+                ),
             "agent": outcome.agent,
             "request": asdict(outcome),
             "prompt": render_packet(outcome.packet, outcome.lens, panels),
-        })
+            }
+        )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows),
-                        encoding="utf-8")
+    args.out.write_text(
+        "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows), encoding="utf-8"
+    )
     print(f"{len(rows)} of {len(assignments)} assignment(s) authorized -> {args.out}")
     for a, refusal in refused:
-        print(f"  refused {a.get('item_id')}/{a.get('family')}: "
-              f"{refusal.reason_code} {refusal.message}", file=sys.stderr)
+        print(
+            f"  refused {a.get('item_id')}/{a.get('family')}: "
+            f"{refusal.reason_code} {refusal.message}",
+            file=sys.stderr,
+        )
     print("\nDispatch each `prompt` to its `agent`, one invocation per row, in a fresh")
     print("session with no peer output. Write one JSON object per reply carrying")
     print("  {run_key, served_model, response: {summary, evidence, unresolved}}")
@@ -738,7 +819,9 @@ def cmd_ingest(args) -> int:
             "served_model": reply.get("served_model"),
             "summary": body.get("summary") if isinstance(body.get("summary"), str) else "",
             "evidence": body.get("evidence") if isinstance(body.get("evidence"), list) else [],
-            "unresolved": body.get("unresolved") if isinstance(body.get("unresolved"), list) else [],
+            "unresolved": body.get("unresolved")
+            if isinstance(body.get("unresolved"), list)
+            else [],
             "latency_ms": reply.get("latency_ms"),
             "input_tokens": reply.get("input_tokens"),
             "output_tokens": reply.get("output_tokens"),
@@ -769,11 +852,13 @@ def cmd_ingest(args) -> int:
             # The tool counter joins that list: a run whose tool surface went
             # unobserved is a run whose central control went unobserved.
             "schema_valid": bool(valid),
-            "telemetry_complete": (valid is not None
+            "telemetry_complete": (
+                valid is not None
                                    and reply.get("served_model") is not None
                                    and reply.get("tool_violations") is not None
                                    and reply.get("malformed_tool_calls") is not None
-                                   and reply.get("named_tools") is not None),
+                and reply.get("named_tools") is not None
+            ),
             # Provenance for the replacement cohort. `replaces_run_id` ties a
             # replacement to the invalidated unit it stands in for; the policy digest
             # names the condition it ran under, which is what makes "never pool the two
@@ -783,9 +868,11 @@ def cmd_ingest(args) -> int:
         }
         try:
             _require_allowed_rights(req)
-            records.append(_validated_record(req, response, started,
-                                             datetime.now(timezone.utc), "agent",
-                                             args.omp_version))
+            records.append(
+                _validated_record(
+                    req, response, started, datetime.now(timezone.utc), "agent", args.omp_version
+                )
+            )
         except EgressRefused as exc:
             failed.append((prompt["run_key"], str(exc)))
             continue
@@ -802,8 +889,11 @@ def cmd_ingest(args) -> int:
     for key, why in failed:
         print(f"  refused at ingest: {key}: {why}", file=sys.stderr)
     if unmatched:
-        print(f"  {len(unmatched)} reply/replies match no prompt: "
-              f"{', '.join(sorted(set(unmatched))[:5])}", file=sys.stderr)
+        print(
+            f"  {len(unmatched)} reply/replies match no prompt: "
+            f"{', '.join(sorted(set(unmatched))[:5])}",
+            file=sys.stderr,
+        )
     if missing:
         print(f"  {len(missing)} prompt(s) unanswered: {', '.join(missing[:5])}", file=sys.stderr)
     return EXIT_OK if not (failed or unmatched or missing) else EXIT_UNRESOLVED
@@ -811,9 +901,11 @@ def cmd_ingest(args) -> int:
 
 # ------------------------------------------------------------------- driver
 
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("plan", "dispatch", "prompts"):
         p = sub.add_parser(name)
@@ -823,9 +915,12 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--family", required=name != "prompts")
         p.add_argument("--lens", default="")
         p.add_argument("--arm", default="C")
-        p.add_argument("--replicate", default="",
+        p.add_argument(
+            "--replicate",
+            default="",
                        help="distinguishes independent runs of one family on one item; "
-                            "the same-family null arm is the only one that sets it")
+            "the same-family null arm is the only one that sets it",
+        )
         p.add_argument("--experiment-id", default="lrhe-core-v1")
         p.add_argument("--classification", default="public_corpus")
         p.add_argument("--item-authorized", action="store_true")
@@ -838,11 +933,16 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--qualification", type=Path, default=SKILL / "qualification.yml")
         if name == "dispatch":
             p.add_argument("--transport", default="none", choices=sorted(TRANSPORTS))
-            p.add_argument("--out", type=Path, default=None,
-                           help="append the run record here as JSONL")
+            p.add_argument(
+                "--out", type=Path, default=None, help="append the run record here as JSONL"
+            )
         if name == "prompts":
-            p.add_argument("--assignments", type=Path, required=True,
-                           help="JSONL of {item_id, family, lens, arm, experiment_id}")
+            p.add_argument(
+                "--assignments",
+                type=Path,
+                required=True,
+                help="JSONL of {item_id, family, lens, arm, experiment_id}",
+            )
             p.add_argument("--out", type=Path, default=Path("run-prompts.jsonl"))
 
     ingest = sub.add_parser("ingest")
@@ -859,31 +959,50 @@ def main(argv: list[str] | None = None) -> int:
 
     outcome = prepare(args)
     if isinstance(outcome, Refusal):
-        json.dump({"decision": outcome.decision, "reason_code": outcome.reason_code,
-                   "message": outcome.message, "item_id": args.item_id,
-                   "family": args.family}, sys.stdout, indent=2)
+        json.dump(
+            {
+                "decision": outcome.decision,
+                "reason_code": outcome.reason_code,
+                "message": outcome.message,
+                "item_id": args.item_id,
+                "family": args.family,
+            },
+            sys.stdout,
+            indent=2,
+        )
         sys.stdout.write("\n")
         return outcome.exit_code
 
     if args.cmd == "plan":
-        json.dump({"decision": "would_dispatch", "item_id": outcome.item_id,
-                   "family": outcome.family, "lens": outcome.lens,
+        json.dump(
+            {
+                "decision": "would_dispatch",
+                "item_id": outcome.item_id,
+                "family": outcome.family,
+                "lens": outcome.lens,
                    "requested_model": outcome.requested_model,
                    "provider_route": outcome.provider_route,
                    "agent": outcome.agent,
                    "packet_digest": outcome.packet_digest,
                    "rights_record_id": outcome.data_rights["record_id"],
                    "terms_snapshot_id": outcome.terms_snapshot_id,
-                   "packet_bytes": len(json.dumps(outcome.packet))},
-                  sys.stdout, indent=2, sort_keys=True)
+                "packet_bytes": len(json.dumps(outcome.packet)),
+            },
+            sys.stdout,
+            indent=2,
+            sort_keys=True,
+        )
         sys.stdout.write("\n")
         return EXIT_OK
 
     try:
         record = dispatch(outcome, args.transport)
     except EgressRefused as exc:
-        json.dump({"decision": "deny", "reason_code": "egress_refused",
-                   "message": str(exc)}, sys.stdout, indent=2)
+        json.dump(
+            {"decision": "deny", "reason_code": "egress_refused", "message": str(exc)},
+            sys.stdout,
+            indent=2,
+        )
         sys.stdout.write("\n")
         return EXIT_DENY
     if args.out:
