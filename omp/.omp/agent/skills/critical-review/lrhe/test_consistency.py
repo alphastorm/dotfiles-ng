@@ -33,6 +33,8 @@ from referencing import Registry, Resource
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 import canary  # noqa: E402  -- needs the path above
+import auto_reliability  # noqa: E402
+
 import freeze_lock  # noqa: E402  -- needs the path above
 import preflight  # noqa: E402
 import qualification  # noqa: E402
@@ -46,6 +48,15 @@ SCHEMAS = sorted(HERE.glob("*.schema.json"))
 
 def _routes_in_panels() -> set[str]:
     return {f["providerRoute"] for e in PANELS["experiments"] for f in e["families"]}
+
+def test_auto_reliability_excludes_the_retired_local_qwen_lane():
+    assert "qwen" not in auto_reliability.FAMILIES
+    assert auto_reliability.REPEAT_FAMILIES == ("gpt",)
+    assert all(
+        not row["selector"].startswith("nyc-pc/")
+        and row["agent"] != "judge-qwen-auto"
+        for row in auto_reliability.FAMILIES.values()
+    )
 
 
 # ------------------------------------------------------- panels vs policies

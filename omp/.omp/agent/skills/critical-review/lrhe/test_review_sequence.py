@@ -343,8 +343,10 @@ def test_stable_quick_and_full_check_tiers() -> None:
         "test_review_sequence.py",
         "test_runner.py",
         "test_consistency.py",
+        "test_invariants.py::test_evaluation_agents_are_hidden_unless_the_lrhe_overlay_is_loaded",
+        "test_invariants.py::test_evaluation_overlay_keeps_failed_lanes_hidden",
     )
-    assert review_checks.command_for("quick")[-3:] == review_checks.QUICK_TESTS
+    assert review_checks.command_for("quick")[-len(review_checks.QUICK_TESTS):] == review_checks.QUICK_TESTS
     assert review_checks.command_for("full")[-1] == "full"
     commands = review_checks.full_commands()
     assert commands[0][1:] == ("check", ".", "--exclude", ".venv")

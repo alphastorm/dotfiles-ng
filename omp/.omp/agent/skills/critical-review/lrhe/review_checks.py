@@ -18,6 +18,8 @@ QUICK_TESTS = (
     "test_review_sequence.py",
     "test_runner.py",
     "test_consistency.py",
+    "test_invariants.py::test_evaluation_agents_are_hidden_unless_the_lrhe_overlay_is_loaded",
+    "test_invariants.py::test_evaluation_overlay_keeps_failed_lanes_hidden",
 )
 _TRANSPORT_ASSERTION = (
     "import run_review; "

@@ -90,16 +90,17 @@ regenerating the corpus returns those four to an empty allowlist. Re-run
 Ordinary OMP sessions hide LRHE judges, contamination probes, and floor reviewers.
 Live council critics and the targeted refuter remain visible because
 `qualification.yml` authorizes those runtime roles. Start a dedicated evaluation
-session with the public empty deny-list overlay only when running LRHE:
+session with the public overlay only when running LRHE:
 
 ```bash
 L=~/.omp/agent/skills/critical-review/lrhe
 omp --config "$L/evaluation-agents.yml"
 ```
 
-The overlay changes discovery only. It does not authorize live dispatch, tool use,
-repository mutation, or a provider subscription; the qualification resolver and
-panel manifest remain authoritative.
+The overlay re-enables evaluation lanes but keeps `review-minimax-floor` hidden
+because its provider canary and read-only qualification failed. Discovery still
+does not authorize live dispatch, tool use, repository mutation, or a provider
+subscription; the qualification resolver and panel manifest remain authoritative.
 
 ## Quick start
 

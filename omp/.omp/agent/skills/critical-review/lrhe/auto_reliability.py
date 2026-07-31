@@ -65,9 +65,10 @@ VERDICTS = ("CONFIRMED", "PLAUSIBLE", "FABRICATED")
 UNRESOLVED = "UNRESOLVED"
 CASE_ID_FMT = "AR-{:04d}"
 
-# The five families and the exact selector each must be served. Requested, not
-# trusted: `ingest` compares this against what the session record says answered,
-# and a mismatch drops the response rather than relabelling it.
+# The four active families and the exact selector each must be served. Requested,
+# not trusted: `ingest` compares this against what the session record says answered,
+# and a mismatch drops the response rather than relabelling it. The retired local
+# Qwen lane remains only in historical response and manifest artifacts.
 FAMILIES: dict[str, dict[str, str]] = {
     "claude": {"agent": "judge-claude", "selector": "anthropic/claude-opus-5:max",
                "role": "fresh repeat of an original judge family"},
@@ -77,12 +78,10 @@ FAMILIES: dict[str, dict[str, str]] = {
              "role": "fresh repeat of an original judge family"},
     "gpt": {"agent": "judge-gpt-auto", "selector": "openai-codex/gpt-5.6-sol:high",
             "role": "new judge family"},
-    "qwen": {"agent": "judge-qwen-auto", "selector": "nyc-pc/qwen-5090",
-             "role": "new self-hosted judge family"},
 }
-# Only these two did not participate in the canonical panel, so only these two can
-# be given a within-family repeat that is not already available from the old votes.
-REPEAT_FAMILIES = ("gpt", "qwen")
+# GPT did not participate in the canonical panel, so it alone can receive a
+# within-family repeat that is not already available from the old votes.
+REPEAT_FAMILIES = ("gpt",)
 
 # What MANIFEST.sha256 covers: inputs that must not move once a response exists, and
 # deliberately not the dispatcher, the responses or any later analysis output.

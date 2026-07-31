@@ -1694,14 +1694,21 @@ def test_every_judge_agent_declares_an_empty_tool_surface():
         assert front["tools"] == [], f"{path.name} declares {front['tools']}"
         assert front["output"]["additionalProperties"] is False, path.name
 
-@pytest.mark.skipif(not (Path.home() / ".omp/agent/config.yml").is_file(),
-                    reason="private OMP config is not present in this checkout")
+_EVALUATION_POLICY_INPUTS = (
+    Path.home() / ".omp/agent/config.yml",
+    Path.home() / ".omp/agent/skills/critical-review/qualification.yml",
+    Path.home() / ".omp/agent/agents",
+)
+
+
+@pytest.mark.skipif(not all(path.exists() for path in _EVALUATION_POLICY_INPUTS),
+                    reason="complete private OMP agent policy is not present in this checkout")
 def test_evaluation_agents_are_hidden_unless_the_lrhe_overlay_is_loaded():
     agents = Path.home() / ".omp/agent/agents"
     skill = Path.home() / ".omp/agent/skills/critical-review"
-    config = yaml.safe_load((Path.home() / ".omp/agent/config.yml").read_text())
+    config = yaml.safe_load((Path.home() / ".omp/agent/config.yml").read_text()) or {}
     qualification = yaml.safe_load((skill / "qualification.yml").read_text())
-    overlay = yaml.safe_load((skill / "lrhe/evaluation-agents.yml").read_text())
+    overlay = yaml.safe_load((HERE / "evaluation-agents.yml").read_text())
 
     expected_hidden = {path.stem for path in agents.glob("judge-*.md")}
     expected_hidden.update(path.stem for path in agents.glob("probe-*.md"))
@@ -1713,10 +1720,20 @@ def test_evaluation_agents_are_hidden_unless_the_lrhe_overlay_is_loaded():
         else:
             live_agents.add(agent)
 
-    disabled = set(config["task"]["disabledAgents"])
+    disabled = set(((config.get("task") or {}).get("disabledAgents") or []))
     assert expected_hidden <= disabled
     assert live_agents.isdisjoint(disabled)
-    assert overlay == {"task": {"disabledAgents": []}}
+
+    expected_overlay_disabled = {
+        qualification["reviewers"][family]["agent"]
+        for family in qualification["liveDispatch"]["disabled"]
+    }
+    assert set(overlay["task"]["disabledAgents"]) == expected_overlay_disabled
+
+
+def test_evaluation_overlay_keeps_failed_lanes_hidden():
+    overlay = yaml.safe_load((HERE / "evaluation-agents.yml").read_text())
+    assert overlay == {"task": {"disabledAgents": ["review-minimax-floor"]}}
 
 
 def test_a_judgement_from_an_unrequested_model_drops_its_claim(tmp_path: Path):
