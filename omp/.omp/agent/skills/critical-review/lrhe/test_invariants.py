@@ -1694,6 +1694,30 @@ def test_every_judge_agent_declares_an_empty_tool_surface():
         assert front["tools"] == [], f"{path.name} declares {front['tools']}"
         assert front["output"]["additionalProperties"] is False, path.name
 
+@pytest.mark.skipif(not (Path.home() / ".omp/agent/config.yml").is_file(),
+                    reason="private OMP config is not present in this checkout")
+def test_evaluation_agents_are_hidden_unless_the_lrhe_overlay_is_loaded():
+    agents = Path.home() / ".omp/agent/agents"
+    skill = Path.home() / ".omp/agent/skills/critical-review"
+    config = yaml.safe_load((Path.home() / ".omp/agent/config.yml").read_text())
+    qualification = yaml.safe_load((skill / "qualification.yml").read_text())
+    overlay = yaml.safe_load((skill / "lrhe/evaluation-agents.yml").read_text())
+
+    expected_hidden = {path.stem for path in agents.glob("judge-*.md")}
+    expected_hidden.update(path.stem for path in agents.glob("probe-*.md"))
+    live_agents = set()
+    for family, reviewer in qualification["reviewers"].items():
+        agent = reviewer["agent"]
+        if family in qualification["liveDispatch"]["evaluationOnly"] or family in qualification["liveDispatch"]["disabled"]:
+            expected_hidden.add(agent)
+        else:
+            live_agents.add(agent)
+
+    disabled = set(config["task"]["disabledAgents"])
+    assert expected_hidden <= disabled
+    assert live_agents.isdisjoint(disabled)
+    assert overlay == {"task": {"disabledAgents": []}}
+
 
 def test_a_judgement_from_an_unrequested_model_drops_its_claim(tmp_path: Path):
     """Reviewer runs carry identity_verified; judgements carried nothing.
