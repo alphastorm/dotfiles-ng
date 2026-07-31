@@ -264,7 +264,7 @@ unparsed and unanchored ones without a judge call; budget ~2,000 claim judgement
 non-authoring families each. Reviewer runs are non-blocking three at a time, so wall-clock is
 roughly (523 / 3) × slowest-reviewer latency plus synthesis.
 
-Keep the ≥32K local-context concurrency-1 constraint for any Qwen evidence scouts feeding the packets.
+The former ≥32K local-Qwen evidence-scout constraint is historical only. Local Qwen dispatch is retired; any future Qwen experiment must use a separately authorized hosted lane and preserve the frozen family-accounting rules.
 
 ---
 
