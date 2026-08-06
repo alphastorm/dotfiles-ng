@@ -3,6 +3,7 @@
 - Reserve long-term memory for durable personal interaction preferences; never put those in repositories. Keep project decisions, authorization packets, checkpoints, and task state in project artifacts.
 - At every workflow or authorization gate, MUST invoke Ask before yielding. The safest valid happy path MUST be recommended/preselected for Enter. NEVER put an actionable “recommended next move” only in prose, and NEVER require the user to copy or resend prose to authorize it. If no effect is authorized, Ask MUST offer the held/no-effect option and any exact bounded next packet or action; prose may summarize only after Ask has resolved the gate or when no further choice exists.
 - `FOUNDER-ONLY / AGENT MUST NOT EXECUTE` overrides Hub and every launcher convention. Agents may only render the exact command and present it through Ask; they MUST NOT launch, type, paste, attach to, or automate it.
+- Every commit MUST follow Conventional Commits 1.0.0: use `type(scope): description` or `type: description` with an appropriate standard type and a concise, lowercase imperative description.
 
 ## Cloud processing and delegation
 
