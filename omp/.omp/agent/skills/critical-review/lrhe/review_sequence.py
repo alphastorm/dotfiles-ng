@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Mapping, Sequence, cast
 
-REVIEW_MODES = frozenset({"initial", "remediation", "material-redesign"})
+REVIEW_MODES = frozenset({"design", "initial", "remediation", "material-redesign"})
 ACTIONS = frozenset({"full-council", "targeted-refuter", "none"})
 RISK_DOMAINS = frozenset(
     {
@@ -262,7 +262,9 @@ def _binding_errors(record: Mapping[str, object]) -> tuple[str, ...]:
         subject_digest = ""
     receipts_value = _mapping(record.get("proof_receipts"))
     if receipts_value is None or not receipts_value:
-        errors.append("missing-proof-receipts")
+        design_empty = record.get("review_mode") == "design" and receipts_value is not None
+        if not design_empty:
+            errors.append("missing-proof-receipts")
         receipts: Mapping[str, object] = {}
     else:
         receipts = receipts_value
@@ -336,8 +338,10 @@ def _history_errors(record: Mapping[str, object], mode: object) -> tuple[str, ..
         return ("invalid-sequence-history",)
 
     history_ids: list[str] = []
+    non_design_ids: list[str] = []
     general_passes = 0
     refutations = 0
+    design_rows = 0
     for index, value in enumerate(history_values):
         prefix = f"invalid-history-row:{index}"
         row = _mapping(value)
@@ -351,12 +355,21 @@ def _history_errors(record: Mapping[str, object], mode: object) -> tuple[str, ..
             errors.append(f"{prefix}:review-id")
         else:
             history_ids.append(review_id.strip())
+            if review_mode != "design":
+                non_design_ids.append(review_id.strip())
         if review_mode not in REVIEW_MODES:
             errors.append(f"{prefix}:review-mode")
+        elif review_mode == "design":
+            design_rows += 1
+            if index != 0:
+                errors.append("design-review-not-first")
+            if action == "targeted-refuter":
+                errors.append(f"{prefix}:design-action")
         if action not in ACTIONS:
             errors.append(f"{prefix}:action")
         elif action == "full-council":
-            general_passes += 1
+            if review_mode != "design":
+                general_passes += 1
         elif action == "targeted-refuter":
             refutations += 1
         record_path_value = row.get("record_path")
@@ -376,15 +389,25 @@ def _history_errors(record: Mapping[str, object], mode: object) -> tuple[str, ..
                 errors.append(f"{prefix}:record-binding")
     if len(history_ids) != len(set(history_ids)):
         errors.append("duplicate-history-review-id")
+    if design_rows > 1:
+        errors.append("multiple-design-reviews")
 
     review_id = record.get("review_id")
     if isinstance(review_id, str) and review_id in history_ids:
         errors.append("current-review-already-in-history")
     parent = record.get("parent_review_id")
-    if mode == "initial":
+    if mode == "design":
         if history_ids:
-            errors.append("initial-review-has-history")
+            errors.append("design-review-has-history")
         if parent not in (None, ""):
+            errors.append("design-review-has-parent")
+    elif mode == "initial":
+        if non_design_ids:
+            errors.append("initial-review-has-history")
+        if history_ids:
+            if parent != history_ids[-1]:
+                errors.append("parent-review-not-latest-history")
+        elif parent not in (None, ""):
             errors.append("initial-review-has-parent")
     else:
         if not history_ids:
@@ -555,14 +578,14 @@ def readiness_errors(record: Mapping[str, object]) -> tuple[str, ...]:
     if incomplete:
         errors.append("incomplete-invariant-proof")
 
-    if mode == "initial":
+    if mode in {"design", "initial"}:
         for field in ("remediated_finding_ids", "resolved_finding_ids", "disputed_or_unresolved_p01"):
             if _strict_strings(record, field, errors):
-                errors.append(f"initial-review-has-{field}")
+                errors.append(f"{mode}-review-has-{field}")
         if record.get("remediation_scope") not in (None, {}):
-            errors.append("initial-review-has-remediation-scope")
+            errors.append(f"{mode}-review-has-remediation-scope")
         if _sequence(record.get("lead_verification")) not in ((), []):
-            errors.append("initial-review-has-lead-verification")
+            errors.append(f"{mode}-review-has-lead-verification")
     elif mode == "remediation":
         errors.extend(_correction_errors(record, require_all_resolved=False))
     elif mode == "material-redesign":
@@ -592,7 +615,7 @@ def select_review_action(record: Mapping[str, object]) -> ReviewDecision:
             reason_codes=errors,
             next_step="implementation-audit-repair",
         )
-    if normalized_mode in {"initial", "material-redesign"}:
+    if normalized_mode in {"design", "initial", "material-redesign"}:
         return ReviewDecision(
             status="ready",
             review_sequence_id=normalized_sequence_id,
@@ -668,14 +691,14 @@ def triage_errors(record: Mapping[str, object]) -> tuple[str, ...]:
     if incomplete:
         errors.append("incomplete-invariant-proof")
 
-    if mode == "initial":
+    if mode in {"design", "initial"}:
         for field in ("remediated_finding_ids", "resolved_finding_ids", "disputed_or_unresolved_p01"):
             if _strict_strings(record, field, errors):
-                errors.append(f"initial-review-has-{field}")
+                errors.append(f"{mode}-review-has-{field}")
         if record.get("remediation_scope") not in (None, {}):
-            errors.append("initial-review-has-remediation-scope")
+            errors.append(f"{mode}-review-has-remediation-scope")
         if _sequence(record.get("lead_verification")) not in ((), []):
-            errors.append("initial-review-has-lead-verification")
+            errors.append(f"{mode}-review-has-lead-verification")
     elif mode == "remediation":
         errors.extend(_correction_errors(record, require_all_resolved=False))
     elif mode == "material-redesign":
@@ -711,7 +734,7 @@ def select_triage_action(record: Mapping[str, object]) -> TriageDecision:
             reason_codes=errors,
             next_step="implementation-audit-repair",
         )
-    if normalized_mode in {"initial", "material-redesign"}:
+    if normalized_mode in {"design", "initial", "material-redesign"}:
         return TriageDecision(
             status="ceremony-required",
             review_sequence_id=normalized_sequence_id,

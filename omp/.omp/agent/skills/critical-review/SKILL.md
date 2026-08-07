@@ -50,6 +50,9 @@ Every consequential change has one `review_sequence_id`. Every frozen epoch has
 one machine-readable `review-record.json`. `lrhe/review_sequence.py` is the sole
 dispatch-action selector; packet prose cannot override its result. Its modes are:
 
+- `design`: an optional pre-implementation council on the frozen design
+  artifact; at most one per sequence, always the first epoch, and it never
+  counts toward the two general implementation passes;
 - `initial`: the first general council for the sequence;
 - `remediation`: a correction scoped to named findings, changed paths, and
   adjacent invariants;
@@ -62,8 +65,8 @@ The frozen machine record must contain exactly these fields; any additional key 
 
 1. `review_sequence_id`, a unique `review_id`, `review_mode`, `parent_review_id`,
    and ordered `sequence_history` whose rows bind each prior epoch record by
-   path and SHA-256, plus history-derived `general_review_pass_count` and
-   `targeted_refutation_used`;
+   path and SHA-256, plus history-derived `general_review_pass_count` (design
+   epochs never count) and `targeted_refutation_used`;
 2. `artifact_path` and SHA-256, every `changed_file` and its current SHA-256
    (`DELETED` for a deletion), and proof-receipt paths and SHA-256 values;
 3. every touched risk domain and an invariant proof matrix whose rows collectively
@@ -97,9 +100,13 @@ python3 lrhe/review_sequence.py review-record.json           # before any dispat
 
 Triage comes first, on a pre-freeze draft record that carries every field
 except the subject: artifact and changed-file digests, proof receipts, proof
-classes, touched risk domains, and the invariant matrix. It projects the
-dispatch decision from sequence identity, bound history, honesty flags, and
-mode-specific dispositions:
+classes, touched risk domains, and the invariant matrix.
+`python3 lrhe/epoch.py scaffold --mode <mode> --sequence-id <id>
+--review-id <id> --out draft-record.json` emits that draft shape, and
+`python3 lrhe/epoch.py bind --record <prior-record> --action <action>` prints
+each bound `sequence_history` row. Triage projects the dispatch decision from
+sequence identity, bound history, honesty flags, and mode-specific
+dispositions:
 
 - exit `0` (`lead-close`): the epoch cannot dispatch; take the lightweight
   lead-only close below and skip the freeze, receipts, matrix, and packet
@@ -145,8 +152,9 @@ dispositions and closes the sequence.
 New risk classes, two or more cross-subsystem omissions, or incomplete invariant
 proof are systemic evidence that the implementation audit was incomplete. Mark
 the sequence `not-council-ready`, return to implementation audit/repair, and do
-not automatically redispatch. The initial pass and at most one verified material
-redesign are the only general council passes. There is never a third.
+not automatically redispatch. One optional design pass, the initial pass, and
+at most one verified material redesign are the only general council passes.
+There is never a third implementation council.
 
 ## Lightweight lead-only close
 
@@ -169,6 +177,35 @@ regression, a disputed P0/P1, verification you cannot state as evidence —
 disqualifies the lightweight path: record it honestly and let triage route the
 epoch.
 
+## Design-stage council
+
+Review the design before code exists whenever the change is consequential
+enough to qualify for this skill at all. The shadow ledger's confirmed P0/P1
+findings are dominantly design-level — ordering that makes a commit
+unreachable, rollback that deletes its own recovery path, single-check
+containment — and every one is cheaper to catch in the document than in a
+remediation chain.
+
+A design epoch is a full council at near-zero ceremony:
+
+- the frozen subject is the design artifact itself: `artifact.diff` is the
+  design document, `changed_files` names it, and because there is nothing to
+  run, `proof_receipts` may be empty (`{}`) with every proof class
+  `not-applicable` under a concrete justification. A `passed` class still
+  requires a subject-bound receipt;
+- `review_mode: design` requires an empty `sequence_history`: the design
+  council is always the sequence's first epoch, and there is at most one;
+- a design pass never consumes an implementation council: the later `initial`
+  epoch reviews the implementation with the design ledger's dispositions in
+  its packet context;
+- design findings land in the ledger like any council's; resolve them in the
+  revised design or carry them into the implementation packet's
+  `known_open_questions`. They never spawn remediation epochs — remediation
+  belongs to implementation reviews.
+
+The panel resolves through the same `python3 lrhe/qualification.py initial`
+call, and dispatch still requires the frozen full gate on the design record.
+
 ## Freeze one review epoch
 
 Enter this section only when triage returned `ceremony-required`. Freeze last:
@@ -190,10 +227,18 @@ in the current request or an Ask gate.
    review-scoped untracked paths, and relevant design artifacts.
 3. Materialize the complete review-scoped diff or design as `artifact.diff`.
    Exclude unrelated, ignored, secret-bearing, or unauthorized material.
-4. Compute SHA-256 for the artifact and every reviewed changed file. Record
-   deleted files explicitly and use stable path ordering.
-5. Create `review-record.json` with the complete sequence, subject, proof,
-   risk, invariant, failure, and mode-specific fields from the readiness section.
+4. Bind the frozen subject with the epoch tool — it resolves paths, records
+   deletions explicitly (`DELETED`), keeps stable ordering, and refuses
+   session-local or unreadable paths:
+
+   ```bash
+   python3 lrhe/epoch.py freeze --record review-record.json \
+     --artifact artifact.diff --changed <files...> --deleted <files...>
+   ```
+
+5. Complete `review-record.json` with the remaining readiness fields: touched
+   risk domains, the invariant proof matrix, proof classes, honesty flags, and
+   the mode-specific dispositions.
 6. Run each decisive check through the generic subject-bound producer and add
    the receipt path and digest to the record:
 
@@ -226,6 +271,9 @@ in the current request or an Ask gate.
    tree.
 7. Run `python3 lrhe/review_sequence.py review-record.json`. A nonzero result
    prohibits provider dispatch.
+   `python3 lrhe/epoch.py recheck --record review-record.json` re-verifies the
+   live tree against the frozen subject at any later point without re-reading
+   digests by hand.
 8. Create `packet.md` from the validated record. The packet records only the
    `review-record.json` path and digest plus the review context below; never
    restate pass counts, rosters, finding sets, test counts, or digests by hand.
@@ -271,8 +319,11 @@ Resolve the panel immediately before dispatch:
 python3 lrhe/qualification.py initial
 ```
 
-Launch every returned member in one `task`
-batch. Do not launch separate calls that serialize independent reviews. Shared
+Launch every returned member concurrently: fill one `task` batch up to the
+harness's review-agent cap, and dispatch any remainder in immediately
+consecutive `task` calls before reading anything back; no reviewer result is read
+until every member has settled. Do not launch calls that serialize independent
+reviews behind one another's output. Shared
 context names only the review ID, epoch, and independence rule; it must not be the
 only location of evidence needed by an `inline` member. Do not put reviewer output
 or an `agent://` handle in shared context. Use each resolver result's `agent`,
@@ -297,6 +348,14 @@ Return one schema-valid summary/evidence/unresolved object, at most 12 evidence 
 ```
 
 Do not give reviewers caller-provided output schemas that weaken their agent schema. Do not disclose round-one responses between reviewers through messages, prompts, local files, or follow-up calls. Wait for every selected job to settle, then read each complete `agent://` result separately.
+
+Distinguish two failure classes when a member returns nothing usable. A
+dispatch-level failure — the harness rejected the batch item, or the job died
+or was interrupted before any terminal output — may be recovered exactly once
+per member per epoch by redispatching the same immutable assignment; record
+both attempts in the close report. A terminal schema-invalid result is not
+recoverable: it consumed that member's review, and the member is `missing` for
+the epoch. Never redispatch to shop for a different answer.
 
 ## Finding ledger
 

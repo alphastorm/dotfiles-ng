@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import epoch
 import review_checks
 import make_receipt
 from qualification import (
@@ -28,6 +29,7 @@ from review_sequence import (
     readiness_errors,
     select_review_action,
     select_triage_action,
+    verify_subject_files,
 )
 
 QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
@@ -184,6 +186,94 @@ def _draft_record(tmp_path: Path, mode: str = "remediation") -> dict[str, object
     for field in SUBJECT_FIELDS:
         record.pop(field)
     return record
+
+
+def _design_record(tmp_path: Path) -> dict[str, object]:
+    """A ready design-mode record: the frozen subject is the design document."""
+    record = _ready_record(tmp_path, "initial")
+    record["review_mode"] = "design"
+    design = tmp_path / "design.md"
+    design.write_text("# design\n", encoding="utf-8")
+    record["artifact_path"] = str(design)
+    record["artifact_digest"] = _sha256(design)
+    record["changed_files"] = [str(design)]
+    record["changed_file_digests"] = {str(design): _sha256(design)}
+    record["proof_receipts"] = {}
+    record["proof_classes"] = {
+        proof_class: {
+            "status": "not-applicable",
+            "evidence_or_justification": "Design-only epoch; no implementation exists.",
+        }
+        for proof_class in PROOF_CLASSES
+    }
+    record["invariant_proof_matrix"] = [
+        {
+            "invariant_id": "INV-001",
+            "changed_paths": [str(design)],
+            "risk_domains": ["architecture", "documentation-policy"],
+            "preserved_guard": "The dispatch gate remains fail closed.",
+            "decisive_check": "design document inspection",
+            "result": "passed",
+            "evidence": "design.md review",
+        }
+    ]
+    return record
+
+
+def test_design_mode_reviews_a_document_without_receipts(tmp_path: Path) -> None:
+    record = _design_record(tmp_path)
+    decision = select_review_action(record)
+    assert (decision.status, decision.action) == ("ready", "full-council")
+    triage = select_triage_action(record)
+    assert (triage.status, triage.projected_action) == ("ceremony-required", "full-council")
+
+
+def test_design_pass_does_not_consume_the_implementation_council(tmp_path: Path) -> None:
+    record = _ready_record(tmp_path, "initial")
+    record["sequence_history"] = [_history_row(tmp_path, "CR-design", "design", "full-council")]
+    record["parent_review_id"] = "CR-design"
+    decision = select_review_action(record)
+    assert (decision.status, decision.action) == ("ready", "full-council")
+
+
+def test_design_reviews_are_single_first_and_never_remediation_bases(tmp_path: Path) -> None:
+    second = _design_record(tmp_path / "second")
+    second["sequence_history"] = [
+        _history_row(tmp_path / "second", "CR-design", "design", "full-council")
+    ]
+    second["parent_review_id"] = "CR-design"
+    assert "design-review-has-history" in readiness_errors(second)
+
+    late = _ready_record(tmp_path / "late", "remediation")
+    late["sequence_history"] = [
+        _history_row(tmp_path / "late", "CR-initial", "initial", "full-council"),
+        _history_row(tmp_path / "late", "CR-design", "design", "full-council"),
+    ]
+    late["parent_review_id"] = "CR-design"
+    assert "design-review-not-first" in readiness_errors(late)
+
+    unearned = _ready_record(tmp_path / "unearned", "remediation")
+    unearned["sequence_history"] = [
+        _history_row(tmp_path / "unearned", "CR-design", "design", "full-council")
+    ]
+    unearned["parent_review_id"] = "CR-design"
+    unearned["general_review_pass_count"] = 0
+    assert "remediation-requires-prior-general-pass" in readiness_errors(unearned)
+
+
+def test_design_records_still_fail_closed_without_receipts_for_passed_classes(
+    tmp_path: Path,
+) -> None:
+    record = _design_record(tmp_path)
+    record["proof_classes"]["repository-policy"] = {
+        "status": "passed",
+        "evidence_or_justification": "docs policy lint",
+        "receipt_id": "absent-proof",
+    }
+    assert "missing-proof-receipt:repository-policy" in readiness_errors(record)
+    implementation = _ready_record(tmp_path / "impl")
+    implementation["proof_receipts"] = {}
+    assert "missing-proof-receipts" in readiness_errors(implementation)
 
 
 def test_review_mode_selection(tmp_path: Path) -> None:
@@ -716,10 +806,107 @@ def test_skill_preserves_critical_review_safety_controls() -> None:
     policy = SKILL.read_text(encoding="utf-8")
     required = (
         "Recompute the same artifact and file digests",
-        "in one `task`\nbatch",
+        "until every member has settled",
         "Every returned item receives a ledger row and final disposition",
         "A confirmed P0 or P1 blocks closure",
         "P2/P3 items receive explicit dispositions but do not trigger open-ended debate",
         "There is no majority verdict",
     )
     assert all(control in policy for control in required)
+
+
+def test_epoch_tool_scaffolds_freezes_and_rechecks(tmp_path: Path) -> None:
+    draft = tmp_path / "draft.json"
+    assert (
+        epoch.main(
+            [
+                "scaffold",
+                "--mode",
+                "initial",
+                "--sequence-id",
+                "CRS-tool",
+                "--review-id",
+                "CR-tool",
+                "--out",
+                str(draft),
+            ]
+        )
+        == 0
+    )
+    scaffolded = json.loads(draft.read_text())
+    triage = select_triage_action(scaffolded)
+    assert (triage.status, triage.projected_action) == ("ceremony-required", "full-council")
+
+    changed = tmp_path / "controller.py"
+    changed.write_text("controller\n", encoding="utf-8")
+    gone = tmp_path / "legacy.py"
+    artifact = tmp_path / "artifact.diff"
+    artifact.write_text("diff\n", encoding="utf-8")
+    assert (
+        epoch.main(
+            [
+                "freeze",
+                "--record",
+                str(draft),
+                "--artifact",
+                str(artifact),
+                "--changed",
+                str(changed),
+                "--deleted",
+                str(gone),
+            ]
+        )
+        == 0
+    )
+    frozen = json.loads(draft.read_text())
+    assert frozen["changed_file_digests"][str(gone.resolve())] == "DELETED"
+    assert verify_subject_files(frozen) == ()
+    assert epoch.main(["recheck", "--record", str(draft)]) == 0
+
+    changed.write_text("drifted\n", encoding="utf-8")
+    assert epoch.main(["recheck", "--record", str(draft)]) == epoch.EXIT_PRECONDITION
+
+
+def test_epoch_freeze_fails_closed_on_bad_paths(tmp_path: Path) -> None:
+    draft = tmp_path / "draft.json"
+    epoch.main(
+        [
+            "scaffold",
+            "--mode",
+            "remediation",
+            "--sequence-id",
+            "CRS-guard",
+            "--review-id",
+            "CR-guard",
+            "--out",
+            str(draft),
+        ]
+    )
+    artifact = tmp_path / "artifact.diff"
+    artifact.write_text("diff\n", encoding="utf-8")
+    present = tmp_path / "present.py"
+    present.write_text("x\n", encoding="utf-8")
+    base = ["freeze", "--record", str(draft), "--artifact", str(artifact)]
+    assert epoch.main([*base, "--deleted", str(present)]) == epoch.EXIT_PRECONDITION
+    assert (
+        epoch.main([*base, "--changed", str(tmp_path / "absent.py")]) == epoch.EXIT_PRECONDITION
+    )
+    assert epoch.main(base) == epoch.EXIT_PRECONDITION
+    assert (
+        epoch.main([*base, "--changed", str(present), str(present)]) == epoch.EXIT_PRECONDITION
+    )
+
+
+def test_epoch_bind_emits_a_verifiable_history_row(tmp_path: Path, capsys) -> None:
+    prior = tmp_path / "CR-prior.json"
+    _write_json(prior, {"review_id": "CR-prior", "review_mode": "initial"})
+    assert epoch.main(["bind", "--record", str(prior), "--action", "full-council"]) == 0
+    row = json.loads(capsys.readouterr().out)
+    assert row["record_sha256"] == _sha256(prior)
+
+    record = _ready_record(tmp_path, "remediation")
+    record["sequence_history"] = [row]
+    record["parent_review_id"] = "CR-prior"
+    reasons = readiness_errors(record)
+    assert "invalid-history-row:0:record-binding" not in reasons
+    assert "parent-review-not-latest-history" not in reasons
