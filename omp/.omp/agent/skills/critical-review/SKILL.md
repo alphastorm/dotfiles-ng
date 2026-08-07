@@ -58,7 +58,7 @@ dispatch-action selector; packet prose cannot override its result. Its modes are
   changes architecture, a trust boundary, public compatibility, persistent state,
   migration/rollback, or production effects.
 
-The machine record must contain exactly these fields; any additional key fails closed:
+The frozen machine record must contain exactly these fields; any additional key fails closed:
 
 1. `review_sequence_id`, a unique `review_id`, `review_mode`, `parent_review_id`,
    and ordered `sequence_history` whose rows bind each prior epoch record by
@@ -81,21 +81,41 @@ The machine record must contain exactly these fields; any additional key fails c
 Every proof receipt is JSON with `schemaVersion: 1`, `result: passed`,
 `exit_code: 0`, and the `subject_digest` computed from the frozen artifact digest
 and changed-file digest map. The proof runner must verify the live files against
-that subject before executing. A stale, self-consistent, or hand-carried receipt
-from another tree is invalid.
+that subject before executing. A receipt binds its subject digest, never the
+wall clock: a receipt whose `subject_digest` equals the record's computed digest
+stays valid across record revisions and later epochs. A receipt whose digest
+does not match — stale, self-consistent, or hand-carried from another tree — is
+invalid. Never re-run an identical check against an unchanged subject solely to
+mint an equivalent receipt.
 
-Before **any** critic or refuter dispatch:
+The selector runs twice, as two different gates:
 
 ```bash
-python3 lrhe/review_sequence.py review-record.json
+python3 lrhe/review_sequence.py --triage draft-record.json   # before any ceremony
+python3 lrhe/review_sequence.py review-record.json           # before any dispatch
 ```
 
-Only `action: full-council` or `action: targeted-refuter` permits the matching
-provider call. Missing or malformed readiness evidence, a digest mismatch, a
-known deterministic failure, a new risk class, multiple cross-subsystem
-omissions, or incomplete invariant coverage fails closed to
-`implementation-audit-repair`. Reviewers are never used to discover deterministic
-failures that the lead can prove locally.
+Triage comes first, on a pre-freeze draft record that carries every field
+except the subject: artifact and changed-file digests, proof receipts, proof
+classes, touched risk domains, and the invariant matrix. It projects the
+dispatch decision from sequence identity, bound history, honesty flags, and
+mode-specific dispositions:
+
+- exit `0` (`lead-close`): the epoch cannot dispatch; take the lightweight
+  lead-only close below and skip the freeze, receipts, matrix, and packet
+  entirely;
+- exit `20` (`ceremony-required`): a dispatching action is projected; confirm
+  provider authorization and panel resolvability, then freeze;
+- exit `10`: return to implementation audit/repair or human disposition.
+
+Triage output carries `projected_action`, never `action`; no triage result
+authorizes a provider call. Only the full gate on the frozen, subject-bound
+record does, and only `action: full-council` or `action: targeted-refuter`
+permits the matching provider call. Missing or malformed readiness evidence, a
+digest mismatch, a known deterministic failure, a new risk class, multiple
+cross-subsystem omissions, or incomplete invariant coverage fails closed to
+`implementation-audit-repair`. Reviewers are never used to discover
+deterministic failures that the lead can prove locally.
 
 When modifying this critical-review skill itself, use its stable developer tiers:
 
@@ -116,7 +136,9 @@ narrower quick selection for `full`.
 After an initial council, the lead fixes and directly verifies localized P0/P1
 findings before any further reviewer call. A remediation epoch may cover only
 named findings, its changed paths, and adjacent invariants. Honest direct
-verification records each finding as `resolved` or `disputed`. One still-disputed
+verification records each finding as `resolved` or `disputed`. Batch the
+corrections: one remediation epoch covers the complete named finding-set, never
+one epoch per fix iteration. One still-disputed
 P0/P1 may reach one targeted refuter; otherwise the lead records ledger
 dispositions and closes the sequence.
 
@@ -126,7 +148,34 @@ the sequence `not-council-ready`, return to implementation audit/repair, and do
 not automatically redispatch. The initial pass and at most one verified material
 redesign are the only general council passes. There is never a third.
 
+## Lightweight lead-only close
+
+When triage returns `lead-close`, the epoch closes on direct lead verification
+alone and mints nothing:
+
+1. Store the triage draft as the epoch's durable
+   `~/.omp/agent/critical-review/<review-id>/review-record.json`. Its
+   `remediation_scope` and `lead_verification` rows carry the changed paths and
+   the narrowest decisive evidence for every named finding.
+2. Run `python3 lrhe/review_sequence.py --triage review-record.json` against the
+   stored record and require exit `0`.
+3. Record the ledger dispositions for every named finding and close the
+   sequence. Later epochs bind this record in `sequence_history` with action
+   `none`, exactly like any other epoch record.
+
+A lead-close record never cites proof receipts, and its dispositions rest on the
+recorded direct verification. Any doubt — a new risk class, an unnamed
+regression, a disputed P0/P1, verification you cannot state as evidence —
+disqualifies the lightweight path: record it honestly and let triage route the
+epoch.
+
 ## Freeze one review epoch
+
+Enter this section only when triage returned `ceremony-required`. Freeze last:
+apply the complete change — for a remediation epoch, the complete fix set for
+every named finding — and iterate with unbound fast or repository-default checks
+until direct verification passes, then freeze once. A subject frozen before the
+work settles only drifts stale and wastes the ceremony.
 
 Reviewers must inspect one stable epoch. Prefer a no-effect digest checkpoint; a
 temporary commit or any history mutation requires authorization already present
@@ -164,6 +213,17 @@ in the current request or an Ask gate.
    use that subject-bound receipt as the proof; do not run the same unbound
    `just check` and then repeat it against unchanged frozen bytes solely to mint
    the receipt.
+
+   When an earlier epoch or record revision already minted a receipt for this
+   exact subject, verify and cite it unchanged instead of re-running the check:
+
+   ```bash
+   python3 lrhe/make_receipt.py \
+     --subject-record review-record.json --receipt <proof>.json --reuse
+   ```
+
+   Exit `0` proves the receipt already binds this subject digest and the live
+   tree.
 7. Run `python3 lrhe/review_sequence.py review-record.json`. A nonzero result
    prohibits provider dispatch.
 8. Create `packet.md` from the validated record. The packet records only the

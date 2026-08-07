@@ -81,6 +81,7 @@ RECORD_FIELDS = frozenset(
     }
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+EXIT_CEREMONY_REQUIRED = 20
 SESSION_LOCAL_ROOT = Path.home() / ".omp/agent/sessions"
 
 
@@ -106,6 +107,23 @@ class ReviewDecision:
     @property
     def permits_provider_dispatch(self) -> bool:
         return self.action in {"full-council", "targeted-refuter"}
+
+
+@dataclass(frozen=True)
+class TriageDecision:
+    """One pre-freeze dispatch projection.
+
+    Triage never authorizes provider dispatch. Only `select_review_action` on a
+    frozen, subject-bound record can return a dispatching action; this decision
+    deliberately carries no `action` field so it cannot be cited as one.
+    """
+
+    status: str
+    review_sequence_id: str
+    review_mode: str
+    projected_action: str
+    reason_codes: tuple[str, ...]
+    next_step: str
 
 
 def _mapping(value: object) -> Mapping[str, object] | None:
@@ -613,9 +631,137 @@ def select_review_action(record: Mapping[str, object]) -> ReviewDecision:
     )
 
 
+def triage_errors(record: Mapping[str, object]) -> tuple[str, ...]:
+    """Return every dispatch-projection failure computable before a freeze.
+
+    Triage validates the sequence identity, bound history, honesty flags, and
+    mode-specific correction dispositions. It deliberately skips the frozen
+    subject: artifact and changed-file digests, proof receipts, proof classes,
+    touched risk domains, and the invariant matrix belong to the full gate.
+    """
+
+    errors: list[str] = []
+    sequence_id = record.get("review_sequence_id")
+    review_id = record.get("review_id")
+    mode = record.get("review_mode")
+    if not isinstance(sequence_id, str) or not sequence_id.strip():
+        errors.append("missing-review-sequence-id")
+    if not isinstance(review_id, str) or not review_id.strip():
+        errors.append("missing-review-id")
+    if mode not in REVIEW_MODES:
+        errors.append("invalid-review-mode")
+
+    unknown_fields = sorted(set(record.keys()) - RECORD_FIELDS)
+    errors.extend(f"unknown-record-field:{field}" for field in unknown_fields)
+    errors.extend(_history_errors(record, mode))
+
+    deterministic_failures = _strict_strings(record, "known_deterministic_failures", errors)
+    if deterministic_failures:
+        errors.append("known-deterministic-failures")
+    new_risks = _strict_strings(record, "new_risk_classes", errors)
+    if new_risks:
+        errors.append("new-risk-class")
+    omissions = _strict_strings(record, "cross_subsystem_omissions", errors)
+    if len(omissions) >= 2:
+        errors.append("multiple-cross-subsystem-omissions")
+    incomplete = _strict_strings(record, "incomplete_invariant_ids", errors)
+    if incomplete:
+        errors.append("incomplete-invariant-proof")
+
+    if mode == "initial":
+        for field in ("remediated_finding_ids", "resolved_finding_ids", "disputed_or_unresolved_p01"):
+            if _strict_strings(record, field, errors):
+                errors.append(f"initial-review-has-{field}")
+        if record.get("remediation_scope") not in (None, {}):
+            errors.append("initial-review-has-remediation-scope")
+        if _sequence(record.get("lead_verification")) not in ((), []):
+            errors.append("initial-review-has-lead-verification")
+    elif mode == "remediation":
+        errors.extend(_correction_errors(record, require_all_resolved=False))
+    elif mode == "material-redesign":
+        material = set(_strict_strings(record, "material_change_categories", errors, allow_empty=False))
+        unknown = material - MATERIAL_CHANGE_CATEGORIES
+        if unknown:
+            errors.extend(f"unknown-material-change-category:{item}" for item in sorted(unknown))
+        errors.extend(_correction_errors(record, require_all_resolved=True))
+
+    return tuple(dict.fromkeys(errors))
+
+
+def select_triage_action(record: Mapping[str, object]) -> TriageDecision:
+    """Project the full gate's decision from a pre-freeze draft record.
+
+    A `lead-close` projection permits the lightweight close path: no artifact
+    freeze, no receipt minting. Every other projection routes to the frozen
+    full gate or back to implementation audit. Triage output never permits a
+    provider call.
+    """
+
+    sequence_id = record.get("review_sequence_id")
+    mode = record.get("review_mode")
+    normalized_sequence_id = sequence_id.strip() if isinstance(sequence_id, str) else ""
+    normalized_mode = mode if isinstance(mode, str) else ""
+    errors = triage_errors(record)
+    if errors:
+        return TriageDecision(
+            status="not-triage-ready",
+            review_sequence_id=normalized_sequence_id,
+            review_mode=normalized_mode,
+            projected_action="none",
+            reason_codes=errors,
+            next_step="implementation-audit-repair",
+        )
+    if normalized_mode in {"initial", "material-redesign"}:
+        return TriageDecision(
+            status="ceremony-required",
+            review_sequence_id=normalized_sequence_id,
+            review_mode=normalized_mode,
+            projected_action="full-council",
+            reason_codes=(),
+            next_step="freeze-epoch-and-run-full-gate",
+        )
+    disputed = _sequence(record.get("disputed_or_unresolved_p01")) or ()
+    if disputed:
+        if record.get("targeted_refutation_used") is True:
+            return TriageDecision(
+                status="not-triage-ready",
+                review_sequence_id=normalized_sequence_id,
+                review_mode=normalized_mode,
+                projected_action="none",
+                reason_codes=("targeted-refutation-limit-reached",),
+                next_step="human-disposition",
+            )
+        return TriageDecision(
+            status="ceremony-required",
+            review_sequence_id=normalized_sequence_id,
+            review_mode=normalized_mode,
+            projected_action="targeted-refuter",
+            reason_codes=(),
+            next_step="freeze-epoch-and-run-full-gate",
+        )
+    return TriageDecision(
+        status="lead-close",
+        review_sequence_id=normalized_sequence_id,
+        review_mode=normalized_mode,
+        projected_action="none",
+        reason_codes=(),
+        next_step="lightweight-close",
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("record", type=Path)
+    parser.add_argument(
+        "--triage",
+        action="store_true",
+        help=(
+            "project the dispatch decision from a pre-freeze draft record; "
+            "exit 0 permits only the lightweight lead-only close, exit 20 "
+            "requires the frozen full gate, and no triage result authorizes "
+            "provider dispatch"
+        ),
+    )
     args = parser.parse_args(argv)
     try:
         payload_value: object = json.loads(args.record.read_text(encoding="utf-8"))
@@ -624,6 +770,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     payload = _mapping(payload_value)
     if payload is None:
         parser.error("review record must be a JSON object")
+    if args.triage:
+        triage = select_triage_action(payload)
+        print(json.dumps(asdict(triage), sort_keys=True))
+        if triage.status == "lead-close":
+            return 0
+        if triage.status == "ceremony-required":
+            return EXIT_CEREMONY_REQUIRED
+        return 10
     decision = select_review_action(payload)
     print(json.dumps(asdict(decision), sort_keys=True))
     return 0 if decision.status in {"ready", "closed"} else 10

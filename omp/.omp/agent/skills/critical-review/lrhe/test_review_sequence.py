@@ -21,11 +21,13 @@ from qualification import (
     validate_qualification,
 )
 from review_sequence import (
+    EXIT_CEREMONY_REQUIRED,
     PROOF_CLASSES,
     SESSION_LOCAL_ROOT,
     proof_subject_digest,
     readiness_errors,
     select_review_action,
+    select_triage_action,
 )
 
 QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
@@ -161,6 +163,26 @@ def _ready_record(tmp_path: Path, mode: str = "initial") -> dict[str, object]:
         )
     if mode == "material-redesign":
         record["material_change_categories"] = ["architecture"]
+    return record
+
+
+SUBJECT_FIELDS = (
+    "artifact_path",
+    "artifact_digest",
+    "changed_files",
+    "changed_file_digests",
+    "proof_receipts",
+    "proof_classes",
+    "invariant_proof_matrix",
+    "touched_risk_domains",
+)
+
+
+def _draft_record(tmp_path: Path, mode: str = "remediation") -> dict[str, object]:
+    """A pre-freeze triage draft: the ready record minus every subject field."""
+    record = _ready_record(tmp_path, mode)
+    for field in SUBJECT_FIELDS:
+        record.pop(field)
     return record
 
 
@@ -339,6 +361,76 @@ def test_machine_record_cli_emits_the_selected_action(tmp_path: Path, capsys) ->
     assert json.loads(capsys.readouterr().out)["action"] == "full-council"
 
 
+def test_triage_projects_lead_close_for_a_clean_remediation_draft(tmp_path: Path) -> None:
+    triage = select_triage_action(_draft_record(tmp_path / "draft"))
+    assert (triage.status, triage.projected_action) == ("lead-close", "none")
+    assert triage.next_step == "lightweight-close"
+    frozen = select_triage_action(_ready_record(tmp_path / "full", "remediation"))
+    assert frozen.status == "lead-close"
+
+
+def test_triage_requires_ceremony_before_any_dispatching_epoch(tmp_path: Path) -> None:
+    initial = select_triage_action(_draft_record(tmp_path / "initial", "initial"))
+    assert (initial.status, initial.projected_action) == ("ceremony-required", "full-council")
+    assert initial.next_step == "freeze-epoch-and-run-full-gate"
+
+    disputed = _draft_record(tmp_path / "disputed")
+    disputed["resolved_finding_ids"] = []
+    disputed["disputed_or_unresolved_p01"] = ["P1-001"]
+    disputed["lead_verification"] = [
+        {"finding_id": "P1-001", "result": "disputed", "evidence": "reproduced counterexample"}
+    ]
+    decision = select_triage_action(disputed)
+    assert (decision.status, decision.projected_action) == (
+        "ceremony-required",
+        "targeted-refuter",
+    )
+
+
+def test_triage_fails_closed_on_honesty_flags_and_a_spent_refutation(tmp_path: Path) -> None:
+    flagged = _draft_record(tmp_path / "flagged")
+    flagged["known_deterministic_failures"] = ["pytest -k budget fails"]
+    decision = select_triage_action(flagged)
+    assert decision.status == "not-triage-ready"
+    assert "known-deterministic-failures" in decision.reason_codes
+    assert decision.next_step == "implementation-audit-repair"
+
+    spent = _draft_record(tmp_path / "spent")
+    spent["sequence_history"] = [
+        _history_row(tmp_path / "spent", "CR-initial", "initial", "full-council"),
+        _history_row(tmp_path / "spent", "CR-refuted", "remediation", "targeted-refuter"),
+    ]
+    spent["parent_review_id"] = "CR-refuted"
+    spent["targeted_refutation_used"] = True
+    spent["resolved_finding_ids"] = []
+    spent["disputed_or_unresolved_p01"] = ["P1-001"]
+    spent["lead_verification"] = [
+        {"finding_id": "P1-001", "result": "disputed", "evidence": "still reproducible"}
+    ]
+    exhausted = select_triage_action(spent)
+    assert exhausted.status == "not-triage-ready"
+    assert exhausted.reason_codes == ("targeted-refutation-limit-reached",)
+    assert exhausted.next_step == "human-disposition"
+
+
+def test_triage_cli_never_emits_a_dispatch_action(tmp_path: Path, capsys) -> None:
+    from review_sequence import main
+
+    record_path = tmp_path / "draft.json"
+    _write_json(record_path, _draft_record(tmp_path / "draft"))
+    assert main([str(record_path), "--triage"]) == 0
+    close_payload = json.loads(capsys.readouterr().out)
+    assert close_payload["projected_action"] == "none"
+    assert "action" not in close_payload
+
+    initial_path = tmp_path / "initial-draft.json"
+    _write_json(initial_path, _draft_record(tmp_path / "initial", "initial"))
+    assert main([str(initial_path), "--triage"]) == EXIT_CEREMONY_REQUIRED
+    ceremony_payload = json.loads(capsys.readouterr().out)
+    assert ceremony_payload["status"] == "ceremony-required"
+    assert "action" not in ceremony_payload
+
+
 def test_stable_quick_and_full_check_tiers() -> None:
     assert review_checks.QUICK_TESTS == (
         "test_review_sequence.py",
@@ -497,6 +589,52 @@ def test_generic_receipt_runner_binds_and_rechecks_subject(tmp_path: Path) -> No
                 "pass",
             ]
         )
+
+
+def test_receipt_reuse_verifies_subject_binding_without_rewriting(tmp_path: Path) -> None:
+    record = _ready_record(tmp_path / "stable")
+    record_path = tmp_path / "stable-record.json"
+    _write_json(record_path, record)
+    receipt = tmp_path / "reused-proof.json"
+    minted = make_receipt.main(
+        [
+            "--subject-record",
+            str(record_path),
+            "--receipt",
+            str(receipt),
+            "--",
+            sys.executable,
+            "-c",
+            "print('proof passed')",
+        ]
+    )
+    assert minted == 0
+    frozen_bytes = receipt.read_bytes()
+
+    reuse_args = ["--subject-record", str(record_path), "--receipt", str(receipt), "--reuse"]
+    assert make_receipt.main(reuse_args) == 0
+    assert receipt.read_bytes() == frozen_bytes
+
+    changed = Path(record["changed_files"][0])
+    original = changed.read_text(encoding="utf-8")
+    changed.write_text("drifted\n", encoding="utf-8")
+    assert make_receipt.main(reuse_args) == make_receipt.EXIT_SUBJECT_MISMATCH
+    changed.write_text(original, encoding="utf-8")
+    assert make_receipt.main(reuse_args) == 0
+
+    tampered = tmp_path / "tampered-proof.json"
+    payload = json.loads(receipt.read_text())
+    payload["subject_digest"] = "0" * 64
+    _write_json(tampered, payload)
+    assert (
+        make_receipt.main(
+            ["--subject-record", str(record_path), "--receipt", str(tampered), "--reuse"]
+        )
+        == make_receipt.EXIT_SUBJECT_MISMATCH
+    )
+
+    with pytest.raises(SystemExit):
+        make_receipt.main([*reuse_args, "--", sys.executable, "-c", "pass"])
 
 
 def test_live_panel_roles_are_derived_from_private_authority() -> None:

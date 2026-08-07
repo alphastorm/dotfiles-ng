@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Run one exact command and emit a subject-bound passing proof receipt."""
+"""Run one exact command and emit a subject-bound passing proof receipt.
+
+`--reuse` verifies that an existing receipt already proves the exact frozen
+subject (same computed subject digest, live files unchanged) without running
+anything and without rewriting the receipt. Reuse across record revisions and
+epochs is sound precisely because the receipt binds the subject digest, never
+the wall clock.
+"""
 from __future__ import annotations
 
 import argparse
@@ -21,6 +28,16 @@ def _load_subject(path: Path) -> Mapping[str, object]:
         raise ValueError(f"subject record is unreadable: {exc}") from exc
     if not isinstance(value, dict):
         raise TypeError("subject record must be a JSON object")
+    return cast(Mapping[str, object], value)
+
+
+def _load_receipt(path: Path) -> Mapping[str, object]:
+    try:
+        value: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"receipt is unreadable: {exc}") from exc
+    if not isinstance(value, dict):
+        raise TypeError("receipt must be a JSON object")
     return cast(Mapping[str, object], value)
 
 
@@ -50,19 +67,49 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--subject-record", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--cwd", type=Path, default=Path.cwd())
+    parser.add_argument(
+        "--reuse",
+        action="store_true",
+        help=(
+            "verify that the existing receipt already proves this exact subject "
+            "instead of running a command; never rewrites the receipt"
+        ),
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = tuple(args.command[1:] if args.command[:1] == ["--"] else args.command)
-    if not command:
+    if args.reuse and command:
+        parser.error("--reuse verifies an existing receipt and takes no command")
+    if not args.reuse and not command:
         parser.error("an exact command is required after --")
 
-    if args.receipt.exists():
-        args.receipt.unlink()
     try:
         subject = _load_subject(args.subject_record)
         subject_digest = proof_subject_digest(subject)
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
+    if args.reuse:
+        try:
+            payload = _load_receipt(args.receipt)
+        except (TypeError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_SUBJECT_MISMATCH
+        if (
+            payload.get("schemaVersion") != 1
+            or payload.get("result") != "passed"
+            or payload.get("exit_code") != 0
+            or payload.get("subject_digest") != subject_digest
+        ):
+            print("receipt does not prove this exact subject", file=sys.stderr)
+            return EXIT_SUBJECT_MISMATCH
+        errors = verify_subject_files(subject)
+        if errors:
+            print(f"subject does not match live files: {', '.join(errors)}", file=sys.stderr)
+            return EXIT_SUBJECT_MISMATCH
+        return 0
+
+    if args.receipt.exists():
+        args.receipt.unlink()
     errors = verify_subject_files(subject)
     if errors:
         print(f"subject does not match live files: {', '.join(errors)}", file=sys.stderr)
