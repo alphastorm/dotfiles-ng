@@ -891,8 +891,8 @@ def capture_trace_receipt(
     front = _agent_frontmatter(agent_definition)
     requested_model, effort = _selector_parts(selector)
     agent_tools = _contract_tools(evidence_delivery)
-    allowed_tools = [*agent_tools, "yield"]
-    declared_tools = _declared_contract_tools(evidence_delivery)
+    expected_allowed_tools = [*agent_tools, "yield"]
+    contract_declared_tools = _declared_contract_tools(evidence_delivery)
     required_tools = {"yield"} | ({"read"} if evidence_delivery == "repository" else set())
     if front.get("name") != agent:
         raise TraceCanaryError(f"agent definition names {front.get('name')!r}, not {agent!r}")
@@ -913,13 +913,30 @@ def capture_trace_receipt(
     sessions = [row for row in rows if row.get("type") == "session_init"]
     if len(sessions) != 1:
         raise TraceCanaryError(f"trace must contain one session_init, got {len(sessions)}")
-    if sessions[0].get("allowedTools") != allowed_tools:
+    # OMP 17.2 Task traces omit `allowedTools` and include global Hub/MCP
+    # declarations. Preserve that full observed surface in the receipt, but judge
+    # actual calls against the reviewer contract; using any extra tool still fails.
+    runtime_declared_tools = sessions[0].get("tools")
+    if (
+        not isinstance(runtime_declared_tools, list)
+        or any(not isinstance(tool, str) or not tool for tool in runtime_declared_tools)
+        or len(runtime_declared_tools) != len(set(runtime_declared_tools))
+    ):
         raise TraceCanaryError(
-            f"allowed tools must be {allowed_tools!r}, got {sessions[0].get('allowedTools')!r}"
+            f"declared tools must be a unique string list, got {runtime_declared_tools!r}"
         )
-    if sessions[0].get("tools") != declared_tools:
+    missing_contract_tools = [
+        tool for tool in contract_declared_tools if tool not in runtime_declared_tools
+    ]
+    if missing_contract_tools:
         raise TraceCanaryError(
-            f"declared tools must be {declared_tools!r}, got {sessions[0].get('tools')!r}"
+            f"declared tools are missing contract tools {missing_contract_tools!r}"
+        )
+    runtime_allowed_tools = sessions[0].get("allowedTools")
+    if runtime_allowed_tools is not None and runtime_allowed_tools != expected_allowed_tools:
+        raise TraceCanaryError(
+            f"allowed tools must be {expected_allowed_tools!r}, got "
+            f"{runtime_allowed_tools!r}"
         )
     model_changes = [row.get("model") for row in rows if row.get("type") == "model_change"]
     if not model_changes or any(model != requested_model for model in model_changes):
@@ -950,7 +967,7 @@ def capture_trace_receipt(
         raise TraceCanaryError("trace has no served model telemetry")
 
     attempts, executions = _trace_tool_names(rows)
-    allowed = set(declared_tools)
+    allowed = set(contract_declared_tools)
     forbidden_attempts = [name for name in attempts if name not in allowed]
     forbidden_executions = [name for name in executions if name not in allowed]
     failures: list[str] = []
@@ -993,7 +1010,7 @@ def capture_trace_receipt(
         "evidence_delivery": evidence_delivery,
         "agent_tools": agent_tools,
         "served_models": sorted(served),
-        "declared_tools": declared_tools,
+        "declared_tools": runtime_declared_tools,
         "tool_attempts": attempts,
         "tool_executions": executions,
         "forbidden_tool_attempts": len(forbidden_attempts),
@@ -1027,7 +1044,7 @@ def validate_trace_receipt(
         )
     requested_model, effort = _selector_parts(selector)
     agent_tools = _contract_tools(evidence_delivery)
-    declared_tools = _declared_contract_tools(evidence_delivery)
+    contract_declared_tools = _declared_contract_tools(evidence_delivery)
     required_tools = {"yield"} | ({"read"} if evidence_delivery == "repository" else set())
     sha = hashlib.sha256(agent_definition.read_bytes()).hexdigest()
     expected = {
@@ -1040,7 +1057,6 @@ def validate_trace_receipt(
         "evidence_delivery": evidence_delivery,
         "agent_tools": agent_tools,
         "served_models": [requested_model],
-        "declared_tools": declared_tools,
         "forbidden_tool_attempts": 0,
         "forbidden_tool_executions": 0,
         "fallback_used": False,
@@ -1052,14 +1068,34 @@ def validate_trace_receipt(
         for key, value in expected.items()
         if receipt.get(key) != value
     ]
-    allowed = set(declared_tools)
+    runtime_declared_tools = receipt.get("declared_tools")
+    if (
+        not isinstance(runtime_declared_tools, list)
+        or any(not isinstance(tool, str) or not tool for tool in runtime_declared_tools)
+        or len(runtime_declared_tools) != len(set(runtime_declared_tools))
+    ):
+        failures.append(
+            f"declared_tools must be a unique string list, got "
+            f"{runtime_declared_tools!r}"
+        )
+    else:
+        missing_contract_tools = [
+            tool for tool in contract_declared_tools if tool not in runtime_declared_tools
+        ]
+        if missing_contract_tools:
+            failures.append(
+                f"declared_tools is missing contract tools {missing_contract_tools!r}"
+            )
+    allowed = set(contract_declared_tools)
     for key in ("tool_attempts", "tool_executions"):
         values = receipt.get(key)
         if not isinstance(values, list) or not values:
             failures.append(f"{key} must be a non-empty list, got {values!r}")
             continue
         if any(not isinstance(value, str) or value not in allowed for value in values):
-            failures.append(f"{key} contains a tool outside {declared_tools!r}: {values!r}")
+            failures.append(
+                f"{key} contains a tool outside {contract_declared_tools!r}: {values!r}"
+            )
         missing_tools = sorted(required_tools - set(values))
         if missing_tools:
             failures.append(f"{key} is missing required tools {missing_tools!r}")

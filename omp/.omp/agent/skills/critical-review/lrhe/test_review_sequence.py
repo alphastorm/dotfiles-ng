@@ -15,6 +15,7 @@ import review_checks
 import make_receipt
 from qualification import (
     QualificationError,
+    READ_ONLY_REPOSITORY_TOOLS,
     live_reviewers,
     load_qualification,
     validate_qualification,
@@ -520,6 +521,14 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
     grok = next(item for item in live_reviewers(document, "initial") if item.family == "grok")
     assert grok.model == "xai-oauth/grok-4.5:xhigh"
     assert grok.evidence_delivery == "repository"
+    glm = next(
+        item
+        for item in live_reviewers(document, "targeted-refuter")
+        if item.family == "glm"
+    )
+    assert glm.model == "opencode-go/glm-5.2:max"
+    assert glm.evidence_delivery == "repository"
+    assert reviewers["glm"]["tools"] == list(READ_ONLY_REPOSITORY_TOOLS)
 
 
 @pytest.mark.parametrize("group", ("initialCritics", "targetedRefuters"))

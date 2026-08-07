@@ -307,13 +307,19 @@ task with `schemaMode: strict`. Give it only:
 
 ```text
 Claim and finding ID:
-Exact supporting evidence:
-Exact counterevidence:
+Supporting claim and exact repository anchors:
+Counterevidence and exact repository anchors:
 Lead verification already performed:
-Repository epoch and packet:
+Repository packet path and immutable epoch:
 Question that must be answered:
 Permitted read-only verification methods:
 ```
+
+For `repository` delivery, pass anchors and the packet path, not copied source.
+Require the refuter to inspect the linked implementation with its read-only
+repository tools; do not inline the diff, surrounding code, or a substitute source
+excerpt. If a future resolver returns `inline` delivery, follow the general inline
+packet rules above instead.
 
 Do not provide the original reviews, reviewer identities, vote counts, or
 rhetoric. Ask the refuter to falsify the single normalized claim, not to conduct

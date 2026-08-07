@@ -19,10 +19,12 @@ from argparse import Namespace
 from pathlib import Path
 
 import pytest
+import yaml
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 import run_review  # noqa: E402
+from qualification import READ_ONLY_REPOSITORY_TOOLS  # noqa: E402
 
 SKILL = Path.home() / ".omp/agent/skills/critical-review"
 DATA = SKILL / "lrhe-data"
@@ -512,20 +514,28 @@ def test_a_replacement_run_names_what_it_replaces(tmp_path):
     assert status["dispatch_policy_digest"] == "sha256:enforced-v1"
 
 
-def test_every_floor_reviewer_declares_an_empty_tool_surface():
+def test_every_floor_reviewer_declares_a_sanctioned_tool_surface():
     """The control is the declaration, and nothing else in this repository can hold it.
 
     The packet text asking a reviewer not to read the tree is advisory; a headless agent
     at approval mode yolo will use whatever it was handed. `read` also accepts URLs, so
     declaring it granted network egress and bypassed the provider allowlist -- which is
-    how a screen reviewer reached its item's own fix commit on GitHub.
+    how a screen reviewer reached its item's own fix commit on GitHub. Inline critics
+    therefore declare no tools at all. The one sanctioned exception is repository
+    evidence delivery: a repository-backed refuter declares exactly the read-only
+    repository surface that `qualification.validate_qualification` enforces per
+    delivery, and its canary trace receipt judges every actual call against that same
+    contract.
     """
     agents = Path.home() / ".omp/agent/agents"
     defs = sorted(agents.glob("review-*-floor.md"))
     assert len(defs) >= 3, f"expected the floor reviewer definitions in {agents}"
     for path in defs:
-        front = path.read_text().split("---")[1]
-        assert "tools: []" in front, f"{path.name} declares a tool surface"
+        front = yaml.safe_load(path.read_text().split("---")[1])
+        tools = front.get("tools")
+        assert tools in ([], list(READ_ONLY_REPOSITORY_TOOLS)), (
+            f"{path.name} declares an unsanctioned tool surface: {tools!r}"
+        )
 
 
 def test_a_malformed_call_that_named_no_tool_is_not_a_breach(tmp_path):

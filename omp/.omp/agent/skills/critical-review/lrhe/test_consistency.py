@@ -1180,6 +1180,8 @@ def _write_trace(
     served: str = "grok-4.5",
     attempted: str | tuple[str, ...] = "yield",
     executed: str | tuple[str, ...] = "yield",
+    runtime_extra_tools: tuple[str, ...] = (),
+    emit_allowed_tools: bool = True,
 ) -> None:
     attempts = [attempted] if isinstance(attempted, str) else list(attempted)
     executions = [executed] if isinstance(executed, str) else list(executed)
@@ -1198,8 +1200,12 @@ def _write_trace(
         },
         {
             "type": "session_init",
-            "tools": declared_tools,
-            "allowedTools": [*agent_tools, "yield"],
+            "tools": [*declared_tools, *runtime_extra_tools],
+            **(
+                {"allowedTools": [*agent_tools, "yield"]}
+                if emit_allowed_tools
+                else {}
+            ),
             "timestamp": "2026-07-30T00:00:02Z",
         },
         {
@@ -1283,6 +1289,57 @@ def test_trace_receipt_proves_repository_read_and_read_only_surface(tmp_path):
     assert validated["agent_tools"] == ["read", "grep", "glob", "lsp", "ast_grep"]
     assert validated["declared_tools"] == ["read", "grep", "glob", "yield"]
     assert "read" in validated["tool_executions"]
+
+
+def test_repository_trace_receipt_records_current_task_runtime_tools(tmp_path):
+    selector = "xai-oauth/grok-4.5:xhigh"
+    agent = tmp_path / "review-grok.md"
+    trace = tmp_path / "trace.jsonl"
+    receipt_path = tmp_path / "receipt.json"
+    _write_trace_agent(agent, selector, "repository")
+    _write_trace(
+        trace,
+        evidence_delivery="repository",
+        attempted=("read", "yield"),
+        executed=("read", "yield"),
+        runtime_extra_tools=("hub", "mcp__node_repl_js"),
+        emit_allowed_tools=False,
+    )
+    receipt = canary.capture_trace_receipt(
+        trace, agent, "review-grok", selector, "repository"
+    )
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    validated = canary.validate_trace_receipt(
+        receipt_path, agent, "review-grok", selector, "repository"
+    )
+    assert validated["declared_tools"] == [
+        "read",
+        "grep",
+        "glob",
+        "yield",
+        "hub",
+        "mcp__node_repl_js",
+    ]
+    assert validated["forbidden_tool_attempts"] == 0
+
+
+def test_repository_trace_receipt_rejects_runtime_extra_tool_use(tmp_path):
+    selector = "xai-oauth/grok-4.5:xhigh"
+    agent = tmp_path / "review-grok.md"
+    trace = tmp_path / "trace.jsonl"
+    _write_trace_agent(agent, selector, "repository")
+    _write_trace(
+        trace,
+        evidence_delivery="repository",
+        attempted=("read", "mcp__node_repl_js", "yield"),
+        executed=("read", "mcp__node_repl_js", "yield"),
+        runtime_extra_tools=("mcp__node_repl_js",),
+        emit_allowed_tools=False,
+    )
+    with pytest.raises(canary.TraceCanaryError, match="forbidden_tool_attempts"):
+        canary.capture_trace_receipt(
+            trace, agent, "review-grok", selector, "repository"
+        )
 
 
 def test_repository_trace_receipt_requires_an_observed_read(tmp_path):
