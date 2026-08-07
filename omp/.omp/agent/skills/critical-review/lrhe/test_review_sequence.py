@@ -917,3 +917,102 @@ def test_epoch_bind_emits_a_verifiable_history_row(tmp_path: Path, capsys) -> No
     reasons = readiness_errors(record)
     assert "invalid-history-row:0:record-binding" not in reasons
     assert "parent-review-not-latest-history" not in reasons
+
+
+def test_epoch_ledger_normalizes_reviewer_yields(tmp_path: Path, capsys) -> None:
+    """One row per returned item, mechanical columns filled, judgment left empty.
+
+    Severity orders the skeleton (P0 first), U-rows prefill `unresolved` as the
+    Result, and impact text survives inside the Finding cell -- normalization
+    must not discard reviewer signal the lead still has to verify.
+    """
+    claude = tmp_path / "claude.json"
+    grok = tmp_path / "grok.json"
+    _write_json(
+        claude,
+        {
+            "summary": "two findings",
+            "evidence": [
+                "R1|P1|conf=0.85|claim=rollback deletes restore.sh|evidence=deploy/rollback.sh:41-58"
+                "|impact=failed rollback strands state|verify=rehearse in scratch clone",
+            ],
+            "unresolved": [
+                "U1|P2|conf=0.6|question=does retry re-enter after SIGTERM?"
+                "|missing=signal path for worker.py:120-160|verify=send SIGTERM during retry",
+            ],
+        },
+    )
+    _write_json(
+        grok,
+        {
+            "summary": "one finding",
+            "evidence": [
+                "R1|P0|conf=1.00|claim=token comparison is not constant time|evidence=auth.py:1-2"
+                "|impact=timing oracle|verify=statistical timing test",
+            ],
+            "unresolved": [],
+        },
+    )
+    out = tmp_path / "ledger.md"
+    code = epoch.main(
+        [
+            "ledger",
+            "--member", f"claude={claude}",
+            "--member", f"grok={grok}",
+            "--review-id", "CR-test",
+            "--out", str(out),
+        ]
+    )
+    assert code == 0
+    emitted = json.loads(capsys.readouterr().out)
+    assert (emitted["rows"], emitted["unresolved_rows"]) == (3, 1)
+    assert emitted["members"] == ["claude", "grok"]
+
+    text = out.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    assert lines[0] == "# Finding ledger — CR-test"
+    body = [line for line in lines if line.startswith("| ") and " --- " not in line]
+    assert body[0].startswith("| Finding | Sources |")
+    assert "grok-R1" in body[1], "P0 must sort before P1"
+    assert "claude-R1" in body[2]
+    assert "impact: failed rollback strands state" in body[2]
+    assert "claude-U1" in body[3]
+    assert "| missing: signal path for worker.py:120-160 |" in body[3]
+    assert "| unresolved |" in body[3]
+
+
+def test_epoch_ledger_refuses_bad_rows_existing_output_and_bad_members(tmp_path: Path) -> None:
+    """A malformed row refuses the whole scaffold instead of dropping feedback."""
+    malformed = tmp_path / "claude.json"
+    _write_json(
+        malformed,
+        {"summary": "s", "evidence": ["R1|P1|conf=0.855|claim=x|evidence=y|impact=z|verify=v"],
+         "unresolved": []},
+    )
+    out = tmp_path / "ledger.md"
+    code = epoch.main(["ledger", "--member", f"claude={malformed}", "--out", str(out)])
+    assert code == epoch.EXIT_PRECONDITION
+    assert not out.exists(), "a refused scaffold must write nothing"
+
+    valid = tmp_path / "grok.json"
+    _write_json(valid, {"summary": "s", "evidence": [], "unresolved": []})
+    out.write_text("lead judgment already here\n", encoding="utf-8")
+    code = epoch.main(["ledger", "--member", f"grok={valid}", "--out", str(out)])
+    assert code == epoch.EXIT_PRECONDITION
+    assert out.read_text(encoding="utf-8") == "lead judgment already here\n"
+
+    fresh = tmp_path / "fresh.md"
+    assert (
+        epoch.main(
+            ["ledger", "--member", f"grok={valid}", "--member", f"grok={valid}",
+             "--out", str(fresh)]
+        )
+        == epoch.EXIT_PRECONDITION
+    )
+    incomplete = tmp_path / "incomplete.json"
+    _write_json(incomplete, {"summary": "s", "evidence": []})
+    assert (
+        epoch.main(["ledger", "--member", f"kimi={incomplete}", "--out", str(fresh)])
+        == epoch.EXIT_PRECONDITION
+    )
+    assert not fresh.exists()

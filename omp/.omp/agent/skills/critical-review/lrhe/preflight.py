@@ -404,7 +404,30 @@ def check_reviewer_evidence_contracts() -> Result:
     problems: list[str] = []
     checked = 0
     for family, value in sorted(qualified.items()):
-        if not isinstance(value, dict) or "canaryReceipt" not in value:
+        if not isinstance(value, dict):
+            continue
+        if "canaryReceipt" not in value:
+            # Shadow and evaluation lanes still resolve through their agent
+            # definition; a silent model drift there corrupts every corpus row
+            # attributed to the lane. No receipt exists to bind bytes, so the
+            # definition file and its pinned model are verified directly.
+            enabled = (
+                value.get("evaluationEnabled") is True
+                or value.get("dispatchEnabled") is True
+            )
+            agent = value.get("agent")
+            selector = value.get("model")
+            if enabled and isinstance(agent, str) and isinstance(selector, str):
+                try:
+                    front = canary._agent_frontmatter(AGENTS / f"{agent}.md")
+                except canary.TraceCanaryError as exc:
+                    problems.append(f"{family}: {exc}")
+                    continue
+                if front.get("model") != [selector]:
+                    problems.append(
+                        f"{family}: agent model {front.get('model')!r} != "
+                        f"qualification [{selector!r}]"
+                    )
             continue
         checked += 1
         agent = value.get("agent")

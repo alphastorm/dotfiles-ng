@@ -3,7 +3,8 @@
 
 `scaffold` emits a pre-freeze triage draft, `freeze` binds the frozen subject
 digests into a record, `recheck` re-verifies the live tree against the frozen
-subject, and `bind` prints one sequence-history row for a prior epoch record.
+subject, `bind` prints one sequence-history row for a prior epoch record, and
+`ledger` normalizes reviewer yields into the finding-ledger skeleton.
 The tool computes and verifies; it never selects a dispatch action, never
 calls a provider, and never chooses what enters the artifact. The lead still
 materializes `artifact.diff` and owns every inclusion and exclusion decision.
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Mapping, Sequence, cast
@@ -27,6 +29,29 @@ from review_sequence import (
 )
 
 EXIT_PRECONDITION = 10
+
+LEDGER_COLUMNS = (
+    "Finding",
+    "Sources",
+    "Evidence",
+    "Severity",
+    "Confidence",
+    "Verification",
+    "Result",
+    "Disposition",
+    "Change",
+    "Rationale",
+)
+_CONF = r"0(?:\.[0-9]{1,2})?|1(?:\.0{1,2})?"
+EVIDENCE_ROW = re.compile(
+    rf"^R(?P<row>[1-9][0-9]*)\|P(?P<severity>[0-3])\|conf=(?P<conf>{_CONF})"
+    r"\|claim=(?P<claim>.+?)\|evidence=(?P<evidence>.+?)"
+    r"\|impact=(?P<impact>.+?)\|verify=(?P<verify>.+)$"
+)
+UNRESOLVED_ROW = re.compile(
+    rf"^U(?P<row>[1-9][0-9]*)\|P(?P<severity>[0-3])\|conf=(?P<conf>{_CONF})"
+    r"\|question=(?P<question>.+?)\|missing=(?P<missing>.+?)\|verify=(?P<verify>.+)$"
+)
 
 DRAFT_TEMPLATE: dict[str, object] = {
     "parent_review_id": None,
@@ -192,6 +217,102 @@ def cmd_bind(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ledger(args: argparse.Namespace) -> int:
+    """Normalize reviewer yields into one finding-ledger skeleton.
+
+    Every evidence and unresolved item becomes one table row with the
+    mechanical columns filled -- Finding, Sources, Evidence, Severity,
+    Confidence, Verification, and `unresolved` prefilled as the Result of
+    U-rows. Result, Disposition, Change, and Rationale stay empty: they are
+    the lead's verification judgment, which this tool never performs. Rows
+    that fail the pinned pipe grammar refuse the whole scaffold rather than
+    dropping feedback silently.
+    """
+    errors: list[str] = []
+    members: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for spec in args.member:
+        family, separator, path = spec.partition("=")
+        family = family.strip()
+        if not separator or not family or not path:
+            errors.append(f"invalid-member-spec:{spec}")
+            continue
+        if family in seen:
+            errors.append(f"duplicate-member:{family}")
+        seen.add(family)
+        members.append((family, Path(path)))
+
+    rows: list[dict[str, str]] = []
+    for family, path in members:
+        try:
+            value: object = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"unreadable-member:{family}: {exc}")
+            continue
+        if not isinstance(value, dict) or not {"summary", "evidence", "unresolved"} <= set(value):
+            errors.append(
+                f"invalid-member-result:{family}: summary, evidence, and unresolved are required"
+            )
+            continue
+        for kind, pattern in (("evidence", EVIDENCE_ROW), ("unresolved", UNRESOLVED_ROW)):
+            items = value.get(kind)
+            if not isinstance(items, list) or any(not isinstance(item, str) for item in items):
+                errors.append(f"invalid-member-result:{family}: {kind} must be a string list")
+                continue
+            for index, item in enumerate(items):
+                match = pattern.fullmatch(item)
+                if match is None:
+                    errors.append(f"unparseable-row:{family}:{kind}[{index}]:{item[:60]}")
+                    continue
+                rows.append({"family": family, "kind": kind, **match.groupdict()})
+
+    if args.out.exists():
+        errors.append(f"ledger-already-exists:{args.out}")
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return EXIT_PRECONDITION
+
+    rows.sort(key=lambda row: (row["severity"], row["family"], row["kind"], int(row["row"])))
+    lines: list[str] = []
+    if args.review_id:
+        lines.extend((f"# Finding ledger — {args.review_id}", ""))
+    lines.append("| " + " | ".join(LEDGER_COLUMNS) + " |")
+    lines.append("|" + " --- |" * len(LEDGER_COLUMNS))
+    for row in rows:
+        if row["kind"] == "evidence":
+            finding = f"{row['family']}-R{row['row']} — {row['claim']} — impact: {row['impact']}"
+            evidence, result = row["evidence"], ""
+        else:
+            finding = f"{row['family']}-U{row['row']} — {row['question']}"
+            evidence, result = f"missing: {row['missing']}", "unresolved"
+        cells = (
+            finding,
+            row["family"],
+            evidence,
+            f"P{row['severity']}",
+            row["conf"],
+            row["verify"],
+            result,
+            "",
+            "",
+            "",
+        )
+        lines.append("| " + " | ".join(cells) + " |")
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    _emit(
+        {
+            "op": "ledger",
+            "out": str(args.out),
+            "members": sorted(seen),
+            "rows": len(rows),
+            "unresolved_rows": sum(1 for row in rows if row["kind"] == "unresolved"),
+        }
+    )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -227,6 +348,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     bind.add_argument("--record", type=Path, required=True)
     bind.add_argument("--action", choices=sorted(ACTIONS), required=True)
     bind.set_defaults(handler=cmd_bind)
+
+    ledger = commands.add_parser(
+        "ledger", help="normalize reviewer yields into a finding-ledger skeleton"
+    )
+    ledger.add_argument(
+        "--member",
+        action="append",
+        required=True,
+        metavar="FAMILY=RESULT.json",
+        help="reviewer family and its yielded summary/evidence/unresolved JSON",
+    )
+    ledger.add_argument("--review-id", default="")
+    ledger.add_argument("--out", type=Path, required=True)
+    ledger.set_defaults(handler=cmd_ledger)
 
     args = parser.parse_args(argv)
     return cast(int, args.handler(args))

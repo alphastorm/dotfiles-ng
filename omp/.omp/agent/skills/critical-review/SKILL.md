@@ -374,6 +374,20 @@ After the epoch digest recheck passes, create `~/.omp/agent/critical-review/<rev
 | Change | Exact resulting implementation or design change, or `none` |
 | Rationale | Why evidence supports the disposition |
 
+Scaffold the table mechanically; keep only the judgment manual:
+
+```bash
+python3 lrhe/epoch.py ledger --member claude=claude.json --member grok=grok.json \
+  --review-id <review-id> --out ledger.md
+```
+
+Each saved reviewer yield becomes one row per evidence and unresolved item with
+the mechanical columns filled and `unresolved` prefilled as the U-row Result;
+Result, Disposition, Change, and Rationale stay empty because they are the
+lead's verification, which the tool never performs. A row that fails the pinned
+grammar refuses the whole scaffold rather than dropping feedback silently; an
+existing `ledger.md` is never overwritten.
+
 Merge duplicates only when they share a root cause. Preserve every source ID on the merged row. Verify each cited source location before promoting a claim. Resolve important claims with the narrowest decisive evidence: a reproducer, failing test, call graph, interface implementation inventory, policy counterexample, migration rehearsal, rollback simulation, demonstrated authorization path, or concrete race schedule.
 
 Decision rules:

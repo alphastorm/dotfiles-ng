@@ -161,30 +161,45 @@ def _runs(items: list[dict], path: Path, judge_path: Path,
     judge_path.write_text("\n".join(json.dumps(j) for j in judge) + "\n")
 
 
-@pytest.fixture
-def scored(tmp_path: Path):
-    """corpus -> runs -> score -> analyse, with arm C and a 3-replicate arm T."""
-    corpus = tmp_path / "corpus.jsonl"
+@pytest.fixture(scope="module")
+def _scored_pipeline(tmp_path_factory):
+    """corpus -> runs -> score -> analyse, run once for the whole module.
+
+    The two subprocess stages cost ~5s per invocation and used to run once per
+    consuming test (~50s of a full suite). Every consumer either filters,
+    `.copy()`s, or writes derived frames into its own `tmp_path`, so the
+    artifacts are shareable; `scored` below still hands each test freshly
+    loaded frames, so even an accidental in-place edit cannot cross tests.
+    """
+    tmp = tmp_path_factory.mktemp("scored")
+    corpus = tmp / "corpus.jsonl"
     items = _corpus(corpus)
-    runs, judge = tmp_path / "runs.jsonl", tmp_path / "judge.jsonl"
+    runs, judge = tmp / "runs.jsonl", tmp / "judge.jsonl"
     _runs(items, runs, judge, ["claude", "gemini", "grok"], replicates=3)
 
-    claims_csv, runs_csv = tmp_path / "claims.csv", tmp_path / "runs.csv"
+    claims_csv, runs_csv = tmp / "claims.csv", tmp / "runs.csv"
     _run(["score_lrhe.py", "--corpus", str(corpus), "--runs", str(runs),
           "--judge", str(judge), "--experiment-id", EXPERIMENT_ID, "--panel-id", PANEL_ID,
           "--out-claims", str(claims_csv),
-          "--out-runs", str(runs_csv), "--out-report", str(tmp_path / "report.json")])
+          "--out-runs", str(runs_csv), "--out-report", str(tmp / "report.json")])
 
-    analysis = tmp_path / "analysis.json"
+    analysis = tmp / "analysis.json"
     _run(["analyze_lrhe.py", "--claims", str(claims_csv), "--runs", str(runs_csv),
           "--corpus", str(corpus), "--boot", "40", "--perm", "40",
           "--experiment-id", EXPERIMENT_ID, "--panel-id", PANEL_ID, "--out", str(analysis)])
+    return tmp
+
+
+@pytest.fixture
+def scored(_scored_pipeline):
+    """Fresh per-test views over the module-scoped pipeline artifacts."""
+    tmp = _scored_pipeline
     return {
-        "claims": pd.read_csv(claims_csv),
-        "runs": pd.read_csv(runs_csv),
-        "analysis": json.loads(analysis.read_text()),
-        "corpus": corpus,
-        "tmp": tmp_path,
+        "claims": pd.read_csv(tmp / "claims.csv"),
+        "runs": pd.read_csv(tmp / "runs.csv"),
+        "analysis": json.loads((tmp / "analysis.json").read_text()),
+        "corpus": tmp / "corpus.jsonl",
+        "tmp": tmp,
     }
 
 

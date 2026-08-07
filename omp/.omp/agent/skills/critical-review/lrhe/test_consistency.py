@@ -641,6 +641,47 @@ def test_evidence_contract_rejects_an_active_model_override_drift(tmp_path, monk
     assert "active override" in result.detail
 
 
+def test_receiptless_evaluation_lane_model_drift_fails_preflight(tmp_path, monkeypatch):
+    """kimi and deepseek carry no trace receipt, so nothing byte-pins their
+    definitions; the corpus still attributes every row to the lane's recorded
+    model. The contract check therefore verifies the definition file and its
+    pinned model even without a receipt, and ignores fully disabled lanes."""
+    _qualification(tmp_path, "opencode-go/kimi-k3")
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    _write_trace_agent(agents / "review-kimi-floor.md", "opencode-go/kimi-k3")
+    config = tmp_path / "config.yml"
+    config.write_text(
+        yaml.safe_dump({"task": {"agentModelOverrides": {}}}), encoding="utf-8"
+    )
+    monkeypatch.setattr(preflight, "SKILL", tmp_path)
+    monkeypatch.setattr(preflight, "AGENTS", agents)
+    monkeypatch.setattr(preflight, "CONFIG", config)
+
+    clean = preflight.check_reviewer_evidence_contracts()
+    assert clean.state == preflight.PASS, clean.detail
+
+    _write_trace_agent(agents / "review-kimi-floor.md", "opencode-go/kimi-k3-next")
+    drifted = preflight.check_reviewer_evidence_contracts()
+    assert drifted.state == preflight.FAIL
+    assert "kimi: agent model" in drifted.detail
+
+    (agents / "review-kimi-floor.md").unlink()
+    missing = preflight.check_reviewer_evidence_contracts()
+    assert missing.state == preflight.FAIL
+
+    document = yaml.safe_load((tmp_path / "qualification.yml").read_text(encoding="utf-8"))
+    document["reviewers"]["kimi"]["dispatchRole"] = "disabled"
+    document["reviewers"]["kimi"]["evaluationEnabled"] = False
+    document["liveDispatch"]["evaluationOnly"] = []
+    document["liveDispatch"]["disabled"] = ["kimi"]
+    (tmp_path / "qualification.yml").write_text(
+        yaml.safe_dump(document), encoding="utf-8"
+    )
+    disabled = preflight.check_reviewer_evidence_contracts()
+    assert disabled.state == preflight.PASS, disabled.detail
+
+
 # ------------------------------------------------------------------- canary
 
 
