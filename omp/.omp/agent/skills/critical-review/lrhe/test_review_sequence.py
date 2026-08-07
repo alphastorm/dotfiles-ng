@@ -757,6 +757,13 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
     assert glm.model == "opencode-go/glm-5.2:max"
     assert glm.evidence_delivery == "repository"
     assert reviewers["glm"]["tools"] == list(READ_ONLY_REPOSITORY_TOOLS)
+    canaries = [
+        str(entry["lastCanary"]) for entry in reviewers.values() if "lastCanary" in entry
+    ]
+    assert canaries, "no lane records lastCanary"
+    assert str(root["lastUpdated"]) >= max(canaries), (
+        "qualification lastUpdated predates its newest lastCanary"
+    )
 
 
 @pytest.mark.parametrize("group", ("initialCritics", "targetedRefuters"))

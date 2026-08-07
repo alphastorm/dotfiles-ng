@@ -556,6 +556,79 @@ def test_live_evidence_contract_matches_active_config_and_receipt():
     assert result.state == preflight.PASS, result.detail
 
 
+def test_probe_pins_bind_version_fixture_and_role(tmp_path):
+    """qualification.yml's probe pins are assertions until preflight re-checks them.
+
+    The cited prompt version must be versioned in repository-probes.yml, the
+    fixture must hash to its pin, the probe text must name that fixture, and
+    the probe's role must match the lane it qualifies -- exactly the drift
+    classes a hand-run requalification can produce.
+    """
+    data = tmp_path / "lrhe-data"
+    data.mkdir()
+    fixture = data / "repository-canary-parse.py"
+    fixture.write_text("def paginate():\n    return []\n", encoding="utf-8")
+    twin = data / "repository-canary-auth.py"
+    twin.write_bytes(fixture.read_bytes())
+    (data / "repository-probes.yml").write_text(
+        yaml.safe_dump(
+            {
+                "schemaVersion": 1,
+                "probes": {
+                    "live-repository-v6": {
+                        "role": "primary_critic",
+                        "assignment": "Review lrhe-data/repository-canary-parse.py only.",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    measured = {
+        "repositoryPromptVersion": "live-repository-v6",
+        "repositoryFixture": "lrhe-data/repository-canary-parse.py",
+        "repositoryFixtureSha256": freeze_lock._sha256_file(fixture),
+    }
+
+    assert preflight._probe_pin_problems("claude", measured, "primary_critic", tmp_path) == []
+
+    unversioned = {**measured, "repositoryPromptVersion": "live-repository-v2"}
+    assert any(
+        "not versioned" in problem
+        for problem in preflight._probe_pin_problems(
+            "claude", unversioned, "primary_critic", tmp_path
+        )
+    )
+
+    assert any(
+        "dispatchRole" in problem
+        for problem in preflight._probe_pin_problems(
+            "glm", measured, "targeted_refuter", tmp_path
+        )
+    )
+
+    unnamed = {**measured, "repositoryFixture": "lrhe-data/repository-canary-auth.py"}
+    assert any(
+        "never names" in problem
+        for problem in preflight._probe_pin_problems(
+            "claude", unnamed, "primary_critic", tmp_path
+        )
+    )
+
+    absent = preflight._probe_pin_problems(
+        "claude", measured, "primary_critic", tmp_path / "empty"
+    )
+    assert any("unreadable" in problem for problem in absent)
+
+    fixture.write_text("drifted\n", encoding="utf-8")
+    assert any(
+        "hashes" in problem
+        for problem in preflight._probe_pin_problems(
+            "claude", measured, "primary_critic", tmp_path
+        )
+    )
+
+
 @needs_agents
 def test_evidence_contract_rejects_an_active_model_override_drift(tmp_path, monkeypatch):
     config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))

@@ -1018,6 +1018,8 @@ def capture_trace_receipt(
         "fallback_used": False,
         "output_schema_valid": True,
         "session_file": str(trace),
+        # Mint-time provenance: the harness appends rows (e.g. park markers)
+        # to a session file after the yield, so this digest holds only at mint.
         "session_sha256": sha(trace),
         "agent_definition_sha256": sha(agent_definition),
         "observed_at": max(timestamps) if timestamps else "",
@@ -1102,6 +1104,9 @@ def validate_trace_receipt(
     for key in ("session_file", "session_sha256", "observed_at"):
         if not isinstance(receipt.get(key), str) or not receipt[key]:
             failures.append(f"{key} must be a non-empty string")
+    # Shape only, never a re-hash: the live session file legitimately grows
+    # after mint (see capture), so re-hashing here would fail every receipt
+    # whose session was later parked or reopened.
     digest = receipt.get("session_sha256")
     if isinstance(digest, str) and not re.fullmatch(r"[0-9a-f]{64}", digest):
         failures.append("session_sha256 must be a lowercase SHA-256 digest")

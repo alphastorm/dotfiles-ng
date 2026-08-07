@@ -29,6 +29,7 @@ manual steps, not executed -- a preflight that can spend is not a preflight.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sqlite3
@@ -319,6 +320,72 @@ def check_model_selectors() -> Result:
     return Result(PASS, f"{resolved} reviewer selectors resolve against the installed build")
 
 
+def _probe_pin_problems(
+    family: str,
+    measured: dict[str, object],
+    dispatch_role: object,
+    skill: Path,
+) -> list[str]:
+    """Verify a repository canary's probe-version and fixture pins.
+
+    The trace receipt proves conduct; these pins prove the dispatched probe
+    text and fixture are the versioned ones, so a requalification never
+    reconstructs either from memory. Until this check, every pin in
+    `qualification.yml` was an assertion nothing re-read.
+    """
+    problems: list[str] = []
+    version = measured.get("repositoryPromptVersion")
+    fixture = measured.get("repositoryFixture")
+    digest = measured.get("repositoryFixtureSha256")
+    if not isinstance(version, str) or not version:
+        problems.append(f"{family}: canary names no repositoryPromptVersion")
+        version = None
+    if not isinstance(fixture, str) or not fixture:
+        problems.append(f"{family}: canary names no repositoryFixture")
+        fixture = None
+    if fixture is not None:
+        fixture_path = skill / fixture
+        if not isinstance(digest, str) or not digest:
+            problems.append(f"{family}: canary pins no repositoryFixtureSha256")
+        elif not fixture_path.is_file():
+            problems.append(f"{family}: repository fixture {fixture} is unreadable")
+        else:
+            actual = hashlib.sha256(fixture_path.read_bytes()).hexdigest()
+            if actual != digest:
+                problems.append(
+                    f"{family}: repository fixture {fixture} hashes {actual}, "
+                    f"qualification pins {digest}"
+                )
+    if version is None:
+        return problems
+    probes_path = skill / "lrhe-data/repository-probes.yml"
+    try:
+        document = yaml.safe_load(probes_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        problems.append(
+            f"{family}: {version} is cited but repository-probes.yml is unreadable: {exc}"
+        )
+        return problems
+    probes = document.get("probes") if isinstance(document, dict) else None
+    entry = probes.get(version) if isinstance(probes, dict) else None
+    if not isinstance(entry, dict):
+        problems.append(f"{family}: {version} is not versioned in repository-probes.yml")
+        return problems
+    assignment = entry.get("assignment")
+    if not isinstance(assignment, str) or not assignment.strip():
+        problems.append(f"{family}: probe {version} has no assignment text")
+    elif fixture is not None and Path(fixture).name not in assignment:
+        problems.append(
+            f"{family}: probe {version} never names its pinned fixture {Path(fixture).name}"
+        )
+    role = entry.get("role")
+    if role != dispatch_role:
+        problems.append(
+            f"{family}: probe {version} role {role!r} != dispatchRole {dispatch_role!r}"
+        )
+    return problems
+
+
 def check_reviewer_evidence_contracts() -> Result:
     """Bind explicit evidence lanes to their active model, tools, and trace receipt."""
     try:
@@ -419,6 +486,10 @@ def check_reviewer_evidence_contracts() -> Result:
             if mismatched:
                 problems.append(
                     f"{family}: qualification canary disagrees with receipt on {mismatched}"
+                )
+            if evidence_delivery == "repository":
+                problems.extend(
+                    _probe_pin_problems(family, measured, value.get("dispatchRole"), SKILL)
                 )
     if problems:
         return Result(FAIL, "; ".join(problems))
