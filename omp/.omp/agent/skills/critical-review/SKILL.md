@@ -319,18 +319,69 @@ Resolve the panel immediately before dispatch:
 python3 lrhe/qualification.py initial
 ```
 
-Launch every returned member concurrently: fill one `task` batch up to the
-harness's review-agent cap, and dispatch any remainder in immediately
-consecutive `task` calls before reading anything back; no reviewer result is read
-until every member has settled. Do not launch calls that serialize independent
-reviews behind one another's output. Shared
-context names only the review ID, epoch, and independence rule; it must not be the
-only location of evidence needed by an `inline` member. Do not put reviewer output
-or an `agent://` handle in shared context. Use each resolver result's `agent`,
-`model`, and `evidence_delivery`; do not maintain a second live panel list.
+Use the eval kernel as the dispatcher, never as a review authority. Load the
+resolver's exact JSON result and the already-complete immutable assignments into
+eval state; do not retype, filter, reorder, or supplement the roster. Do not add a
+live `lrhe/dispatch.py` or another workflow framework. `workflowz` is generic
+guidance and does not replace this protocol.
 
-Each item must set `schemaMode: strict`, omit `outputSchema` so the agent's
-configured schema remains authoritative, and use this complete assignment shape:
+Dispatch every returned member in one Python `parallel()` wave. Its bounded pool
+follows the harness's `task.maxConcurrency`, and its return is the round-one
+barrier: no reviewer payload may enter the lead's context or a peer-visible file
+until every member has settled. Catch inside each branch so one failure cannot discard
+the successful handles:
+
+```python
+def dispatch_member(member):
+    family = member["family"]
+    try:
+        node = agent(
+            assignments[family],
+            agent=member["agent"],
+            label=f"{review_id}:{family}",
+            schema_mode="strict",
+            handle=True,
+        )
+        return {"family": family, "state": "completed", "node": node}
+    except Exception as exc:
+        return {
+            "family": family,
+            "state": "failed",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+round_one = parallel(
+    [lambda member=member: dispatch_member(member) for member in members]
+)
+receipts = [
+    {
+        "family": result["family"],
+        "state": result["state"],
+        "handle": result.get("node", {}).get("handle"),
+    }
+    for result in round_one
+]
+display(receipts)
+```
+
+`handle=True` retains the `agent://` identity but also returns text and structured
+data. Keep `round_one` in kernel state; display only the receipt projection above.
+Immediately run `epoch.py recheck` outside the cell. Only after it passes may a
+second eval cell write each completed `node["data"]` to `<family>.json`, after
+which the lead reads the files separately. A failed recheck makes every node stale.
+
+`parallel()` owns the critic barrier. `pipeline()` may make already-authorized
+mechanical stages readable, but it never substitutes for triage, provider
+authorization, freeze, receipts, the full gate, digest rechecks, or the ledger
+scaffold. An explicit turn budget is defense in depth, not an exact cost or
+cardinality bound; the resolver-owned roster remains the hard dispatch bound.
+`completion()` must never decide Result or Disposition. The standard path uses the
+deterministic `epoch.py ledger` scaffold rather than an LLM normalizer.
+
+Use each resolver result's `agent`, `model`, and `evidence_delivery`; do not
+maintain a second live panel list. Each `agent()` call must pass
+`schema_mode="strict"` and omit `schema` so the agent's configured schema remains
+authoritative. Use this complete assignment shape:
 
 ```text
 # Target
@@ -347,15 +398,19 @@ For `inline` delivery, paste the complete packet, diff or design, and line-numbe
 Return one schema-valid summary/evidence/unresolved object, at most 12 evidence items, exact anchors present in the supplied evidence, and explicit missing evidence for unresolved claims.
 ```
 
-Do not give reviewers caller-provided output schemas that weaken their agent schema. Do not disclose round-one responses between reviewers through messages, prompts, local files, or follow-up calls. Wait for every selected job to settle, then read each complete `agent://` result separately.
+Do not give reviewers caller-provided output schemas that weaken their agent
+schema. Do not disclose round-one responses between reviewers through messages,
+prompts, local files, follow-up calls, or eval display. After every selected branch
+settles and the epoch digest recheck passes, persist and read each complete result
+separately.
 
 Distinguish two failure classes when a member returns nothing usable. A
-dispatch-level failure — the harness rejected the batch item, or the job died
-or was interrupted before any terminal output — may be recovered exactly once
-per member per epoch by redispatching the same immutable assignment; record
-both attempts in the close report. A terminal schema-invalid result is not
-recoverable: it consumed that member's review, and the member is `missing` for
-the epoch. Never redispatch to shop for a different answer.
+dispatch-level failure — the eval bridge rejected the invocation, or the child died
+or was interrupted before any terminal output — may be recovered exactly once per
+member per epoch by redispatching the same immutable assignment; record both
+attempts in the close report. A terminal schema-invalid result is not recoverable:
+it consumed that member's review, and the member is `missing` for the epoch. Never
+redispatch to shop for a different answer.
 
 ## Finding ledger
 
