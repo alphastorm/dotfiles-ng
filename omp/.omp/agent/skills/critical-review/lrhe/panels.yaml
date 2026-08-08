@@ -124,6 +124,7 @@ experiments:
     lenses: [architecture, whole_repo, adversarial]
     families:
       - {family: claude, providerRoute: anthropic-subscription, requestedSelector: "anthropic/claude-opus-5:max"}
+      - {family: claude-opus, providerRoute: anthropic-subscription, requestedSelector: "anthropic/claude-opus-5:max"}
       - {family: gemini, providerRoute: google-antigravity,     requestedSelector: "google-antigravity/gemini-3.6-flash:high"}
       - {family: grok,   providerRoute: xai-oauth,              requestedSelector: "xai-oauth/grok-build"}
 
