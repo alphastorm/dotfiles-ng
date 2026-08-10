@@ -36,7 +36,7 @@ pytestmark = pytest.mark.skipif(
 
 def _args(**over) -> Namespace:
     base = dict(
-        item_id="S1-7e6f82f1", family="claude", lens="architecture", arm="C",
+        item_id="S1-7e6f82f1", family="gemini", lens="architecture", arm="C",
         experiment_id="lrhe-core-v1", classification="public_corpus",
         item_authorized=False, policy_id=None,
         corpus=CORPUS, packets=DATA / "packets.jsonl",
@@ -273,8 +273,8 @@ def test_prompts_emits_nothing_for_an_assignment_the_gates_refuse(spy, tmp_path)
     is reported and dropped rather than emitted with a warning nobody reads.
     """
     code, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "claude", "lens": "architecture"},
-        {"item_id": "does-not-exist", "family": "claude", "lens": "architecture"},
+        {"item_id": "S1-7e6f82f1", "family": "gemini", "lens": "architecture"},
+        {"item_id": "does-not-exist", "family": "gemini", "lens": "architecture"},
     ])
     assert code == run_review.EXIT_UNRESOLVED
     assert [r["run_key"].split("|")[0] for r in rows] == ["S1-7e6f82f1"]
@@ -290,7 +290,7 @@ def test_ingest_refuses_a_prompts_row_whose_rights_record_was_edited(spy, tmp_pa
     same check, and this is the test that they do.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "claude", "lens": "architecture"}])
+        {"item_id": "S1-7e6f82f1", "family": "gemini", "lens": "architecture"}])
     rows[0]["request"]["data_rights"]["egress_decision"] = "deny"
     prompts = tmp_path / "edited.jsonl"
     prompts.write_text(json.dumps(rows[0]) + "\n")
@@ -308,7 +308,7 @@ def test_ingest_refuses_a_prompts_row_whose_rights_record_was_edited(spy, tmp_pa
 def test_a_reply_through_the_agent_lane_becomes_a_valid_run_record(tmp_path):
     """The whole point of the path: a real reply, scored like any other run."""
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "claude", "lens": "architecture", "arm": "smoke"}])
+        {"item_id": "S1-7e6f82f1", "family": "gemini", "lens": "architecture", "arm": "smoke"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
     responses.write_text(json.dumps(_reply(rows[0])) + "\n")
@@ -331,7 +331,7 @@ def test_a_reply_that_breaks_the_reviewers_own_schema_is_recorded_as_such(tmp_pa
     and belongs in the record as `schema_valid: false`.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "claude", "lens": "architecture", "arm": "smoke"}])
+        {"item_id": "S1-7e6f82f1", "family": "gemini", "lens": "architecture", "arm": "smoke"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
     broken = _reply(rows[0])

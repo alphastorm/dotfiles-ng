@@ -404,13 +404,20 @@ prompts, local files, follow-up calls, or eval display. After every selected bra
 settles and the epoch digest recheck passes, persist and read each complete result
 separately.
 
-Distinguish two failure classes when a member returns nothing usable. A
+Distinguish three failure classes when a member returns nothing usable. A
 dispatch-level failure — the eval bridge rejected the invocation, or the child died
-or was interrupted before any terminal output — may be recovered exactly once per
-member per epoch by redispatching the same immutable assignment; record both
-attempts in the close report. A terminal schema-invalid result is not recoverable:
-it consumed that member's review, and the member is `missing` for the epoch. Never
-redispatch to shop for a different answer.
+or was interrupted before any terminal output — may use the protocol's single
+recovery allowance. An explicit provider-policy refusal before a schema-valid
+terminal review may use that same allowance: record the refusal and attempt metadata
+in the close report, re-run `epoch.py recheck` and the full frozen-record gate
+(`python3 lrhe/review_sequence.py review-record.json`), then redispatch the same
+immutable assignment to the same resolved agent and model. The allowance is exactly
+one total retry per member per epoch, not one retry per failure class. Never reword
+or reframe the assignment, change the frozen subject or evidence, reduce scope,
+change evidence delivery, or substitute a model or family. If that identical retry
+also fails or refuses, the member is `missing` for the epoch. A terminal
+schema-invalid result is not recoverable: it consumed that member's review, and the
+member is `missing` for the epoch. Never redispatch to shop for a different answer.
 
 ## Finding ledger
 
