@@ -15,22 +15,30 @@ Live reviewer membership and roles are configuration, not prose:
 
 - `skill://critical-review/qualification.yml` `liveDispatch` is the sole
   authoritative live panel definition;
-- `lrhe/qualification.py` is the sole executable resolver for that definition;
-- `leadFamily` records the accountable GPT lead and MUST NOT appear in either
-  `initialCritics` or `targetedRefuters`;
-- `initialCritics` and `targetedRefuters` are distinct dispatch roles;
+- `lrhe/qualification.py` is the sole executable resolver for that definition,
+  and it owns roster choice: it reads the frozen record and the immutable packet
+  and emits the selection manifest the dispatcher consumes verbatim;
+- `leadFamily` records the accountable GPT lead and MUST NOT appear in
+  `initialCritics`, `conditionalCritics`, or `targetedRefuters`;
+- `initialCritics` are unconditional: they run on every full council;
+- `conditionalCritics` are additive and record-selected. A conditional critic
+  dispatches only when the frozen record and packet satisfy its named eligibility
+  policy. It never replaces another member, never falls back to another family,
+  and its absence never shrinks the unconditional council;
+- `initialCritics`, `conditionalCritics`, and `targetedRefuters` are distinct
+  dispatch roles;
 - `evaluationOnly` lanes and every experiment in `lrhe/panels.yaml` never
   authorize live review dispatch.
 
 Before dispatch:
 
 1. Treat repository work and research as cloud-permitted by default. Block hosted review only when the user, repository, or applicable customer policy explicitly marks the task or material `NO_CLOUD`; do not infer a separate confidential or local-only category.
-2. Read `skill://critical-review/qualification.yml`. A provider is enabled only when its family is in the required `liveDispatch` role, its reviewer entry says `dispatchEnabled: true`, its canary and read-only gates pass, its exact model selector still resolves, and the packet authorizes that provider.
+2. Read `skill://critical-review/qualification.yml`. A provider is enabled only when its family is in the required `liveDispatch` role, its reviewer entry says `dispatchEnabled: true`, its canary and read-only gates pass, its exact model selector still resolves, and the packet authorizes that provider. A conditional critic additionally needs a fresh passed receipt for the exact scope being requested; a scope recorded `ineligible` is an explicit supported boundary, not a failure to work around.
 3. Treat an explicit provider list in the user's current `/skill:critical-review` request as authorization for only those providers and this review epoch.
 4. If hosted-provider authorization is absent or unclear, invoke Ask before transmitting material. Recommend the safest qualified subset and include a no-effect/non-cloud option. Never send `NO_CLOUD` material to a hosted reviewer.
 5. Never include credential values, private keys, tokens, cookies, environment dumps, secret files, or generated credential stores in a packet. A source file containing secret-handling code may be reviewed only when the chosen providers are authorized for it; redact actual values without changing the reviewed semantics.
 
-A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is `missing`, never `approved`. Do not substitute another GPT model for an unavailable external family.
+A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is `missing`, never `approved`. Do not substitute another GPT model for an unavailable external family. A conditional critic the resolver did not select is `not_selected/ineligible` — it is neither `missing` nor a failed member, and it never becomes a reason to re-run another family.
 
 ### Internal resource compatibility
 
@@ -203,8 +211,10 @@ A design epoch is a full council at near-zero ceremony:
   `known_open_questions`. They never spawn remediation epochs — remediation
   belongs to implementation reviews.
 
-The panel resolves through the same `python3 lrhe/qualification.py initial`
-call, and dispatch still requires the frozen full gate on the design record.
+The panel resolves through the same record-aware resolver call below, and
+dispatch still requires the frozen full gate on the design record. A `design`
+record resolves through `qualification.py initial`: `initial` names the
+full-council resolution, not the record's review mode.
 
 ## Freeze one review epoch
 
@@ -313,17 +323,35 @@ record; never maintain a second evidence count.
 
 ## Round one: independent concurrent critics
 
-Resolve the panel immediately before dispatch:
+Resolve the panel immediately before dispatch. The resolver reads the frozen
+record and the immutable packet, verifies that the packet names exactly that
+record path and digest, and writes one durable selection manifest:
 
 ```bash
-python3 lrhe/qualification.py initial
+python3 lrhe/qualification.py initial \
+  --record review-record.json \
+  --packet packet.md \
+  --out ~/.omp/agent/critical-review/<review-id>/panel-selection.json
 ```
 
+It prints exactly the bytes it wrote, validates against
+`lrhe/panel-selection.schema.json`, refuses to overwrite an existing manifest,
+refuses a session-local output path, and refuses to answer at all unless
+`lrhe/review_sequence.py` returns `full-council` for that record. The manifest
+binds the absolute record path, the record SHA-256, the proof-subject digest, and
+the packet path and SHA-256, so a record or packet edited after resolution no
+longer matches the roster it produced.
+
 Use the eval kernel as the dispatcher, never as a review authority. Load the
-resolver's exact JSON result and the already-complete immutable assignments into
-eval state; do not retype, filter, reorder, or supplement the roster. Do not add a
-live `lrhe/dispatch.py` or another workflow framework. `workflowz` is generic
-guidance and does not replace this protocol.
+manifest's `selected` array and the already-complete immutable assignments into
+eval state; do not retype, filter, reorder, or supplement the roster, and never
+re-derive membership from prose or from `qualification.yml` by hand. Each entry's
+`selectionClass` says whether the member is `unconditional` or `conditional`;
+neither class changes how its result is weighed, because there is no vote. Every
+`skipped` entry carries its sorted `reasonCodes` and is reported as
+`not_selected/ineligible` in the close report. Do not add a live
+`lrhe/dispatch.py` or another workflow framework. `workflowz` is generic guidance
+and does not replace this protocol.
 
 Dispatch every returned member in one Python `parallel()` wave. Its bounded pool
 follows the harness's `task.maxConcurrency`, and its return is the round-one
@@ -404,20 +432,33 @@ prompts, local files, follow-up calls, or eval display. After every selected bra
 settles and the epoch digest recheck passes, persist and read each complete result
 separately.
 
-Distinguish three failure classes when a member returns nothing usable. A
-dispatch-level failure — the eval bridge rejected the invocation, or the child died
-or was interrupted before any terminal output — may use the protocol's single
-recovery allowance. An explicit provider-policy refusal before a schema-valid
-terminal review may use that same allowance: record the refusal and attempt metadata
-in the close report, re-run `epoch.py recheck` and the full frozen-record gate
+Distinguish these outcomes when a member returns nothing usable. Only a
+dispatch-level failure may be retried:
+
+| Outcome | Retry | Final state |
+|---|---|---|
+| Resolver did not select a conditional critic | no dispatch | `not_selected/ineligible` |
+| Eval bridge rejected the invocation, or the child died or was interrupted before any terminal output | exactly one byte-identical retry, after `epoch.py recheck` and the full frozen-record gate both pass again | `completed`, or `missing/transport_failure` |
+| Explicit provider-policy refusal | none | `missing/provider_policy_refusal` |
+| Terminal output violates the strict schema | none | `invalid/schema_invalid` |
+| Served model differs from the exact requested selector | none, and never accepted | `invalid/model_mismatch` |
+| Epoch digests changed | no synthesis | every result stale |
+
+A provider-policy refusal is terminal for that member in this epoch. Retrying the
+same refused request on the same model reproduces the refusal, and the protocol's
+recovery allowance exists for transport failures, not for provider policy.
+Record the refusal category and attempt metadata in the close report and continue
+with the council that is already running.
+
+The transport allowance is exactly one total retry per member per epoch. Re-run
+`epoch.py recheck` and the full frozen-record gate
 (`python3 lrhe/review_sequence.py review-record.json`), then redispatch the same
-immutable assignment to the same resolved agent and model. The allowance is exactly
-one total retry per member per epoch, not one retry per failure class. Never reword
-or reframe the assignment, change the frozen subject or evidence, reduce scope,
-change evidence delivery, or substitute a model or family. If that identical retry
-also fails or refuses, the member is `missing` for the epoch. A terminal
-schema-invalid result is not recoverable: it consumed that member's review, and the
-member is `missing` for the epoch. Never redispatch to shop for a different answer.
+immutable assignment to the same resolved agent and model. Never reword or
+reframe the assignment, change the frozen subject or evidence, reduce scope,
+change evidence delivery, lower thinking level, or substitute a model or family.
+If that identical retry also fails, the member is `missing` for the epoch. Never
+redispatch to shop for a different answer, and never let one member's refusal
+cause another family to run twice.
 
 ## Finding ledger
 
@@ -495,7 +536,9 @@ adds another correlated draw. Its corpus and answer key are private
 
 Run a refutation only when the machine gate returns `action: targeted-refuter`
 for a readiness-complete `remediation` epoch. Resolve eligible
-reviewers with `python3 lrhe/qualification.py targeted-refuter`. There is at most
+reviewers with `python3 lrhe/qualification.py targeted-refuter`. That roster is
+fixed and separate: it never contains a conditional critic and takes no record or
+packet. There is at most
 one targeted refutation for the entire review sequence. Select one returned
 family that did not originate the claim when possible, then launch one reviewer
 task with `schemaMode: strict`. Give it only:
@@ -529,6 +572,7 @@ Recheck epoch digests once more before final disposition. Mark the review stale 
 - review ID and packet path;
 - exact epoch and digest status;
 - each selected reviewer's model family and `completed`, `missing`, or `invalid` state;
+- the selection manifest path and digest, plus every `not_selected/ineligible` lane with its reason codes;
 - ledger path;
 - every blocking or unresolved P0/P1;
 - accepted implementation/design changes and verification evidence;

@@ -45,9 +45,14 @@ import freeze_lock  # noqa: E402  -- needs the path above
 import canary  # noqa: E402
 import run_review  # noqa: E402
 from qualification import (  # noqa: E402
+    CONDITIONAL_POLICIES,
+    CONDITIONAL_ROLE,
+    READ_ONLY_REPOSITORY_TOOLS,
     QualificationError,
+    conditional_critics,
     load_qualification,
     reviewers as qualification_reviewers,
+    selector_model,
 )
 
 SKILL = Path.home() / ".omp/agent/skills/critical-review"
@@ -411,10 +416,7 @@ def check_reviewer_evidence_contracts() -> Result:
             # definition; a silent model drift there corrupts every corpus row
             # attributed to the lane. No receipt exists to bind bytes, so the
             # definition file and its pinned model are verified directly.
-            enabled = (
-                value.get("evaluationEnabled") is True
-                or value.get("dispatchEnabled") is True
-            )
+            enabled = value.get("evaluationEnabled") is True or value.get("dispatchEnabled") is True
             agent = value.get("agent")
             selector = value.get("model")
             if enabled and isinstance(agent, str) and isinstance(selector, str):
@@ -460,15 +462,15 @@ def check_reviewer_evidence_contracts() -> Result:
             )
         if front.get("tools") != tools:
             problems.append(
-                f"{family}: qualification tools {tools!r} != agent tools "
-                f"{front.get('tools')!r}"
+                f"{family}: qualification tools {tools!r} != agent tools {front.get('tools')!r}"
             )
         if front.get("thinkingLevel") != effort:
             problems.append(
                 f"{family}: thinkingLevel {front.get('thinkingLevel')!r} != selector effort {effort!r}"
             )
-        if "CRITICAL_REVIEWER_READ_ONLY_V1" not in text:
-            problems.append(f"{family}: agent is missing CRITICAL_REVIEWER_READ_ONLY_V1")
+        marker = _required_read_only_marker(value)
+        if marker not in text:
+            problems.append(f"{family}: agent is missing {marker}")
         isolated_marker = "CRITICAL_REVIEWER_INLINE_ISOLATED_V1"
         if evidence_delivery == "inline" and isolated_marker not in text:
             problems.append(f"{family}: inline agent is missing {isolated_marker}")
@@ -517,6 +519,301 @@ def check_reviewer_evidence_contracts() -> Result:
     if problems:
         return Result(FAIL, "; ".join(problems))
     return Result(PASS, f"{checked} reviewer evidence contract(s) match active config and trace")
+
+
+# A conditional critic's scoped cohort receipt. One file, because the promotion
+# question is about a cohort and not about a single lucky attempt: it carries the
+# aggregate routing and quality facts that no individual attempt can show, and it
+# references each attempt as its own `lrhe-live-review-trace-v2` receipt so the
+# existing per-attempt validator stays the only judge of per-attempt behaviour.
+COHORT_RECEIPT_KEYS = frozenset(
+    {
+        "schema",
+        "result",
+        "cohort_id",
+        "policy",
+        "scope",
+        "agent",
+        "requested_selector",
+        "requested_model",
+        "thinking_level",
+        "evidence_delivery",
+        "read_only_marker",
+        "agent_definition_sha256",
+        "risk_domain_scope",
+        "security_misroutes",
+        "forbidden_tool_attempts",
+        "forbidden_tool_executions",
+        "seeded_defects_found",
+        "seeded_defects_total",
+        "negative_control_false_positives",
+        "negative_control_attempts",
+        "provider_policy_refusals",
+        "fallback_used",
+        "attempts",
+        "observed_at",
+    }
+)
+COHORT_ATTEMPT_KEYS = frozenset({"attempt", "outcome", "receipt", "sha256"})
+# `model_mismatch` is its own outcome rather than a rate field: the exact
+# served-model gate is 100%, and a count of zero is checkable where a stated
+# percentage is only an assertion.
+COHORT_OUTCOMES = frozenset(
+    {
+        "completed",
+        "provider_policy_refusal",
+        "transport_failure",
+        "schema_invalid",
+        "model_mismatch",
+    }
+)
+
+
+def _required_read_only_marker(entry: dict) -> str:
+    """Return the read-only marker this lane's agent definition must carry.
+
+    A conditional critic carries its policy's marker instead of the general one.
+    The Fable architecture lane exists because the security-vocabulary boilerplate
+    was removed from its charter, so demanding the old marker would demand the
+    prose the lane was created to drop.
+    """
+    if entry.get("dispatchRole") != CONDITIONAL_ROLE:
+        return "CRITICAL_REVIEWER_READ_ONLY_V1"
+    eligibility = entry.get("eligibility")
+    declared = eligibility.get("policy") if isinstance(eligibility, dict) else None
+    policy = CONDITIONAL_POLICIES.get(declared) if isinstance(declared, str) else None
+    if policy is None:
+        return "CRITICAL_REVIEWER_READ_ONLY_V1"
+    return policy.read_only_marker
+
+
+def _cohort_problems(family: str, path: Path, definition: Path, critic) -> list[str]:
+    """Verify one scoped cohort receipt against its policy's promotion gates."""
+    policy = critic.policy
+    try:
+        cohort = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"{family}: scope cohort receipt is unreadable: {exc}"]
+    if not isinstance(cohort, dict):
+        return [f"{family}: scope cohort receipt must be an object"]
+    missing = COHORT_RECEIPT_KEYS - set(cohort)
+    extra = set(cohort) - COHORT_RECEIPT_KEYS
+    if missing or extra:
+        return [
+            f"{family}: scope cohort shape mismatch: "
+            f"missing={sorted(missing)}, extra={sorted(extra)}"
+        ]
+
+    selector = critic.reviewer.model
+    delivery = critic.reviewer.evidence_delivery
+    # Staleness is the whole point of re-hashing the definition here: an agent
+    # edited after its cohort ran is a lane qualified on a charter that no longer
+    # exists, and re-qualification is a fresh cohort rather than a prose edit.
+    expected = {
+        "schema": policy.cohort_schema,
+        "result": "passed",
+        "policy": policy.policy,
+        "scope": policy.required_scope,
+        "agent": critic.reviewer.agent,
+        "requested_selector": selector,
+        "requested_model": selector_model(selector),
+        "thinking_level": policy.thinking_level,
+        "evidence_delivery": delivery,
+        "read_only_marker": policy.read_only_marker,
+        "agent_definition_sha256": hashlib.sha256(definition.read_bytes()).hexdigest(),
+        "risk_domain_scope": list(policy.allowed_risk_domains),
+        "fallback_used": False,
+    }
+    problems = [
+        f"{family}: cohort {key}={cohort.get(key)!r}, expected {value!r}"
+        for key, value in expected.items()
+        if cohort.get(key) != value
+    ]
+    counters: dict[str, int] = {}
+    for key in (
+        "security_misroutes",
+        "forbidden_tool_attempts",
+        "forbidden_tool_executions",
+        "seeded_defects_found",
+        "seeded_defects_total",
+        "negative_control_false_positives",
+        "negative_control_attempts",
+        "provider_policy_refusals",
+    ):
+        value = cohort.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            problems.append(f"{family}: cohort {key} must be a non-negative integer")
+        else:
+            counters[key] = value
+    for key in ("cohort_id", "observed_at"):
+        if not isinstance(cohort.get(key), str) or not cohort[key].strip():
+            problems.append(f"{family}: cohort {key} must be a non-empty string")
+
+    attempts = cohort.get("attempts")
+    if not isinstance(attempts, list) or not attempts:
+        problems.append(f"{family}: cohort attempts must be a non-empty list")
+        return problems
+    outcomes: list[str] = []
+    for index, raw in enumerate(attempts):
+        prefix = f"{family}: cohort attempt[{index}]"
+        if not isinstance(raw, dict):
+            problems.append(f"{prefix} must be an object")
+            continue
+        if raw.get("attempt") != index + 1:
+            problems.append(f"{prefix} must be numbered {index + 1}, got {raw.get('attempt')!r}")
+        outcome = raw.get("outcome")
+        if outcome not in COHORT_OUTCOMES:
+            problems.append(f"{prefix} outcome must be one of {sorted(COHORT_OUTCOMES)}")
+            continue
+        outcomes.append(outcome)
+        if outcome != "completed":
+            if set(raw) != COHORT_ATTEMPT_KEYS - {"receipt", "sha256"}:
+                problems.append(
+                    f"{prefix} is {outcome} and must carry no receipt: a non-completed "
+                    "attempt has no passed trace to cite"
+                )
+            continue
+        if set(raw) != COHORT_ATTEMPT_KEYS:
+            problems.append(f"{prefix} fields must be {sorted(COHORT_ATTEMPT_KEYS)}")
+            continue
+        receipt_name = raw.get("receipt")
+        digest = raw.get("sha256")
+        if not isinstance(receipt_name, str) or not receipt_name.strip():
+            problems.append(f"{prefix} receipt must be a relative path")
+            continue
+        receipt_path = SKILL / receipt_name
+        if not isinstance(digest, str) or not receipt_path.is_file():
+            problems.append(f"{prefix} receipt {receipt_name} is missing or undigested")
+            continue
+        measured = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+        if measured != digest:
+            problems.append(f"{prefix} receipt digest drift: expected {digest}, got {measured}")
+            continue
+        try:
+            # The existing per-attempt validator, unchanged and unforked: it owns
+            # served model, declared and executed tools, schema validity, fallback,
+            # and the agent definition each attempt actually ran against.
+            canary.validate_trace_receipt(
+                receipt_path, definition, critic.reviewer.agent, selector, delivery
+            )
+        except canary.TraceCanaryError as exc:
+            problems.append(f"{prefix} receipt is not a passed trace: {exc}")
+
+    eligible = len(outcomes)
+    completed = sum(outcome == "completed" for outcome in outcomes)
+    matched = eligible - sum(outcome == "model_mismatch" for outcome in outcomes)
+    if eligible < policy.cohort_min_eligible_attempts:
+        problems.append(
+            f"{family}: cohort has {eligible} eligible attempt(s), fewer than the "
+            f"{policy.cohort_min_eligible_attempts} {policy.policy} requires"
+        )
+    if completed * 100 < policy.cohort_min_completion_percent * eligible:
+        problems.append(
+            f"{family}: cohort direct completion {completed}/{eligible} is below "
+            f"{policy.cohort_min_completion_percent}%"
+        )
+    if matched * 100 < policy.cohort_min_served_model_match_percent * eligible:
+        problems.append(
+            f"{family}: cohort served-model match {matched}/{eligible} is below "
+            f"{policy.cohort_min_served_model_match_percent}%"
+        )
+    if counters.get("security_misroutes", 1) > policy.cohort_max_security_misroutes:
+        problems.append(
+            f"{family}: cohort records {counters.get('security_misroutes')} security "
+            "misroute(s); the routing boundary admits none"
+        )
+    for key in ("forbidden_tool_attempts", "forbidden_tool_executions"):
+        if counters.get(key, 1) > policy.cohort_max_forbidden_tool_attempts:
+            problems.append(f"{family}: cohort records {counters.get(key)} {key}")
+    # Seeded-defect counts remain useful cohort diagnostics, but are not a
+    # promotion threshold. Exact-path and per-finding lexical matchers can
+    # undercount semantically correct findings; runtime integrity and guarded
+    # negative controls remain the fail-closed gates.
+    found = counters.get("seeded_defects_found", 0)
+    total = counters.get("seeded_defects_total", 0)
+    if total < 1:
+        problems.append(f"{family}: cohort measured no seeded defect")
+    elif found > total:
+        problems.append(f"{family}: cohort seeded-defect count {found}/{total} is impossible")
+    controls = counters.get("negative_control_attempts", 0)
+    false_positives = counters.get("negative_control_false_positives", 0)
+    if controls < 1:
+        problems.append(f"{family}: cohort ran no negative control")
+    elif false_positives * 100 > policy.cohort_max_negative_control_percent * controls:
+        problems.append(
+            f"{family}: cohort negative-control false positives {false_positives}/{controls} "
+            f"exceed {policy.cohort_max_negative_control_percent}%"
+        )
+    return problems
+
+
+def check_conditional_critic_scope() -> Result:
+    """Bind each conditional critic to a fresh scoped cohort receipt.
+
+    A conditional critic is additive, so this gate never blocks the unconditional
+    council: it fails the preflight that would activate the lane. Membership is
+    private configuration and scope is public policy, and this is where the two
+    are made to agree against bytes rather than against each other's prose.
+    """
+    try:
+        document = load_qualification(SKILL / "qualification.yml")
+        critics = conditional_critics(document)
+    except QualificationError as exc:
+        return Result(FAIL, str(exc))
+    if not critics:
+        return Result(SKIP, "no conditional critic is declared")
+    try:
+        config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        return Result(FAIL, f"active config cannot be read: {exc}")
+    overrides = ((config or {}).get("task") or {}).get("agentModelOverrides")
+    if not isinstance(overrides, dict):
+        return Result(FAIL, "active config has no task.agentModelOverrides mapping")
+
+    problems: list[str] = []
+    for critic in critics:
+        family = critic.reviewer.family
+        selector = critic.reviewer.model
+        agent = critic.reviewer.agent
+        definition = AGENTS / f"{agent}.md"
+        try:
+            front = canary._agent_frontmatter(definition)
+        except canary.TraceCanaryError as exc:
+            problems.append(f"{family}: {exc}")
+            continue
+        text = definition.read_text(encoding="utf-8")
+        if front.get("model") != [selector]:
+            problems.append(
+                f"{family}: agent model {front.get('model')!r} != qualification [{selector!r}]"
+            )
+        if front.get("thinkingLevel") != critic.policy.thinking_level:
+            problems.append(
+                f"{family}: thinkingLevel {front.get('thinkingLevel')!r} != "
+                f"{critic.policy.thinking_level!r}"
+            )
+        if overrides.get(agent) != selector:
+            problems.append(
+                f"{family}: active override {overrides.get(agent)!r} != qualification {selector!r}"
+            )
+        expected_tools = (
+            list(READ_ONLY_REPOSITORY_TOOLS)
+            if critic.reviewer.evidence_delivery == "repository"
+            else []
+        )
+        if front.get("tools") != expected_tools:
+            problems.append(
+                f"{family}: agent tools {front.get('tools')!r} != {expected_tools!r} for "
+                f"{critic.reviewer.evidence_delivery} delivery"
+            )
+        if critic.policy.read_only_marker not in text:
+            problems.append(f"{family}: agent is missing {critic.policy.read_only_marker}")
+        problems.extend(_cohort_problems(family, SKILL / critic.scope_receipt, definition, critic))
+    if problems:
+        return Result(FAIL, "; ".join(problems))
+    return Result(
+        PASS,
+        f"{len(critics)} conditional critic scope receipt(s) bind the live agent and cohort",
+    )
 
 
 def check_canary_ledger_integrity() -> Result:
@@ -676,6 +973,7 @@ GATES = (
     ("lanes held", check_lanes_held),
     ("model selectors", check_model_selectors),
     ("reviewer evidence contracts", check_reviewer_evidence_contracts),
+    ("conditional critic scope", check_conditional_critic_scope),
     ("canary ledger integrity", check_canary_ledger_integrity),
     ("omp version", check_omp_version),
     ("freeze lock", check_lock_state),
@@ -733,8 +1031,8 @@ def _judgeable() -> int:
     return sum(
         1
         for r in rows
-               if r.get("parse_status") != "fail"
-               and r.get("verdict") not in ("UNPARSED", "REFUTED")
+        if r.get("parse_status") != "fail"
+        and r.get("verdict") not in ("UNPARSED", "REFUTED")
         and not (str(r.get("has_anchor")) == "True" and str(r.get("anchor_paths_exist")) == "False")
     )
 
@@ -859,75 +1157,75 @@ def _authorization(kind: str) -> bool:
 MANUAL_STEPS = (
     (
         "upgrade OMP and restart the session",
-     "the reviewer definitions are version-sensitive and the lock must name the "
-     "version that actually runs",
+        "the reviewer definitions are version-sensitive and the lock must name the "
+        "version that actually runs",
         lambda r: r["omp version"].state != PASS,
     ),
     (
         "run the three canaries on every lane that has not had them",
-     "canary.py prompts, answered through the reviewer agent, then canary.py grade -- "
-     "structured output, real citations, empty-evidence abstention. A lane stays held "
-     "until all three pass, and `run` cannot qualify one: it refuses every transport "
-     "that could leave the machine, so its verdict is always `apparatus`. A lane that "
-     "was canaried and failed is parked, not outstanding: see its blockers",
+        "canary.py prompts, answered through the reviewer agent, then canary.py grade -- "
+        "structured output, real citations, empty-evidence abstention. A lane stays held "
+        "until all three pass, and `run` cannot qualify one: it refuses every transport "
+        "that could leave the machine, so its verdict is always `apparatus`. A lane that "
+        "was canaried and failed is parked, not outstanding: see its blockers",
         lambda r: _uncanaried_lanes() != [],
     ),
     (
         "freeze runs/LOCK.json, then run",
-     "freeze_lock.py freeze -- from committed trees, after everything that edits what "
-     "it hashes and before anything it has to vouch for. Qualification edits "
-     "qualification.yml and the terms snapshots, both of which the lock hashes, so a "
-     "lock taken before the steps above drifts before the first measured run",
+        "freeze_lock.py freeze -- from committed trees, after everything that edits what "
+        "it hashes and before anything it has to vouch for. Qualification edits "
+        "qualification.yml and the terms snapshots, both of which the lock hashes, so a "
+        "lock taken before the steps above drifts before the first measured run",
         lambda r: not LOCK.is_file(),
     ),
     (
         "the seven-item smoke pass",
-     "2xS1 + 2xS2 + 2xS3 + 1xS5, calibration items only, on an enabled lane. It is "
-     "the first thing to exercise ARVO build/PoC wiring and a real packet end to end, "
-     "and it is not a blind observation: do not score it unless the same condition is "
-     "rerun cold later",
+        "2xS1 + 2xS2 + 2xS3 + 1xS5, calibration items only, on an enabled lane. It is "
+        "the first thing to exercise ARVO build/PoC wiring and a real packet end to end, "
+        "and it is not a blind observation: do not score it unless the same condition is "
+        "rerun cold later",
         lambda r: not _has_rows(DATA / "runs-smoke.jsonl"),
     ),
     (
         "the twelve-item four-family screen",
-     "S1x4 + S2x3 + S3x2 + S4x2 + S5x1, frozen before any output exists, each item "
-     "run by kimi, glm and deepseek independently on arm OC_SCREEN, lens floor, a "
-     "fresh session and no peer output, plus the contamination probe per cell in a "
-     "separate cold session. MiniMax is held on repeated schema noncompliance and is "
-     "not one of the families. Do not prune on a 12-item recall ranking; drop a "
-     "challenger only for operational failure",
+        "S1x4 + S2x3 + S3x2 + S4x2 + S5x1, frozen before any output exists, each item "
+        "run by kimi, glm and deepseek independently on arm OC_SCREEN, lens floor, a "
+        "fresh session and no peer output, plus the contamination probe per cell in a "
+        "separate cold session. MiniMax is held on repeated schema noncompliance and is "
+        "not one of the families. Do not prune on a 12-item recall ranking; drop a "
+        "challenger only for operational failure",
         lambda r: not _has_rows(DATA / "runs-screen.jsonl"),
     ),
     (
         "record the promotion decision for kimi, glm and deepseek",
-     "the screen is evidence, not a verdict, and Commits 9 and 10 both spend real "
-     "quota on whichever lanes proceed. No lane met an early-drop condition; that is a "
-     "recommendation in lrhe-data/screen/RESULTS.md and not a decision. Write it to "
-     "authorizations/ with a principal and a date, the same way the risk acceptance "
-     "is recorded -- a permissive decision nobody owns is the thing that file exists "
-     "to stop",
+        "the screen is evidence, not a verdict, and Commits 9 and 10 both spend real "
+        "quota on whichever lanes proceed. No lane met an early-drop condition; that is a "
+        "recommendation in lrhe-data/screen/RESULTS.md and not a decision. Write it to "
+        "authorizations/ with a principal and a date, the same way the risk acceptance "
+        "is recorded -- a permissive decision nobody owns is the thing that file exists "
+        "to stop",
         lambda r: not _authorization("promotion"),
     ),
     (
         "the same-family null, three replicates",
-     "arm T_OC, family kimi, replicate rep1..rep3, lens floor, on the same twelve "
-     "screen items. Three and not the pre-registered four: the four is derived from a "
-     "four-family panel and MiniMax is held, so a four-sample null would make the "
-     "caught-set Jaccard and union-coverage comparison unmatched. Deviation recorded "
-     "in handoff/RECONCILIATION-2026-07-28.md",
+        "arm T_OC, family kimi, replicate rep1..rep3, lens floor, on the same twelve "
+        "screen items. Three and not the pre-registered four: the four is derived from a "
+        "four-family panel and MiniMax is held, so a four-sample null would make the "
+        "caught-set Jaccard and union-coverage comparison unmatched. Deviation recorded "
+        "in handoff/RECONCILIATION-2026-07-28.md",
         lambda r: not _has_rows(DATA / "runs-null-toc.jsonl"),
     ),
     (
         f"the 47-item floor panel ({_complete_against(DATA / 'runs-floor.jsonl', DATA / 'floor-manifest.jsonl')[0]}"
-     f"/{_complete_against(DATA / 'runs-floor.jsonl', DATA / 'floor-manifest.jsonl')[1]} reviews recorded)",
-     "the remaining 35 items for every promoted family, arm OC_FULL, panel "
-     "opencode-broad-v1, contamination probes continuing. Five declared batches of "
-     "seven, with the witness re-run at each boundary -- three replicates per family "
-     "from boundary 2 on, because one sample cannot be told apart from the run-to-run "
-     "spread the T_OC null measured. 105 reviews and 105 probes at three families, the "
-     "longest window anything here runs over, which is why provider_fingerprint exists "
-     "and why OpenCode exposing none is a stated risk rather than a closed control. "
-     "Commit 12's lens rotation is optional and decided from this panel's analysis",
+        f"/{_complete_against(DATA / 'runs-floor.jsonl', DATA / 'floor-manifest.jsonl')[1]} reviews recorded)",
+        "the remaining 35 items for every promoted family, arm OC_FULL, panel "
+        "opencode-broad-v1, contamination probes continuing. Five declared batches of "
+        "seven, with the witness re-run at each boundary -- three replicates per family "
+        "from boundary 2 on, because one sample cannot be told apart from the run-to-run "
+        "spread the T_OC null measured. 105 reviews and 105 probes at three families, the "
+        "longest window anything here runs over, which is why provider_fingerprint exists "
+        "and why OpenCode exposing none is a stated risk rather than a closed control. "
+        "Commit 12's lens rotation is optional and decided from this panel's analysis",
         lambda r: (
             _complete_against(DATA / "runs-floor.jsonl", DATA / "floor-manifest.jsonl")
             != (105, 105)
@@ -935,42 +1233,42 @@ MANUAL_STEPS = (
     ),
     (
         f"Fable adjudication ({_adjudicated()}/{_judgeable()} floor claims adjudicated)",
-     "two non-authoring judges per surviving claim, keyed on family: the pool is "
-     "claude/gemini/grok, disjoint from the OpenCode authors, so independence holds by "
-     "construction and the routes are unaffected by the opencode-go spending limit. "
-     "judge-output.schema.json is installed and reconciled -- the archived copy named "
-     "the matched label `matched_label_id` where the runner reads `label_id`, so a reply "
-     "valid against it would have been ingested with no label at all. `served_model` is "
-     "harvested from the session record and gated: a judgement from a model nobody "
-     "requested drops its whole claim, because one surviving judge is not a majority of "
-     "two",
-     # The schema existing is not the step being done. The first version of this
-     # predicate was `not judge-output.schema.json.is_file()`, so writing the file
-     # reported adjudication complete with 0 of 279 claims judged -- the same defect
-     # `ac4855e` fixed for the floor step, which called a panel one fifth finished done.
+        "two non-authoring judges per surviving claim, keyed on family: the pool is "
+        "claude/gemini/grok, disjoint from the OpenCode authors, so independence holds by "
+        "construction and the routes are unaffected by the opencode-go spending limit. "
+        "judge-output.schema.json is installed and reconciled -- the archived copy named "
+        "the matched label `matched_label_id` where the runner reads `label_id`, so a reply "
+        "valid against it would have been ingested with no label at all. `served_model` is "
+        "harvested from the session record and gated: a judgement from a model nobody "
+        "requested drops its whole claim, because one surviving judge is not a majority of "
+        "two",
+        # The schema existing is not the step being done. The first version of this
+        # predicate was `not judge-output.schema.json.is_file()`, so writing the file
+        # reported adjudication complete with 0 of 279 claims judged -- the same defect
+        # `ac4855e` fixed for the floor step, which called a panel one fifth finished done.
         lambda r: _adjudicated() < _judgeable(),
     ),
     (
         f"the kappa >= 0.70 human calibration ({_calibration()[0]}/{_calibration()[1]} "
-     f"labelled, kappa "
-     f"{'n/a' if _calibration()[2] is None else format(_calibration()[2], '.2f')})",
-     "the blinded packet is at lrhe-data/auto-reliability-v1/human-packet.csv: opaque "
-     "case ids and two blank columns, nothing that leaks item_id or the S4 trap prefix. "
-     "Fill `human_verdict` with CONFIRMED / PLAUSIBLE / FABRICATED (and `human_label_id` "
-     "on CONFIRMED), then:\n"
-     "       judge_lrhe.py kappa --calibration lrhe-data/auto-reliability-v1/human-packet.csv \\\n"
-     "         --judge lrhe-data/judge-floor-agg.jsonl \\\n"
-     "         --case-map lrhe-data/auto-reliability-v1/case-map.private.jsonl\n"
-     "     The gate is the frozen 60 `kind == case` rows; the 5 `case_supplement` rows in "
-     "that packet are reported separately and never enter kappa. Do NOT label "
-     "lrhe-data/judge-calibration-packet.csv -- it is the frozen selection manifest and "
-     "the `--selection` input to auto_reliability.py build. Until this passes, "
-     "`arm_critical_recall`, `unique_contribution` and the "
-     "leave-one-family-out deltas are provisional by the protocol's own terms -- "
-     "adjudicating 667 calls produced them faster, not more quotable. A separate step "
-     "from adjudication on purpose: with 315 of 315 claims judged the combined predicate "
-     "read done over a packet holding zero labelled rows, and preflight said nothing "
-     "manual remained",
+        f"labelled, kappa "
+        f"{'n/a' if _calibration()[2] is None else format(_calibration()[2], '.2f')})",
+        "the blinded packet is at lrhe-data/auto-reliability-v1/human-packet.csv: opaque "
+        "case ids and two blank columns, nothing that leaks item_id or the S4 trap prefix. "
+        "Fill `human_verdict` with CONFIRMED / PLAUSIBLE / FABRICATED (and `human_label_id` "
+        "on CONFIRMED), then:\n"
+        "       judge_lrhe.py kappa --calibration lrhe-data/auto-reliability-v1/human-packet.csv \\\n"
+        "         --judge lrhe-data/judge-floor-agg.jsonl \\\n"
+        "         --case-map lrhe-data/auto-reliability-v1/case-map.private.jsonl\n"
+        "     The gate is the frozen 60 `kind == case` rows; the 5 `case_supplement` rows in "
+        "that packet are reported separately and never enter kappa. Do NOT label "
+        "lrhe-data/judge-calibration-packet.csv -- it is the frozen selection manifest and "
+        "the `--selection` input to auto_reliability.py build. Until this passes, "
+        "`arm_critical_recall`, `unique_contribution` and the "
+        "leave-one-family-out deltas are provisional by the protocol's own terms -- "
+        "adjudicating 667 calls produced them faster, not more quotable. A separate step "
+        "from adjudication on purpose: with 315 of 315 claims judged the combined predicate "
+        "read done over a packet holding zero labelled rows, and preflight said nothing "
+        "manual remained",
         lambda r: (_calibration()[2] or 0.0) < 0.70,
     ),
 )

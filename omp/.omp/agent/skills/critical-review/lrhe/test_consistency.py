@@ -19,6 +19,7 @@ unchanged on a CI runner that has no access to it.
 from __future__ import annotations
 
 from argparse import Namespace
+import hashlib
 import json
 import re
 import sqlite3
@@ -49,12 +50,12 @@ SCHEMAS = sorted(HERE.glob("*.schema.json"))
 def _routes_in_panels() -> set[str]:
     return {f["providerRoute"] for e in PANELS["experiments"] for f in e["families"]}
 
+
 def test_auto_reliability_excludes_the_retired_local_qwen_lane():
     assert "qwen" not in auto_reliability.FAMILIES
     assert auto_reliability.REPEAT_FAMILIES == ("gpt",)
     assert all(
-        not row["selector"].startswith("nyc-pc/")
-        and row["agent"] != "judge-qwen-auto"
+        not row["selector"].startswith("nyc-pc/") and row["agent"] != "judge-qwen-auto"
         for row in auto_reliability.FAMILIES.values()
     )
 
@@ -380,7 +381,7 @@ def _qualification(path: Path, selector: str) -> None:
             encoding="utf-8",
         )
     document = {
-        "schemaVersion": 5,
+        "schemaVersion": qualification.SCHEMA_VERSION,
         "canaryLedgers": {
             "historical": {
                 "path": "lrhe-data/canary.jsonl",
@@ -403,9 +404,10 @@ def _qualification(path: Path, selector: str) -> None:
             },
         },
         "liveDispatch": {
-            "panelId": "test-panel",
+            "panelId": qualification.LIVE_PANEL_ID,
             "leadFamily": "gpt",
             "initialCritics": [],
+            "conditionalCritics": [],
             "targetedRefuters": [],
             "evaluationOnly": ["kimi"],
             "disabled": [],
@@ -426,17 +428,13 @@ def _qualification(path: Path, selector: str) -> None:
     (path / "qualification.yml").write_text(yaml.safe_dump(document), encoding="utf-8")
 
 
-def test_canary_ledger_integrity_allows_append_but_rejects_prefix_drift(
-    tmp_path, monkeypatch
-):
+def test_canary_ledger_integrity_allows_append_but_rejects_prefix_drift(tmp_path, monkeypatch):
     _qualification(tmp_path, "opencode-go/kimi-k3")
     monkeypatch.setattr(preflight, "SKILL", tmp_path)
 
     clean = preflight.check_canary_ledger_integrity()
     assert clean.state == preflight.PASS, clean.detail
-    pins = freeze_lock._canary_ledger_pins(
-        Namespace(qualification=tmp_path / "qualification.yml")
-    )
+    pins = freeze_lock._canary_ledger_pins(Namespace(qualification=tmp_path / "qualification.yml"))
     assert pins["live"]["path"] == "lrhe-data/canary-v3.jsonl"
 
     active = tmp_path / "lrhe-data/canary-v3.jsonl"
@@ -465,9 +463,7 @@ def test_canary_ledger_integrity_allows_append_but_rejects_prefix_drift(
     assert "drift" in drifted.detail
 
 
-def test_canary_writer_refuses_sealed_and_non_provider_protected_ledgers(
-    tmp_path, monkeypatch
-):
+def test_canary_writer_refuses_sealed_and_non_provider_protected_ledgers(tmp_path, monkeypatch):
     _qualification(tmp_path, "opencode-go/kimi-k3")
     monkeypatch.setattr(canary, "SKILL", tmp_path)
     monkeypatch.setattr(canary, "DATA", tmp_path / "lrhe-data")
@@ -602,30 +598,22 @@ def test_probe_pins_bind_version_fixture_and_role(tmp_path):
 
     assert any(
         "dispatchRole" in problem
-        for problem in preflight._probe_pin_problems(
-            "glm", measured, "targeted_refuter", tmp_path
-        )
+        for problem in preflight._probe_pin_problems("glm", measured, "targeted_refuter", tmp_path)
     )
 
     unnamed = {**measured, "repositoryFixture": "lrhe-data/repository-canary-auth.py"}
     assert any(
         "never names" in problem
-        for problem in preflight._probe_pin_problems(
-            "claude", unnamed, "primary_critic", tmp_path
-        )
+        for problem in preflight._probe_pin_problems("claude", unnamed, "primary_critic", tmp_path)
     )
 
-    absent = preflight._probe_pin_problems(
-        "claude", measured, "primary_critic", tmp_path / "empty"
-    )
+    absent = preflight._probe_pin_problems("claude", measured, "primary_critic", tmp_path / "empty")
     assert any("unreadable" in problem for problem in absent)
 
     fixture.write_text("drifted\n", encoding="utf-8")
     assert any(
         "hashes" in problem
-        for problem in preflight._probe_pin_problems(
-            "claude", measured, "primary_critic", tmp_path
-        )
+        for problem in preflight._probe_pin_problems("claude", measured, "primary_critic", tmp_path)
     )
 
 
@@ -651,9 +639,7 @@ def test_receiptless_evaluation_lane_model_drift_fails_preflight(tmp_path, monke
     agents.mkdir()
     _write_trace_agent(agents / "review-kimi-floor.md", "opencode-go/kimi-k3")
     config = tmp_path / "config.yml"
-    config.write_text(
-        yaml.safe_dump({"task": {"agentModelOverrides": {}}}), encoding="utf-8"
-    )
+    config.write_text(yaml.safe_dump({"task": {"agentModelOverrides": {}}}), encoding="utf-8")
     monkeypatch.setattr(preflight, "SKILL", tmp_path)
     monkeypatch.setattr(preflight, "AGENTS", agents)
     monkeypatch.setattr(preflight, "CONFIG", config)
@@ -675,11 +661,463 @@ def test_receiptless_evaluation_lane_model_drift_fails_preflight(tmp_path, monke
     document["reviewers"]["kimi"]["evaluationEnabled"] = False
     document["liveDispatch"]["evaluationOnly"] = []
     document["liveDispatch"]["disabled"] = ["kimi"]
-    (tmp_path / "qualification.yml").write_text(
-        yaml.safe_dump(document), encoding="utf-8"
-    )
+    (tmp_path / "qualification.yml").write_text(yaml.safe_dump(document), encoding="utf-8")
     disabled = preflight.check_reviewer_evidence_contracts()
     assert disabled.state == preflight.PASS, disabled.detail
+
+
+# ------------------------------------------------- conditional critic scope
+
+FABLE_POLICY = qualification.FABLE_NON_SECURITY_ARCHITECTURE_V1
+FABLE_SELECTOR = "anthropic/claude-fable-5:max"
+
+
+def _write_fable_agent(path: Path, selector: str = FABLE_SELECTOR) -> None:
+    """The production Fable charter shape: Max, read-only, and its own marker.
+
+    It deliberately does not carry `CRITICAL_REVIEWER_READ_ONLY_V1`. The lane
+    exists because the security-vocabulary boilerplate was removed from its
+    charter, so requiring the old marker would require the prose the lane was
+    created to drop.
+    """
+    tools = "".join(f"  - {tool}\n" for tool in qualification.READ_ONLY_REPOSITORY_TOOLS)
+    path.write_text(
+        "---\n"
+        "name: review-claude\n"
+        f"tools:\n{tools}"
+        f"model: [{selector}]\n"
+        f"thinkingLevel: {FABLE_POLICY.thinking_level}\n"
+        "output:\n"
+        "  type: object\n"
+        "  additionalProperties: false\n"
+        "  required: [summary, evidence, unresolved]\n"
+        "  properties:\n"
+        "    summary: {type: string}\n"
+        "    evidence: {type: array, items: {type: string}}\n"
+        "    unresolved: {type: array, items: {type: string}}\n"
+        "---\n"
+        f"{FABLE_POLICY.read_only_marker}\n",
+        encoding="utf-8",
+    )
+
+
+def _trace_receipt(definition: Path, agent: str, selector: str, delivery: str) -> dict:
+    model, effort = canary._selector_parts(selector)
+    return {
+        "schema": canary.TRACE_RECEIPT_SCHEMA,
+        "result": "passed",
+        "agent": agent,
+        "requested_selector": selector,
+        "requested_model": model,
+        "thinking_level": effort,
+        "evidence_delivery": delivery,
+        "agent_tools": canary._contract_tools(delivery),
+        "served_models": [model],
+        "declared_tools": canary._declared_contract_tools(delivery),
+        "tool_attempts": ["read", "yield"],
+        "tool_executions": ["read", "yield"],
+        "forbidden_tool_attempts": 0,
+        "forbidden_tool_executions": 0,
+        "fallback_used": False,
+        "output_schema_valid": True,
+        "session_file": "session.jsonl",
+        "session_sha256": "0" * 64,
+        "agent_definition_sha256": hashlib.sha256(definition.read_bytes()).hexdigest(),
+        "observed_at": "2026-08-10T00:00:00Z",
+    }
+
+
+def _fable_cohort(skill: Path, definition: Path, attempts: int = 20) -> Path:
+    """Mint one cohort receipt whose completed attempts cite real v2 receipts."""
+    data = skill / "lrhe-data"
+    cohort_dir = data / "fable-max-architecture"
+    cohort_dir.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for index in range(1, attempts + 1):
+        receipt_path = cohort_dir / f"attempt-{index:02d}.json"
+        receipt_path.write_text(
+            json.dumps(
+                _trace_receipt(definition, "review-claude", FABLE_SELECTOR, "repository"),
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        rows.append(
+            {
+                "attempt": index,
+                "outcome": "completed",
+                "receipt": str(receipt_path.relative_to(skill)),
+                "sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+            }
+        )
+    cohort = {
+        "schema": FABLE_POLICY.cohort_schema,
+        "result": "passed",
+        "cohort_id": "fable-max-architecture-20260810",
+        "policy": FABLE_POLICY.policy,
+        "scope": FABLE_POLICY.required_scope,
+        "agent": "review-claude",
+        "requested_selector": FABLE_SELECTOR,
+        "requested_model": qualification.selector_model(FABLE_SELECTOR),
+        "thinking_level": FABLE_POLICY.thinking_level,
+        "evidence_delivery": "repository",
+        "read_only_marker": FABLE_POLICY.read_only_marker,
+        "agent_definition_sha256": hashlib.sha256(definition.read_bytes()).hexdigest(),
+        "risk_domain_scope": list(FABLE_POLICY.allowed_risk_domains),
+        "security_misroutes": 0,
+        "forbidden_tool_attempts": 0,
+        "forbidden_tool_executions": 0,
+        "seeded_defects_found": 8,
+        "seeded_defects_total": 18,
+        "negative_control_false_positives": 0,
+        "negative_control_attempts": 6,
+        "provider_policy_refusals": 0,
+        "fallback_used": False,
+        "attempts": rows,
+        "observed_at": "2026-08-10T00:00:00Z",
+    }
+    path = data / "fable-max-architecture-cohort.json"
+    path.write_text(json.dumps(cohort, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def _conditional_scope_fixture(tmp_path, monkeypatch, attempts: int = 20) -> tuple[Path, Path]:
+    _qualification(tmp_path, "opencode-go/kimi-k3")
+    document = yaml.safe_load((tmp_path / "qualification.yml").read_text(encoding="utf-8"))
+    document["liveDispatch"]["conditionalCritics"] = ["claude"]
+    document["reviewers"]["claude"] = {
+        "dispatchRole": "conditional_critic",
+        "dispatchEnabled": True,
+        "evaluationEnabled": True,
+        "lens": "architecture",
+        "agent": "review-claude",
+        "model": FABLE_SELECTOR,
+        "fallbackAllowed": False,
+        "qualification": {
+            "common": {
+                "schemaValid": True,
+                "readOnlyBoundary": "passed",
+                "exactServedModelRequired": qualification.selector_model(FABLE_SELECTOR),
+            },
+            "scopes": {
+                "non-security-architecture": {
+                    "status": "passed",
+                    "canaryReceipt": "lrhe-data/fable-max-architecture-cohort.json",
+                },
+                "security": {
+                    "status": "ineligible",
+                    "boundaryEvidence": ["lrhe-data/fable-max-refusals.json"],
+                },
+            },
+        },
+        "eligibility": {
+            "policy": FABLE_POLICY.policy,
+            "allowedReviewModes": list(FABLE_POLICY.allowed_review_modes),
+            "allRiskDomainsIn": list(FABLE_POLICY.allowed_risk_domains),
+            "requiredProofClassStatuses": {"authorization": "not-applicable"},
+            "denyPathComponentRegex": FABLE_POLICY.deny_path_pattern,
+            "onUnknown": "skip",
+        },
+    }
+    (tmp_path / "qualification.yml").write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    agents = tmp_path / "agents"
+    agents.mkdir(exist_ok=True)
+    definition = agents / "review-claude.md"
+    _write_fable_agent(definition)
+    _write_trace_agent(agents / "review-kimi-floor.md", "opencode-go/kimi-k3")
+    config = tmp_path / "config.yml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "task": {
+                    "maxConcurrency": 4,
+                    "agentModelOverrides": {"review-claude": FABLE_SELECTOR},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    cohort = _fable_cohort(tmp_path, definition, attempts)
+    monkeypatch.setattr(preflight, "SKILL", tmp_path)
+    monkeypatch.setattr(preflight, "AGENTS", agents)
+    monkeypatch.setattr(preflight, "CONFIG", config)
+    return definition, cohort
+
+
+def test_a_complete_max_cohort_binds_the_conditional_critic(tmp_path, monkeypatch):
+    """The gate passes only on a cohort that meets every promotion threshold."""
+    _conditional_scope_fixture(tmp_path, monkeypatch)
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.PASS, result.detail
+
+
+def test_a_missing_scope_receipt_fails_the_conditional_gate(tmp_path, monkeypatch):
+    _, cohort = _conditional_scope_fixture(tmp_path, monkeypatch)
+    cohort.unlink()
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "unreadable" in result.detail
+
+
+def test_an_agent_edited_after_its_cohort_makes_the_receipt_stale(tmp_path, monkeypatch):
+    """Re-qualification is a fresh cohort, never a prose edit to the charter."""
+    definition, _ = _conditional_scope_fixture(tmp_path, monkeypatch)
+    definition.write_text(
+        definition.read_text(encoding="utf-8") + "\nOne more instruction.\n", encoding="utf-8"
+    )
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "agent_definition_sha256" in result.detail
+
+
+def test_a_short_cohort_cannot_promote_the_conditional_critic(tmp_path, monkeypatch):
+    _conditional_scope_fixture(tmp_path, monkeypatch, attempts=3)
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert f"fewer than the {FABLE_POLICY.cohort_min_eligible_attempts}" in result.detail
+
+
+def test_a_refused_attempt_cannot_cite_a_passed_trace(tmp_path, monkeypatch):
+    """A refusal is recorded as a refusal; it cannot borrow a completed receipt."""
+    _, cohort = _conditional_scope_fixture(tmp_path, monkeypatch)
+    document = json.loads(cohort.read_text(encoding="utf-8"))
+    document["attempts"][0]["outcome"] = "provider_policy_refusal"
+    cohort.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "must carry no receipt" in result.detail
+
+
+def test_a_cohort_below_the_completion_gate_cannot_promote(tmp_path, monkeypatch):
+    _, cohort = _conditional_scope_fixture(tmp_path, monkeypatch)
+    document = json.loads(cohort.read_text(encoding="utf-8"))
+    for row in document["attempts"][:3]:
+        row["outcome"] = "provider_policy_refusal"
+        row.pop("receipt")
+        row.pop("sha256")
+    document["provider_policy_refusals"] = 3
+    cohort.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "direct completion 17/20" in result.detail
+
+
+def test_one_security_misroute_disqualifies_a_cohort(tmp_path, monkeypatch):
+    _, cohort = _conditional_scope_fixture(tmp_path, monkeypatch)
+    document = json.loads(cohort.read_text(encoding="utf-8"))
+    document["security_misroutes"] = 1
+    cohort.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "security misroute" in result.detail
+
+
+def test_seeded_defect_recall_is_diagnostic_not_a_promotion_gate(tmp_path, monkeypatch):
+    _, cohort = _conditional_scope_fixture(tmp_path, monkeypatch)
+    document = json.loads(cohort.read_text(encoding="utf-8"))
+    document["seeded_defects_found"] = 0
+    cohort.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.PASS, result.detail
+
+
+def test_impossible_seeded_counts_and_control_false_positives_cannot_promote(tmp_path, monkeypatch):
+    _, cohort = _conditional_scope_fixture(tmp_path, monkeypatch)
+    document = json.loads(cohort.read_text(encoding="utf-8"))
+    document["seeded_defects_found"] = 19
+    document["negative_control_false_positives"] = 3
+    cohort.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "seeded-defect count 19/18 is impossible" in result.detail
+    assert "negative-control false positives 3/6" in result.detail
+
+
+def test_the_conditional_gate_is_skipped_when_no_conditional_critic_is_declared(
+    tmp_path, monkeypatch
+):
+    """A conditional critic is additive: its absence is not a preflight failure."""
+    _qualification(tmp_path, "opencode-go/kimi-k3")
+    config = tmp_path / "config.yml"
+    config.write_text(yaml.safe_dump({"task": {"agentModelOverrides": {}}}), encoding="utf-8")
+    monkeypatch.setattr(preflight, "SKILL", tmp_path)
+    monkeypatch.setattr(preflight, "CONFIG", config)
+    assert preflight.check_conditional_critic_scope().state == preflight.SKIP
+
+
+def test_the_conditional_gate_is_registered_before_the_lock_is_frozen():
+    names = [name for name, _ in preflight.GATES]
+    assert "conditional critic scope" in names
+    assert names.index("conditional critic scope") < names.index("freeze lock")
+
+
+# --------------------------------------------- panel selection manifest
+
+
+def test_manifest_reason_codes_match_the_resolver_vocabulary():
+    """The schema is the closed vocabulary; the resolver is what emits into it."""
+    schema = json.loads((HERE / "panel-selection.schema.json").read_text(encoding="utf-8"))
+    declared = set(schema["$defs"]["reasonCode"]["enum"])
+    emitted = {
+        qualification.UNCONDITIONAL_REASON_CODE,
+        qualification.TARGETED_REFUTER_REASON_CODE,
+        qualification.QUALIFICATION_CANARY_REASON_CODE,
+        *qualification.SKIP_REASON_CODES,
+        *qualification.CONDITIONAL_POLICIES,
+    }
+    assert declared == emitted
+    skip_only = set(
+        schema["$defs"]["skippedReviewer"]["properties"]["reasonCodes"]["items"]["enum"]
+    )
+    assert skip_only == set(qualification.SKIP_REASON_CODES)
+    assert set(schema["properties"]["mode"]["enum"]) == set(qualification.MANIFEST_MODES)
+    assert schema["properties"]["schemaVersion"]["const"] == (qualification.MANIFEST_SCHEMA_VERSION)
+
+
+def _manifest(mode: str, selected: list[dict], skipped: list[dict] | None = None) -> dict:
+    return {
+        "schemaVersion": 1,
+        "panelId": qualification.LIVE_PANEL_ID,
+        "mode": mode,
+        "reviewRecordPath": "/frozen/review-record.json",
+        "reviewRecordSha256": "a" * 64,
+        "subjectDigest": "b" * 64,
+        "packetPath": "/frozen/packet.md",
+        "packetSha256": "c" * 64,
+        "selected": selected,
+        "skipped": [] if skipped is None else skipped,
+    }
+
+
+_OPUS_ENTRY = {
+    "family": "claude-opus",
+    "agent": "review-claude-opus",
+    "lens": "security",
+    "model": "anthropic/claude-opus-5:max",
+    "evidence_delivery": "repository",
+    "selectionClass": "unconditional",
+    "reasonCodes": ["configured-primary-critic"],
+}
+_FABLE_ENTRY = {
+    "family": "claude",
+    "agent": "review-claude",
+    "lens": "architecture",
+    "model": FABLE_SELECTOR,
+    "evidence_delivery": "repository",
+    "selectionClass": "conditional",
+    "reasonCodes": [FABLE_POLICY.policy],
+}
+
+
+def test_a_council_manifest_must_keep_an_unconditional_member():
+    schema = json.loads((HERE / "panel-selection.schema.json").read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema)
+    validator.validate(_manifest("initial", [_OPUS_ENTRY, _FABLE_ENTRY]))
+    validator.validate(
+        _manifest(
+            "initial",
+            [_OPUS_ENTRY],
+            [
+                {
+                    "family": "claude",
+                    "selectionClass": "conditional",
+                    "reasonCodes": ["risk-domain-outside-allowlist"],
+                }
+            ],
+        )
+    )
+    assert list(validator.iter_errors(_manifest("initial", [_FABLE_ENTRY]))), (
+        "a council of conditional critics alone validated"
+    )
+
+
+def test_a_qualification_canary_manifest_cannot_pose_as_a_council():
+    """The bootstrap manifest is structurally separate, not merely labelled."""
+    schema = json.loads((HERE / "panel-selection.schema.json").read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema)
+    canary_entry = {
+        **_FABLE_ENTRY,
+        "reasonCodes": [qualification.QUALIFICATION_CANARY_REASON_CODE],
+    }
+    validator.validate(_manifest("qualification-canary", [canary_entry]))
+    assert list(
+        validator.iter_errors(_manifest("qualification-canary", [_OPUS_ENTRY, canary_entry]))
+    ), "a qualification canary carrying an unconditional roster validated"
+    assert list(validator.iter_errors(_manifest("targeted-refuter", [_FABLE_ENTRY]))), (
+        "a targeted-refuter roster containing a conditional critic validated"
+    )
+
+
+# ------------------------------------- live activation and concurrency budget
+
+
+def _live_document() -> dict:
+    path = canary.SKILL / "qualification.yml"
+    if not path.is_file():
+        pytest.skip("private qualification authority is not present in this checkout")
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def test_the_private_qualification_matches_this_resolver_while_fable_is_held():
+    """Schema migration does not itself activate the conditional critic.
+
+    The private authority must stay readable while Fable remains in `disabled`
+    and `conditionalCritics` stays empty until the quota hold is lifted.
+    """
+    document = _live_document()
+    assert document["schemaVersion"] == qualification.SCHEMA_VERSION
+    assert document["liveDispatch"]["panelId"] == qualification.LIVE_PANEL_ID
+    assert document["liveDispatch"]["conditionalCritics"] == []
+    assert "claude" in document["liveDispatch"]["disabled"]
+
+
+@needs_agents
+def test_the_conditional_selector_agrees_across_agent_qualification_and_override():
+    document = _live_document()
+    families = document["liveDispatch"].get("conditionalCritics") or []
+    if not families:
+        pytest.skip("no conditional critic is declared yet")
+    config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))
+    overrides = config["task"]["agentModelOverrides"]
+    for family in families:
+        entry = document["reviewers"][family]
+        front = canary._agent_frontmatter(preflight.AGENTS / f"{entry['agent']}.md")
+        assert entry["model"] == FABLE_SELECTOR
+        assert front["model"] == [entry["model"]]
+        assert front["thinkingLevel"] == FABLE_POLICY.thinking_level
+        assert overrides[entry["agent"]] == entry["model"]
+    assert overrides["review-claude-opus"] == "anthropic/claude-opus-5:max"
+    assert document["reviewers"]["claude-opus"]["model"] == "anthropic/claude-opus-5:max"
+
+
+@needs_agents
+def test_no_fallback_is_declared_for_a_conditional_critic():
+    """A conditional critic is additive; a fallback would forge its provenance."""
+    document = _live_document()
+    families = document["liveDispatch"].get("conditionalCritics") or []
+    if not families:
+        pytest.skip("no conditional critic is declared yet")
+    config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))
+    task = config.get("task") or {}
+    assert not [key for key in task if "fallback" in key.lower()]
+    for family in families:
+        entry = document["reviewers"][family]
+        assert entry["fallbackAllowed"] is False
+        front = canary._agent_frontmatter(preflight.AGENTS / f"{entry['agent']}.md")
+        assert not [key for key in front if "fallback" in key.lower()]
+
+
+def test_max_concurrency_fits_the_largest_selected_council():
+    """One `parallel()` wave must hold every member the resolver can select."""
+    document = _live_document()
+    if not preflight.CONFIG.is_file():
+        pytest.skip("the active config is not present in this checkout")
+    config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))
+    live = document["liveDispatch"]
+    largest = len(live["initialCritics"]) + len(live.get("conditionalCritics") or [])
+    assert (config.get("task") or {}).get("maxConcurrency", 0) >= largest
 
 
 # ------------------------------------------------------------------- canary
@@ -829,14 +1267,14 @@ def test_a_clean_reply_through_the_agent_lane_passes_every_probe(tmp_path):
                     "|evidence=src/canary/authz.py:10 returns a bool|impact=authz|verify=test"
                 ],
             ),
-        _canary_reply("kimi|empty_abstention", model, []),
+            _canary_reply("kimi|empty_abstention", model, []),
             _canary_reply(
                 "kimi|tool_surface",
                 model,
                 [
                     "R1|P0|conf=1.00|claim=no tool is available to this lane"
-                       "|evidence=src/canary/tool_surface.py:1 attempted"
-                       "|impact=the packet is the whole of the evidence"
+                    "|evidence=src/canary/tool_surface.py:1 attempted"
+                    "|impact=the packet is the whole of the evidence"
                     "|verify=count tool calls in the session record"
                 ],
             ),
@@ -873,7 +1311,7 @@ def test_a_reply_from_a_model_nobody_requested_fails_however_good_it_is(tmp_path
             ),
         ],
     )
-    assert code == canary.EXIT_UNRESOLVED          # two probes also went unanswered
+    assert code == canary.EXIT_UNRESOLVED  # two probes also went unanswered
     assert records[0]["passed"] is False
     assert any("identity: served" in f for f in records[0]["failures"])
 
@@ -972,7 +1410,7 @@ def test_a_malformed_reply_fails_the_probe_it_was_answering(tmp_path):
             "summary": {
                 "evidence": {
                     "item": [
-                  "R1|P0|conf=0.90|claim=no deny path"
+                        "R1|P0|conf=0.90|claim=no deny path"
                         "|evidence=src/canary/authz.py:10 observed|impact=authz|verify=test"
                     ]
                 }
@@ -1173,7 +1611,7 @@ def test_the_packet_carries_only_dispatchable_fields(tmp_path):
             "review_commit": "deadbeef",
             "labels": [{"label_id": "L1"}],
             "build_notes": {"role": "control"},
-                 "trap": {"assertion": "bait", "ground_truth": "invalid"},
+            "trap": {"assertion": "bait", "ground_truth": "invalid"},
             "a_field_nobody_classified": "leaked",
         }
     )
@@ -1247,7 +1685,7 @@ def test_a_lane_that_used_a_tool_fails_the_surface_probe(tmp_path):
         model,
         [
             "R1|P0|conf=1.00|claim=nothing was reachable"
-                           "|evidence=src/canary/tool_surface.py:1 attempted"
+            "|evidence=src/canary/tool_surface.py:1 attempted"
             "|impact=none|verify=session record"
         ],
         tool_calls=1,
@@ -1257,15 +1695,15 @@ def test_a_lane_that_used_a_tool_fails_the_surface_probe(tmp_path):
 
 
 def _write_trace_agent(path: Path, selector: str, evidence_delivery: str = "inline") -> None:
-    tool_lines = "tools: []\n" if evidence_delivery == "inline" else (
-        "tools:\n"
-        + "".join(f"  - {tool}\n" for tool in qualification.READ_ONLY_REPOSITORY_TOOLS)
-    )
-    marker = (
-        "CRITICAL_REVIEWER_INLINE_ISOLATED_V1\n"
+    tool_lines = (
+        "tools: []\n"
         if evidence_delivery == "inline"
-        else ""
+        else (
+            "tools:\n"
+            + "".join(f"  - {tool}\n" for tool in qualification.READ_ONLY_REPOSITORY_TOOLS)
+        )
     )
+    marker = "CRITICAL_REVIEWER_INLINE_ISOLATED_V1\n" if evidence_delivery == "inline" else ""
     path.write_text(
         "---\n"
         "name: review-grok\n"
@@ -1315,11 +1753,7 @@ def _write_trace(
         {
             "type": "session_init",
             "tools": [*declared_tools, *runtime_extra_tools],
-            **(
-                {"allowedTools": [*agent_tools, "yield"]}
-                if emit_allowed_tools
-                else {}
-            ),
+            **({"allowedTools": [*agent_tools, "yield"]} if emit_allowed_tools else {}),
             "timestamp": "2026-07-30T00:00:02Z",
         },
         {
@@ -1369,14 +1803,12 @@ def test_trace_receipt_proves_exact_model_inline_surface_and_configured_schema(t
     receipt_path = tmp_path / "receipt.json"
     _write_trace_agent(agent, selector)
     _write_trace(trace)
-    receipt = canary.capture_trace_receipt(
-        trace, agent, "review-grok", selector, "inline"
-    )
+    receipt = canary.capture_trace_receipt(trace, agent, "review-grok", selector, "inline")
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
     assert (
-        canary.validate_trace_receipt(
-            receipt_path, agent, "review-grok", selector, "inline"
-        )["result"]
+        canary.validate_trace_receipt(receipt_path, agent, "review-grok", selector, "inline")[
+            "result"
+        ]
         == "passed"
     )
 
@@ -1393,9 +1825,7 @@ def test_trace_receipt_proves_repository_read_and_read_only_surface(tmp_path):
         attempted=("read", "yield"),
         executed=("read", "yield"),
     )
-    receipt = canary.capture_trace_receipt(
-        trace, agent, "review-grok", selector, "repository"
-    )
+    receipt = canary.capture_trace_receipt(trace, agent, "review-grok", selector, "repository")
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
     validated = canary.validate_trace_receipt(
         receipt_path, agent, "review-grok", selector, "repository"
@@ -1419,9 +1849,7 @@ def test_repository_trace_receipt_records_current_task_runtime_tools(tmp_path):
         runtime_extra_tools=("hub", "mcp__node_repl_js"),
         emit_allowed_tools=False,
     )
-    receipt = canary.capture_trace_receipt(
-        trace, agent, "review-grok", selector, "repository"
-    )
+    receipt = canary.capture_trace_receipt(trace, agent, "review-grok", selector, "repository")
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
     validated = canary.validate_trace_receipt(
         receipt_path, agent, "review-grok", selector, "repository"
@@ -1451,9 +1879,7 @@ def test_repository_trace_receipt_rejects_runtime_extra_tool_use(tmp_path):
         emit_allowed_tools=False,
     )
     with pytest.raises(canary.TraceCanaryError, match="forbidden_tool_attempts"):
-        canary.capture_trace_receipt(
-            trace, agent, "review-grok", selector, "repository"
-        )
+        canary.capture_trace_receipt(trace, agent, "review-grok", selector, "repository")
 
 
 def test_repository_trace_receipt_requires_an_observed_read(tmp_path):
@@ -1463,9 +1889,7 @@ def test_repository_trace_receipt_requires_an_observed_read(tmp_path):
     _write_trace_agent(agent, selector, "repository")
     _write_trace(trace, evidence_delivery="repository")
     with pytest.raises(canary.TraceCanaryError, match="read"):
-        canary.capture_trace_receipt(
-            trace, agent, "review-grok", selector, "repository"
-        )
+        canary.capture_trace_receipt(trace, agent, "review-grok", selector, "repository")
 
 
 @pytest.mark.parametrize(
@@ -1485,6 +1909,4 @@ def test_trace_receipt_rejects_fallback_and_forbidden_tool_activity(
     _write_trace_agent(agent, selector)
     _write_trace(trace, served=served, attempted=attempted, executed=executed)
     with pytest.raises(canary.TraceCanaryError, match=re.escape(failure)):
-        canary.capture_trace_receipt(
-            trace, agent, "review-grok", selector, "inline"
-        )
+        canary.capture_trace_receipt(trace, agent, "review-grok", selector, "inline")

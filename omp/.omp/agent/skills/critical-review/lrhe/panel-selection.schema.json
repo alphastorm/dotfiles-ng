@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lrhe/panel-selection.schema.json",
+  "title": "Critical Review Panel Selection",
+  "description": "One resolver-owned council roster, written once before any provider dispatch. The manifest exists so the dispatched panel is a durable digest-bound fact rather than a caller's recollection: the dispatcher consumes `selected` exactly and never adds, removes, reorders, or substitutes a member. Two fields go beyond the implementation packet's recommended shape on purpose. `packetPath`/`packetSha256` bind the packet bytes as well as the record bytes, closing the window in which a resolved packet is edited between resolution and dispatch; and `mode` accepts `qualification-canary`, the one narrow non-live resolution that lets a conditional critic earn its scoped cohort receipt without weakening live selection.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "panelId",
+    "mode",
+    "reviewRecordPath",
+    "reviewRecordSha256",
+    "subjectDigest",
+    "packetPath",
+    "packetSha256",
+    "selected",
+    "skipped"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "Pins this manifest contract; a consumer that accepts an unknown version is guessing at what was dispatched."
+    },
+    "panelId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The live panel definition this roster came from, so a manifest resolved under a superseded panel is visible rather than silent."
+    },
+    "mode": {
+      "enum": [
+        "initial",
+        "targeted-refuter",
+        "qualification-canary"
+      ],
+      "description": "Which resolution produced this manifest, not the record's review mode: `initial` is the full council for any record the gate answers `full-council` for (design, initial, or material-redesign), `targeted-refuter` is the separate single-claim falsification roster, and `qualification-canary` authorizes no live dispatch at all."
+    },
+    "reviewRecordPath": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Absolute path of the frozen record that authorized this roster; a relative path cannot identify one epoch across working directories."
+    },
+    "reviewRecordSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Digest of those exact record bytes, so a record edited after resolution no longer matches the roster it produced."
+    },
+    "subjectDigest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "The record's proof-subject digest, joining this roster to the same frozen artifact and changed-file identity every receipt and reviewer result binds."
+    },
+    "packetPath": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Absolute path of the immutable packet whose record binding was verified; deliberate hardening beyond the packet's recommended shape."
+    },
+    "packetSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Digest of those exact packet bytes, so a packet mutated between resolution and dispatch is detectable rather than assumed unchanged."
+    },
+    "selected": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/selectedReviewer"
+      },
+      "description": "Every reviewer this resolution authorizes, in resolver order. An empty roster is never a valid dispatch."
+    },
+    "skipped": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/skippedReviewer"
+      },
+      "description": "Every conditional critic that was considered and not selected, with all of its reasons. Skipped is not missing: it never becomes a failed member and never blocks the unconditional council."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "initial"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "selected": {
+            "contains": {
+              "properties": {
+                "selectionClass": {
+                  "const": "unconditional"
+                }
+              },
+              "required": [
+                "selectionClass"
+              ]
+            }
+          }
+        },
+        "description": "A full council always contains at least one unconditional critic, so a conditional skip can never shrink the panel to the conditional lane alone."
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "targeted-refuter"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "selected": {
+            "items": {
+              "properties": {
+                "selectionClass": {
+                  "const": "unconditional"
+                }
+              }
+            }
+          },
+          "skipped": {
+            "maxItems": 0
+          }
+        },
+        "description": "Targeted refutation is a distinct fixed roster: no conditional critic is ever selected or considered for it."
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "qualification-canary"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "then": {
+        "properties": {
+          "selected": {
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "properties": {
+                "selectionClass": {
+                  "const": "conditional"
+                },
+                "reasonCodes": {
+                  "const": [
+                    "qualification-canary-only"
+                  ]
+                }
+              }
+            }
+          },
+          "skipped": {
+            "maxItems": 0
+          }
+        },
+        "description": "A qualification canary names exactly one conditional candidate and no unconditional reviewer, so it is structurally unusable as a council roster and cannot be mistaken for live authorization."
+      }
+    }
+  ],
+  "$defs": {
+    "reasonCode": {
+      "enum": [
+        "authorization-proof-applicable",
+        "configured-primary-critic",
+        "configured-targeted-refuter",
+        "fable-non-security-architecture-v1",
+        "qualification-canary-only",
+        "review-mode-ineligible",
+        "risk-domain-outside-allowlist",
+        "risk-domains-empty",
+        "security-sensitive-path"
+      ],
+      "description": "Closed on purpose. A selection or skip reason nobody declared is not auditable, so a new reason costs a schema change -- which is the moment anyone decides whether it is a real routing fact."
+    },
+    "selectedReviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "family",
+        "agent",
+        "lens",
+        "model",
+        "evidence_delivery",
+        "selectionClass",
+        "reasonCodes"
+      ],
+      "properties": {
+        "family": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The reviewer family as named by the live panel definition; the join key for its result, receipt, and ledger rows."
+        },
+        "agent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The exact agent definition to dispatch, so the roster cannot be satisfied by a similarly named reviewer."
+        },
+        "lens": {
+          "type": "string",
+          "description": "The configured primary lens. Independent lenses are what make several results evidence rather than repeated votes."
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The exact provider/model[:effort] selector, including effort: a served model that differs from this is a mismatch, never an acceptable substitution."
+        },
+        "evidence_delivery": {
+          "enum": [
+            "inline",
+            "repository"
+          ],
+          "description": "Whether this member verifies claims through its own read-only repository tools or only from evidence pasted into its assignment."
+        },
+        "selectionClass": {
+          "enum": [
+            "unconditional",
+            "conditional"
+          ],
+          "description": "`unconditional` members run on every full council; a `conditional` member is additive and never replaces or falls back to another family."
+        },
+        "reasonCodes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/reasonCode"
+          },
+          "description": "Why this member is on the roster, recorded so selection is reconstructable from the manifest alone."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "selectionClass": {
+                "const": "conditional"
+              }
+            },
+            "required": [
+              "selectionClass"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reasonCodes": {
+                "items": {
+                  "enum": [
+                    "fable-non-security-architecture-v1",
+                    "qualification-canary-only"
+                  ]
+                }
+              }
+            },
+            "description": "A conditional member is selected by a named eligibility policy or by the qualification-canary path, never by a configured-roster reason."
+          }
+        }
+      ]
+    },
+    "skippedReviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "family",
+        "selectionClass",
+        "reasonCodes"
+      ],
+      "properties": {
+        "family": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The conditional critic that was considered and not selected."
+        },
+        "selectionClass": {
+          "const": "conditional",
+          "description": "Only a conditional critic can be skipped; an unconditional critic that is absent is a resolution failure, not a skip."
+        },
+        "reasonCodes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "authorization-proof-applicable",
+              "review-mode-ineligible",
+              "risk-domain-outside-allowlist",
+              "risk-domains-empty",
+              "security-sensitive-path"
+            ]
+          },
+          "description": "Every independent reason the packet was ineligible, sorted. All of them are recorded because a packet ineligible on three grounds is a different fact from one ineligible on a single ground."
+        }
+      }
+    }
+  }
+}

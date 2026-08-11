@@ -251,10 +251,21 @@ bookkeeping that is a retrieval hint and never evidence.
 ## Live dispatch and evaluation are separate
 
 `qualification.yml` `liveDispatch` is the sole authoritative live panel. Its
-`leadFamily` records the accountable GPT lead and is disjoint from both live reviewer
-roles. Resolve the current initial or targeted-refuter roster with `qualification.py`;
-do not duplicate family names or counts in public tests, packets, or policy prose. This
-public package never grants live membership.
+`leadFamily` records the accountable GPT lead and is disjoint from every live reviewer
+role. Resolve the current full-council or targeted-refuter roster with
+`qualification.py`; do not duplicate family names or counts in public tests, packets, or
+policy prose. This public package never grants live membership.
+
+Membership is private; scope is public. `initialCritics` are unconditional and run on
+every full council. `conditionalCritics` are additive and record-selected: the resolver
+admits one only when the frozen record and its packet satisfy the eligibility its policy
+pins in `qualification.py`. That split is the point of the design. A private edit can
+retire a conditional critic or move it back to `disabled`, but it cannot widen one into
+security review, because the allowed modes, the allowed risk domains, the required
+`proof_classes.authorization` status, the deny-path rule, and the cohort promotion gates
+all live in public code and are checked against the private file rather than read from
+it. A conditional critic never replaces a member, never falls back to another family,
+and never shrinks the council when it is skipped.
 
 LRHE experiments remain asymmetric evaluation designs:
 
@@ -268,10 +279,84 @@ Conflating experiment membership with live dispatch turns evaluation lanes into
 unapproved reviewers and makes independent roles look like votes. `panels.yaml`
 therefore owns experiments only; `qualification.yml` owns live dispatch.
 
-`qualification.py` fails closed unless schema version 4, role membership,
-dispatch/evaluation flags, canary results, read-only proof, agents, and selectors
-are internally consistent. `initial` returns only configured primary critics;
-`targeted-refuter` returns only the separately configured refutation pool.
+`qualification.py` fails closed unless schema version 6, the pinned panel id, role
+membership, dispatch/evaluation flags, canary results, read-only proof, agents, and
+selectors are internally consistent. A conditional critic proves the common
+schema/read-only gates and one `passed` scope with a fresh receipt, per scope rather
+than once globally; a scope recorded `ineligible` must keep its boundary evidence, so
+turning a refusal into a pass means deleting the evidence rather than editing a status.
+`targeted-refuter` returns only the separately configured refutation pool and never a
+conditional critic.
+
+`initial` is the full-council resolution, not a record mode: it resolves any record the
+gate answers `full-council` for, which is `design`, `initial`, or `material-redesign`.
+It requires `--record`, `--packet`, and a durable `--out`, reuses `review_sequence.py`
+for readiness rather than reimplementing a weaker parser, verifies that the packet names
+exactly that record path and digest, and writes one manifest validated by
+`panel-selection.schema.json`. It refuses to overwrite an existing manifest and refuses
+a session-local output path, for the same reason the epoch tool does: a roster that
+lives only in a session directory cannot be re-read after the session ends, and one that
+can be overwritten is not evidence of what was dispatched.
+
+Two parts of that manifest go beyond the implementation packet's recommended shape,
+deliberately. `packetPath`/`packetSha256` bind the packet bytes as well as the record
+bytes, which closes the window in which a resolved packet is edited between resolution
+and dispatch; the packet's own §4.4 makes a record/packet digest mismatch fail closed,
+and binding only the record would leave that check with nothing to compare against
+later. The `reasonCodes` vocabulary is a closed enum, so a new selection or skip reason
+costs a schema change — the same argument `item.schema.json` makes above.
+
+Skip reasons are reported as a sorted set, not first-match: a packet ineligible on three
+independent grounds is a different fact from one ineligible on a single ground, and the
+manifest is the only place that distinction survives. One vocabulary entry,
+`risk-domains-empty`, is deliberately unreachable from the live resolver. An empty or
+unknown `touched_risk_domains` fails the whole record in `review_sequence.py` before any
+critic is considered, and that strict whole-record failure is not weakened into a
+conditional-critic skip; the code keeps it so the eligibility policy is complete and
+testable on its own.
+
+### The qualification-canary bootstrap
+
+A conditional critic cannot dispatch without a fresh scoped cohort receipt, and the
+production reviewer agent will not run without a resolver manifest. Minting the first
+receipt therefore needs a manifest that live selection cannot yet produce.
+`qualification.py qualification-canary --family <lane> --policy <policy> --selector
+<provider/model:effort>` is that one narrow path. It applies the same record gate, the
+same packet binding, and the same eligibility filter, but it names exactly one candidate,
+carries no unconditional roster, and records `qualification-canary-only`, which
+`panel-selection.schema.json` structurally separates from a council roster. The
+alternatives were both worse: relaxing live selection so an unqualified lane can be
+picked, or writing a passed receipt nobody earned.
+
+Identity still comes from one authority. The canary's family, agent, and model base are
+read from `qualification.yml`; only the effort suffix may differ from the currently
+recorded selector, and it must equal the policy's pinned thinking level. That is what
+lets a lane still recorded at `:high` be qualified at `:max` without a second panel
+definition, and it is why activation is atomic: the same edit that moves the lane into
+`conditionalCritics` also pins `model` at the qualified selector, and the public resolver
+refuses any other combination.
+
+### Scoped cohort receipts
+
+`preflight.py` owns the bytes. `qualification.py` checks shapes and agreement and never
+reads a receipt; `check_conditional_critic_scope` re-reads the agent definition, the
+active config override, and the cohort receipt, and grades the cohort against the
+policy's promotion gates: at least 20 eligible attempts, at least 90% direct completion,
+100% exact served-model match, zero security misroutes, zero forbidden tool attempts or
+executions, and no more than 10% false positives on guarded negative controls. Seeded-
+defect counts remain diagnostic rather than a hard gate: exact-path and per-finding
+lexical matching can undercount a semantically correct review. Every gate uses integer
+arithmetic over counted attempts rather than trusting a stated percentage.
+
+The cohort receipt does not replace per-attempt validation. Each completed attempt cites
+its own `lrhe-live-review-trace-v2` receipt by path and digest, and preflight validates
+each one through the existing `canary.validate_trace_receipt` — unchanged and unforked,
+so served model, declared and executed tools, schema validity, and fallback are still
+judged by the one implementation that already judges them. A non-completed attempt may
+carry no receipt at all, which is why refusals cannot be hidden as passes. The cohort
+also pins `agent_definition_sha256`: an agent edited after its cohort ran is a lane
+qualified against a charter that no longer exists, so the receipt goes stale and the gate
+fails. Re-qualification is a fresh cohort, never a prose edit.
 
 `independent` is a real fourth lens, not a relabelling of the other three:
 reconstruct the system and its invariants from primary evidence instead of

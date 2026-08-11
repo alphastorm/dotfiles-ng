@@ -14,11 +14,20 @@ import yaml
 import epoch
 import review_checks
 import make_receipt
+import qualification
 from qualification import (
+    FABLE_NON_SECURITY_ARCHITECTURE_V1,
+    LIVE_PANEL_ID,
     QualificationError,
     READ_ONLY_REPOSITORY_TOOLS,
+    SCHEMA_VERSION,
+    bind_packet,
+    bind_record,
+    conditional_critics,
+    fable_skip_reason_codes,
     live_reviewers,
     load_qualification,
+    select_full_council,
     validate_qualification,
 )
 from review_sequence import (
@@ -529,7 +538,10 @@ def test_stable_quick_and_full_check_tiers() -> None:
         "test_invariants.py::test_evaluation_agents_are_hidden_unless_the_lrhe_overlay_is_loaded",
         "test_invariants.py::test_evaluation_overlay_keeps_failed_lanes_hidden",
     )
-    assert review_checks.command_for("quick")[-len(review_checks.QUICK_TESTS):] == review_checks.QUICK_TESTS
+    assert (
+        review_checks.command_for("quick")[-len(review_checks.QUICK_TESTS) :]
+        == review_checks.QUICK_TESTS
+    )
     assert review_checks.command_for("full")[-1] == "full"
     commands = review_checks.full_commands()
     assert commands[0][1:] == ("check", ".", "--exclude", ".venv")
@@ -597,7 +609,7 @@ def test_check_wrapper_writes_only_subject_bound_passing_receipts(
     receipt = tmp_path / "full-receipt.json"
     assert (
         review_checks.main(
-        ["full", "--receipt", str(receipt), "--subject-record", str(subject_path)]
+            ["full", "--receipt", str(receipt), "--subject-record", str(subject_path)]
         )
         == 0
     )
@@ -611,7 +623,7 @@ def test_check_wrapper_writes_only_subject_bound_passing_receipts(
     changed.write_text("stale source\n", encoding="utf-8")
     assert (
         review_checks.main(
-        ["full", "--receipt", str(receipt), "--subject-record", str(subject_path)]
+            ["full", "--receipt", str(receipt), "--subject-record", str(subject_path)]
         )
         == make_receipt.EXIT_SUBJECT_MISMATCH
     )
@@ -625,16 +637,16 @@ def test_generic_receipt_runner_binds_and_rechecks_subject(tmp_path: Path) -> No
     receipt = tmp_path / "generic-proof.json"
     assert (
         make_receipt.main(
-        [
-            "--subject-record",
-            str(record_path),
-            "--receipt",
-            str(receipt),
-            "--",
-            sys.executable,
-            "-c",
-            "print('proof passed')",
-        ]
+            [
+                "--subject-record",
+                str(record_path),
+                "--receipt",
+                str(receipt),
+                "--",
+                sys.executable,
+                "-c",
+                "print('proof passed')",
+            ]
         )
         == 0
     )
@@ -649,16 +661,16 @@ def test_generic_receipt_runner_binds_and_rechecks_subject(tmp_path: Path) -> No
     drift_receipt = tmp_path / "drifting-proof.json"
     assert (
         make_receipt.main(
-        [
-            "--subject-record",
-            str(drifting_path),
-            "--receipt",
-            str(drift_receipt),
-            "--",
-            sys.executable,
-            "-c",
-            f"from pathlib import Path; Path({str(changed)!r}).write_text('drifted')",
-        ]
+            [
+                "--subject-record",
+                str(drifting_path),
+                "--receipt",
+                str(drift_receipt),
+                "--",
+                sys.executable,
+                "-c",
+                f"from pathlib import Path; Path({str(changed)!r}).write_text('drifted')",
+            ]
         )
         == make_receipt.EXIT_SUBJECT_MISMATCH
     )
@@ -727,17 +739,224 @@ def test_receipt_reuse_verifies_subject_binding_without_rewriting(tmp_path: Path
         make_receipt.main([*reuse_args, "--", sys.executable, "-c", "pass"])
 
 
-def test_live_panel_roles_are_derived_from_private_authority() -> None:
+FABLE_POLICY = FABLE_NON_SECURITY_ARCHITECTURE_V1
+
+
+def _live_qualification() -> dict:
+    """Return the private live panel definition, or skip with the reason.
+
+    The resolver and the private file activate together, so a file still at an
+    older `schemaVersion` is a pending atomic activation rather than a failure of
+    the behaviour under test. `test_consistency.py` owns the loud version check,
+    so exactly one test names that gap instead of every test here failing on it.
+    """
     if not QUALIFICATION.is_file():
         pytest.skip("private qualification authority is not present in this checkout")
+    document = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or document.get("schemaVersion") != SCHEMA_VERSION:
+        pytest.skip(
+            f"private qualification is schemaVersion "
+            f"{(document or {}).get('schemaVersion')!r}; v{SCHEMA_VERSION} activation "
+            "is pending"
+        )
+    return document
+
+
+def _unconditional_entry(agent: str, model: str, lens: str) -> dict:
+    return {
+        "dispatchRole": "primary_critic",
+        "dispatchEnabled": True,
+        "evaluationEnabled": True,
+        "lens": lens,
+        "agent": agent,
+        "model": model,
+        "providerCanary": "passed",
+        "schemaValid": True,
+        "readOnlyBoundary": "passed",
+        "evidenceDelivery": "repository",
+        "tools": list(READ_ONLY_REPOSITORY_TOOLS),
+        "canaryReceipt": f"lrhe-data/{agent}-trace.json",
+    }
+
+
+def _conditional_entry() -> dict:
+    return {
+        "dispatchRole": "conditional_critic",
+        "dispatchEnabled": True,
+        "evaluationEnabled": True,
+        "lens": "architecture",
+        "agent": "review-claude",
+        "model": "anthropic/claude-fable-5:max",
+        "fallbackAllowed": False,
+        "qualification": {
+            "common": {
+                "schemaValid": True,
+                "readOnlyBoundary": "passed",
+                "exactServedModelRequired": "anthropic/claude-fable-5",
+            },
+            "scopes": {
+                "non-security-architecture": {
+                    "status": "passed",
+                    "canaryReceipt": "lrhe-data/fable-max-architecture-cohort.json",
+                },
+                "security": {
+                    "status": "ineligible",
+                    "boundaryEvidence": ["lrhe-data/fable-max-refusals.json"],
+                },
+            },
+        },
+        "eligibility": {
+            "policy": FABLE_POLICY.policy,
+            "allowedReviewModes": list(FABLE_POLICY.allowed_review_modes),
+            "allRiskDomainsIn": list(FABLE_POLICY.allowed_risk_domains),
+            "requiredProofClassStatuses": {"authorization": "not-applicable"},
+            "denyPathComponentRegex": FABLE_POLICY.deny_path_pattern,
+            "onUnknown": "skip",
+        },
+    }
+
+
+def _panel(with_conditional: bool = True) -> dict:
+    """One synthetic v6 panel: three unconditional critics and one conditional."""
+    reviewers = {
+        "claude-opus": _unconditional_entry(
+            "review-claude-opus", "anthropic/claude-opus-5:max", "security"
+        ),
+        "gemini": _unconditional_entry(
+            "review-gemini", "google-antigravity/gemini-3.6-flash:high", "whole_repo"
+        ),
+        "grok": _unconditional_entry("review-grok", "xai-oauth/grok-4.5:xhigh", "adversarial"),
+        "glm": {
+            **_unconditional_entry("review-glm-floor", "opencode-go/glm-5.2:max", "refuter"),
+            "dispatchRole": "targeted_refuter",
+        },
+    }
+    if with_conditional:
+        reviewers["claude"] = _conditional_entry()
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "canaryLedgers": {
+            "live": {
+                "path": "lrhe-data/canary-v3.jsonl",
+                "mode": "append-only",
+                "prefixRows": 4,
+                "prefixSha256": "0" * 64,
+                "authority": "live-qualification",
+            }
+        },
+        "liveDispatch": {
+            "panelId": LIVE_PANEL_ID,
+            "leadFamily": "gpt",
+            "initialCritics": ["claude-opus", "gemini", "grok"],
+            "conditionalCritics": ["claude"] if with_conditional else [],
+            "targetedRefuters": ["glm"],
+            "evaluationOnly": [],
+            "disabled": [],
+        },
+        "reviewers": reviewers,
+    }
+
+
+def _remint_receipt(record: dict) -> None:
+    """Re-bind the proof receipt after the frozen subject legitimately changes."""
+    receipt = record.get("proof_receipts", {}).get("focused-proof")
+    if receipt is None:
+        return
+    path = Path(receipt["path"])
+    _write_json(
+        path,
+        {
+            "schemaVersion": 1,
+            "result": "passed",
+            "exit_code": 0,
+            "tier": "full",
+            "subject_digest": proof_subject_digest(record),
+        },
+    )
+    receipt["sha256"] = _sha256(path)
+
+
+def _with_domains(record: dict, domains: list[str]) -> dict:
+    record["touched_risk_domains"] = domains
+    for row in record["invariant_proof_matrix"]:
+        row["risk_domains"] = domains
+    return record
+
+
+def _with_changed_file(record: dict, path: Path) -> dict:
+    path.write_text("changed\n", encoding="utf-8")
+    record["changed_files"] = [*record["changed_files"], str(path)]
+    record["changed_file_digests"] = {
+        **record["changed_file_digests"],
+        str(path): _sha256(path),
+    }
+    for row in record["invariant_proof_matrix"]:
+        row["changed_paths"] = record["changed_files"]
+    _remint_receipt(record)
+    return record
+
+
+def _packet_file(tmp_path: Path, record_path: Path, design_or_diff: str = "controller.py") -> Path:
+    packet_path = tmp_path / "packet.md"
+    context = {
+        "review_record_path": str(record_path),
+        "review_record_sha256": _sha256(record_path),
+        "goal": "keep the dispatch gate fail closed",
+        "non_goals": ["no provider or protocol change"],
+        "requirements": ["the resolver owns the roster"],
+        "invariants": ["INV-001"],
+        "trust_boundaries": ["none"],
+        "data_or_state_transitions": ["none"],
+        "rollback_contract": "revert the commit",
+        "compatibility_contract": "no public surface change",
+        "design_or_diff": design_or_diff,
+        "known_open_questions": [],
+        "rejected_alternatives_and_reasons": ["a second panel authority"],
+        "provider_data_allowlist": ["anthropic"],
+    }
+    packet_path.write_text(
+        "# packet\n\n```yaml\n" + yaml.safe_dump(context, sort_keys=True) + "```\n",
+        encoding="utf-8",
+    )
+    return packet_path
+
+
+def _resolve(
+    tmp_path: Path,
+    record: dict,
+    document: dict | None = None,
+    design_or_diff: str = "controller.py",
+) -> dict:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    record_path = tmp_path / "review-record.json"
+    _write_json(record_path, record)
+    packet_path = _packet_file(tmp_path, record_path, design_or_diff)
+    bound_record, record_digest, payload = bind_record(record_path)
+    bound_packet, packet_digest, packet = bind_packet(packet_path, bound_record, record_digest)
+    return select_full_council(
+        _panel() if document is None else document,
+        payload,
+        packet,
+        record_path=bound_record,
+        record_sha256=record_digest,
+        packet_path=bound_packet,
+        packet_sha256=packet_digest,
+    )
+
+
+def _families(manifest: dict, key: str = "selected") -> list[str]:
+    return [entry["family"] for entry in manifest[key]]
+
+
+def test_live_panel_roles_are_derived_from_private_authority() -> None:
+    root = _live_qualification()
     document = load_qualification(QUALIFICATION)
-    root = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
     reviewers = root["reviewers"]
     live = root["liveDispatch"]
     memberships = [family for group in live.values() if isinstance(group, list) for family in group]
     assert len(memberships) == len(set(memberships)) == len(reviewers)
-    assert live["leadFamily"] not in live["initialCritics"]
-    assert live["leadFamily"] not in live["targetedRefuters"]
+    for group in ("initialCritics", "conditionalCritics", "targetedRefuters"):
+        assert live["leadFamily"] not in live[group]
     assert all(
         reviewers[item.family]["dispatchEnabled"] is True
         for item in live_reviewers(document, "initial")
@@ -746,31 +965,16 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
         reviewers[item.family]["dispatchEnabled"] is True
         for item in live_reviewers(document, "targeted-refuter")
     )
-    grok = next(item for item in live_reviewers(document, "initial") if item.family == "grok")
-    assert grok.model == "xai-oauth/grok-4.5:xhigh"
-    assert grok.evidence_delivery == "repository"
-    glm = next(
-        item
-        for item in live_reviewers(document, "targeted-refuter")
-        if item.family == "glm"
-    )
-    assert glm.model == "opencode-go/glm-5.2:max"
-    assert glm.evidence_delivery == "repository"
-    assert reviewers["glm"]["tools"] == list(READ_ONLY_REPOSITORY_TOOLS)
-    canaries = [
-        str(entry["lastCanary"]) for entry in reviewers.values() if "lastCanary" in entry
-    ]
+    canaries = [str(entry["lastCanary"]) for entry in reviewers.values() if "lastCanary" in entry]
     assert canaries, "no lane records lastCanary"
     assert str(root["lastUpdated"]) >= max(canaries), (
         "qualification lastUpdated predates its newest lastCanary"
     )
 
 
-@pytest.mark.parametrize("group", ("initialCritics", "targetedRefuters"))
+@pytest.mark.parametrize("group", ("initialCritics", "conditionalCritics", "targetedRefuters"))
 def test_qualification_rejects_lead_as_live_reviewer(group: str) -> None:
-    if not QUALIFICATION.is_file():
-        pytest.skip("private qualification authority is not present in this checkout")
-    current = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
+    current = _live_qualification()
     current["liveDispatch"][group].append(current["liveDispatch"]["leadFamily"])
     with pytest.raises(QualificationError, match="lead family"):
         validate_qualification(current)
@@ -782,9 +986,7 @@ def test_qualification_schema_version_fails_closed() -> None:
 
 
 def test_private_qualification_live_gate_fails_closed() -> None:
-    if not QUALIFICATION.is_file():
-        pytest.skip("private qualification authority is not present in this checkout")
-    current = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
+    current = _live_qualification()
     family = current["liveDispatch"]["initialCritics"][0]
     current["reviewers"][family]["readOnlyBoundary"] = "unknown"
     with pytest.raises(QualificationError, match="readOnlyBoundary"):
@@ -792,21 +994,369 @@ def test_private_qualification_live_gate_fails_closed() -> None:
 
 
 def test_qualification_rejects_an_incomplete_evidence_contract() -> None:
-    if not QUALIFICATION.is_file():
-        pytest.skip("private qualification authority is not present in this checkout")
-    current = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
+    current = _live_qualification()
     current["reviewers"]["grok"].pop("canaryReceipt")
     with pytest.raises(QualificationError, match="incomplete evidence contract"):
         validate_qualification(current)
 
 
 def test_qualification_rejects_repository_delivery_without_repository_tools() -> None:
-    if not QUALIFICATION.is_file():
-        pytest.skip("private qualification authority is not present in this checkout")
-    current = yaml.safe_load(QUALIFICATION.read_text(encoding="utf-8"))
+    current = _live_qualification()
     current["reviewers"]["grok"]["tools"] = []
     with pytest.raises(QualificationError, match="for repository delivery"):
         validate_qualification(current)
+
+
+def test_qualification_pins_the_activated_panel_id() -> None:
+    """The resolver and the panel definition activate together or not at all."""
+    document = _panel()
+    document["liveDispatch"]["panelId"] = "critical-review-primary-v2"
+    with pytest.raises(QualificationError, match="panelId must be"):
+        validate_qualification(document)
+
+
+def test_safe_architecture_record_selects_every_critic_including_the_conditional_one(
+    tmp_path: Path,
+) -> None:
+    manifest = _resolve(tmp_path, _ready_record(tmp_path / "safe"))
+    assert _families(manifest) == ["claude-opus", "gemini", "grok", "claude"]
+    assert manifest["skipped"] == []
+    conditional = manifest["selected"][-1]
+    assert conditional["selectionClass"] == "conditional"
+    assert conditional["reasonCodes"] == [FABLE_POLICY.policy]
+    assert conditional["model"] == "anthropic/claude-fable-5:max"
+    assert conditional["lens"] == "architecture"
+    assert all(entry["selectionClass"] == "unconditional" for entry in manifest["selected"][:3])
+    assert all(
+        entry["reasonCodes"] == ["configured-primary-critic"] for entry in manifest["selected"][:3]
+    )
+
+
+def test_safe_design_record_selects_the_conditional_critic(tmp_path: Path) -> None:
+    """`initial` is the full-council resolution, not the record's review mode."""
+    manifest = _resolve(tmp_path, _design_record(tmp_path / "design"))
+    assert manifest["mode"] == "initial"
+    assert _families(manifest) == ["claude-opus", "gemini", "grok", "claude"]
+
+
+@pytest.mark.parametrize(
+    "domain",
+    (
+        "authorization",
+        "money-or-assets",
+        "privacy",
+        "release-supply-chain",
+        "secrets-cryptography",
+        "cross-system-boundary",
+        "public-protocol",
+    ),
+)
+def test_denied_and_ambiguous_domains_skip_only_the_conditional_critic(
+    tmp_path: Path, domain: str
+) -> None:
+    record = _with_domains(_ready_record(tmp_path / "denied"), [domain])
+    _remint_receipt(record)
+    manifest = _resolve(tmp_path, record)
+    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
+    assert manifest["skipped"] == [
+        {
+            "family": "claude",
+            "selectionClass": "conditional",
+            "reasonCodes": ["risk-domain-outside-allowlist"],
+        }
+    ]
+
+
+def test_one_denied_domain_beside_safe_domains_still_skips_the_conditional_critic(
+    tmp_path: Path,
+) -> None:
+    record = _with_domains(_ready_record(tmp_path / "mixed"), ["architecture", "privacy"])
+    manifest = _resolve(tmp_path, record)
+    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
+    assert _families(manifest, "skipped") == ["claude"]
+
+
+def test_an_applicable_proof_class_status_skips_the_conditional_critic(tmp_path: Path) -> None:
+    record = _ready_record(tmp_path / "proof-classes")
+    record["proof_classes"]["authorization"] = {
+        "status": "passed",
+        "evidence_or_justification": "the proven access path is cited",
+        "receipt_id": "focused-proof",
+    }
+    manifest = _resolve(tmp_path, record)
+    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
+    assert manifest["skipped"][0]["reasonCodes"] == ["authorization-proof-applicable"]
+
+
+# These two tests carry no deny-list token in their names on purpose: the filter
+# runs over absolute paths, and pytest derives `tmp_path` from the test name, so a
+# test called `..._security_...` would match its own directory and pass without
+# ever exercising the path it means to test. Each keeps a control resolution for
+# the same reason.
+def test_a_denied_changed_path_skips_the_conditional_critic(tmp_path: Path) -> None:
+    """The path filter holds even when the declared domain list looks safe."""
+    record = _ready_record(tmp_path / "subject")
+    control = _resolve(tmp_path / "control", record)
+    assert _families(control, "skipped") == []
+
+    _with_changed_file(record, tmp_path / "subject" / "oauth_gateway.py")
+    manifest = _resolve(tmp_path / "denied", record)
+    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
+    assert manifest["skipped"][0]["reasonCodes"] == ["security-sensitive-path"]
+
+
+def test_a_denied_packet_source_path_skips_the_conditional_critic(tmp_path: Path) -> None:
+    record = _ready_record(tmp_path / "subject")
+    control = _resolve(tmp_path / "control", record)
+    assert _families(control, "skipped") == []
+
+    manifest = _resolve(tmp_path / "denied", record, design_or_diff="src/auth/session.py")
+    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
+    assert manifest["skipped"][0]["reasonCodes"] == ["security-sensitive-path"]
+
+
+def test_every_independent_skip_reason_is_recorded(tmp_path: Path) -> None:
+    record = _with_domains(_ready_record(tmp_path / "everything"), ["privacy"])
+    record["proof_classes"]["authorization"] = {
+        "status": "passed",
+        "evidence_or_justification": "the authorization path is proven",
+        "receipt_id": "focused-proof",
+    }
+    _with_changed_file(record, tmp_path / "everything" / "tls_handshake.py")
+    manifest = _resolve(tmp_path, record)
+    assert manifest["skipped"][0]["reasonCodes"] == [
+        "authorization-proof-applicable",
+        "risk-domain-outside-allowlist",
+        "security-sensitive-path",
+    ]
+
+
+@pytest.mark.parametrize("domains", ([], ["not-a-real-domain"]))
+def test_empty_or_unknown_domains_fail_the_whole_record_not_just_the_critic(
+    tmp_path: Path, domains: list[str]
+) -> None:
+    """The strict whole-record failure is preserved, not softened into a skip."""
+    record = _with_domains(_ready_record(tmp_path / "domains"), domains)
+    assert select_review_action(record).action == "none"
+    with pytest.raises(QualificationError, match="does not authorize a full council"):
+        _resolve(tmp_path, record)
+
+
+def test_the_eligibility_policy_alone_still_names_an_empty_domain_list(tmp_path: Path) -> None:
+    record = _with_domains(_ready_record(tmp_path / "policy-only"), [])
+    assert fable_skip_reason_codes(FABLE_POLICY, record) == ("risk-domains-empty",)
+
+
+def test_targeted_refuter_resolution_never_contains_a_conditional_critic() -> None:
+    document = _panel()
+    assert [item.reviewer.family for item in conditional_critics(document)] == ["claude"]
+    assert [item.family for item in live_reviewers(document, "targeted-refuter")] == ["glm"]
+    assert [item.family for item in live_reviewers(document, "initial")] == [
+        "claude-opus",
+        "gemini",
+        "grok",
+    ]
+
+
+def test_the_unconditional_council_survives_an_absent_conditional_critic(
+    tmp_path: Path,
+) -> None:
+    manifest = _resolve(tmp_path, _ready_record(tmp_path / "nofable"), _panel(False))
+    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
+    assert manifest["skipped"] == []
+
+
+def test_opus_is_selected_for_every_full_council(tmp_path: Path) -> None:
+    for name, record in (
+        ("safe", _ready_record(tmp_path / "opus-safe")),
+        ("denied", _with_domains(_ready_record(tmp_path / "opus-denied"), ["privacy"])),
+    ):
+        manifest = _resolve(tmp_path / name, record)
+        opus = next(entry for entry in manifest["selected"] if entry["family"] == "claude-opus")
+        assert opus["model"] == "anthropic/claude-opus-5:max"
+        assert opus["selectionClass"] == "unconditional"
+
+
+def test_manifest_binds_the_record_packet_and_subject_digests(tmp_path: Path) -> None:
+    record = _ready_record(tmp_path / "binding")
+    manifest = _resolve(tmp_path, record)
+    record_path = (tmp_path / "review-record.json").resolve()
+    packet_path = (tmp_path / "packet.md").resolve()
+    assert manifest["schemaVersion"] == 1
+    assert manifest["panelId"] == LIVE_PANEL_ID
+    assert manifest["reviewRecordPath"] == str(record_path)
+    assert manifest["reviewRecordSha256"] == _sha256(record_path)
+    assert manifest["subjectDigest"] == proof_subject_digest(record)
+    assert manifest["packetPath"] == str(packet_path)
+    assert manifest["packetSha256"] == _sha256(packet_path)
+
+
+def test_manifest_binding_changes_with_the_record(tmp_path: Path) -> None:
+    first = _resolve(tmp_path / "one", _ready_record(tmp_path / "one" / "subject"))
+    second_record = _ready_record(tmp_path / "two" / "subject")
+    second_record["review_id"] = "CR-second"
+    second = _resolve(tmp_path / "two", second_record)
+    assert first["reviewRecordSha256"] != second["reviewRecordSha256"]
+    assert first["subjectDigest"] != second["subjectDigest"]
+
+
+def test_a_packet_bound_to_another_record_fails_closed(tmp_path: Path) -> None:
+    record_path = tmp_path / "review-record.json"
+    _write_json(record_path, _ready_record(tmp_path / "subject"))
+    other = tmp_path / "other-record.json"
+    _write_json(other, _ready_record(tmp_path / "other"))
+    packet = _packet_file(tmp_path, other)
+    bound_record, digest, _ = bind_record(record_path)
+    with pytest.raises(QualificationError, match="does not bind the resolved record"):
+        bind_packet(packet, bound_record, digest)
+
+
+def test_a_stale_packet_digest_fails_closed(tmp_path: Path) -> None:
+    record = _ready_record(tmp_path / "subject")
+    record_path = tmp_path / "review-record.json"
+    _write_json(record_path, record)
+    packet = _packet_file(tmp_path, record_path)
+    record["review_id"] = "CR-edited-after-the-packet"
+    _write_json(record_path, record)
+    bound_record, digest, _ = bind_record(record_path)
+    with pytest.raises(QualificationError, match="does not match the record digest"):
+        bind_packet(packet, bound_record, digest)
+
+
+def test_resolver_cli_persists_exactly_the_manifest_it_prints(tmp_path: Path, capsys) -> None:
+    qualification_path = tmp_path / "qualification.yml"
+    qualification_path.write_text(yaml.safe_dump(_panel()), encoding="utf-8")
+    record_path = tmp_path / "review-record.json"
+    _write_json(record_path, _ready_record(tmp_path / "subject"))
+    packet = _packet_file(tmp_path, record_path)
+    out = tmp_path / "selection" / "panel-selection.json"
+    argv = [
+        "initial",
+        "--record",
+        str(record_path),
+        "--packet",
+        str(packet),
+        "--out",
+        str(out),
+        "--qualification",
+        str(qualification_path),
+    ]
+    assert qualification.main(argv) == 0
+    printed = capsys.readouterr().out
+    assert out.read_text(encoding="utf-8") == printed
+    manifest = json.loads(printed)
+    assert _families(manifest) == ["claude-opus", "gemini", "grok", "claude"]
+
+    # A second resolution never silently replaces the roster that was dispatched.
+    with pytest.raises(SystemExit):
+        qualification.main(argv)
+    assert out.read_text(encoding="utf-8") == printed
+
+
+def test_resolver_cli_refuses_a_session_local_manifest(tmp_path: Path) -> None:
+    qualification_path = tmp_path / "qualification.yml"
+    qualification_path.write_text(yaml.safe_dump(_panel()), encoding="utf-8")
+    record_path = tmp_path / "review-record.json"
+    _write_json(record_path, _ready_record(tmp_path / "subject"))
+    packet = _packet_file(tmp_path, record_path)
+    out = SESSION_LOCAL_ROOT / "ephemeral" / "panel-selection.json"
+    with pytest.raises(SystemExit):
+        qualification.main(
+            [
+                "initial",
+                "--record",
+                str(record_path),
+                "--packet",
+                str(packet),
+                "--out",
+                str(out),
+                "--qualification",
+                str(qualification_path),
+            ]
+        )
+    assert not out.exists()
+
+
+def test_a_conditional_critic_activates_its_scope_and_role_together() -> None:
+    missing_eligibility = _panel()
+    missing_eligibility["reviewers"]["claude"].pop("eligibility")
+    with pytest.raises(QualificationError, match="eligibility"):
+        validate_qualification(missing_eligibility)
+
+    unqualified_scope = _panel()
+    scopes = unqualified_scope["reviewers"]["claude"]["qualification"]["scopes"]
+    scopes["non-security-architecture"] = {
+        "status": "failed",
+        "boundaryEvidence": ["lrhe-data/fable-max-refusals.json"],
+    }
+    with pytest.raises(QualificationError, match="must be 'passed'"):
+        validate_qualification(unqualified_scope)
+
+    stray = _panel()
+    stray["reviewers"]["gemini"]["eligibility"] = _conditional_entry()["eligibility"]
+    with pytest.raises(QualificationError, match="without the 'conditional_critic' role"):
+        validate_qualification(stray)
+
+
+def test_a_refused_scope_keeps_its_boundary_evidence() -> None:
+    document = _panel()
+    document["reviewers"]["claude"]["qualification"]["scopes"]["security"] = {
+        "status": "ineligible",
+        "boundaryEvidence": [],
+    }
+    with pytest.raises(QualificationError, match="must retain the evidence"):
+        validate_qualification(document)
+
+
+def test_conditional_selector_and_eligibility_config_are_exact() -> None:
+    downgraded = _panel()
+    downgraded["reviewers"]["claude"]["model"] = "anthropic/claude-fable-5:high"
+    with pytest.raises(QualificationError, match="thinking level 'max'"):
+        validate_qualification(downgraded)
+
+    mismatched = _panel()
+    mismatched["reviewers"]["claude"]["qualification"]["common"]["exactServedModelRequired"] = (
+        "anthropic/claude-opus-5"
+    )
+    with pytest.raises(QualificationError, match="exactServedModelRequired"):
+        validate_qualification(mismatched)
+
+    widened = _panel()
+    widened["reviewers"]["claude"]["eligibility"]["allRiskDomainsIn"] = [
+        *FABLE_POLICY.allowed_risk_domains,
+        "authorization",
+    ]
+    with pytest.raises(QualificationError, match="allRiskDomainsIn must be"):
+        validate_qualification(widened)
+
+    relaxed = _panel()
+    relaxed["reviewers"]["claude"]["eligibility"]["denyPathComponentRegex"] = r"(?i)nothing"
+    with pytest.raises(QualificationError, match="denyPathComponentRegex"):
+        validate_qualification(relaxed)
+
+    permissive = _panel()
+    permissive["reviewers"]["claude"]["eligibility"]["requiredProofClassStatuses"] = {
+        "authorization": "passed"
+    }
+    with pytest.raises(QualificationError, match="requiredProofClassStatuses"):
+        validate_qualification(permissive)
+
+
+def test_a_conditional_critic_can_never_declare_a_fallback() -> None:
+    document = _panel()
+    document["reviewers"]["claude"]["fallbackAllowed"] = True
+    with pytest.raises(QualificationError, match="never a fallback"):
+        validate_qualification(document)
+
+
+def test_the_scope_receipt_path_stays_inside_the_skill_data_root() -> None:
+    for bad in ("/etc/passwd.json", "../escape.json", "lrhe-data/cohort.yaml"):
+        document = _panel()
+        document["reviewers"]["claude"]["qualification"]["scopes"]["non-security-architecture"][
+            "canaryReceipt"
+        ] = bad
+        with pytest.raises(QualificationError, match="canaryReceipt"):
+            validate_qualification(document)
 
 
 def test_skill_preserves_critical_review_safety_controls() -> None:
@@ -895,13 +1445,9 @@ def test_epoch_freeze_fails_closed_on_bad_paths(tmp_path: Path) -> None:
     present.write_text("x\n", encoding="utf-8")
     base = ["freeze", "--record", str(draft), "--artifact", str(artifact)]
     assert epoch.main([*base, "--deleted", str(present)]) == epoch.EXIT_PRECONDITION
-    assert (
-        epoch.main([*base, "--changed", str(tmp_path / "absent.py")]) == epoch.EXIT_PRECONDITION
-    )
+    assert epoch.main([*base, "--changed", str(tmp_path / "absent.py")]) == epoch.EXIT_PRECONDITION
     assert epoch.main(base) == epoch.EXIT_PRECONDITION
-    assert (
-        epoch.main([*base, "--changed", str(present), str(present)]) == epoch.EXIT_PRECONDITION
-    )
+    assert epoch.main([*base, "--changed", str(present), str(present)]) == epoch.EXIT_PRECONDITION
 
 
 def test_epoch_bind_emits_a_verifiable_history_row(tmp_path: Path, capsys) -> None:
@@ -957,10 +1503,14 @@ def test_epoch_ledger_normalizes_reviewer_yields(tmp_path: Path, capsys) -> None
     code = epoch.main(
         [
             "ledger",
-            "--member", f"claude={claude}",
-            "--member", f"grok={grok}",
-            "--review-id", "CR-test",
-            "--out", str(out),
+            "--member",
+            f"claude={claude}",
+            "--member",
+            f"grok={grok}",
+            "--review-id",
+            "CR-test",
+            "--out",
+            str(out),
         ]
     )
     assert code == 0
@@ -986,8 +1536,11 @@ def test_epoch_ledger_refuses_bad_rows_existing_output_and_bad_members(tmp_path:
     malformed = tmp_path / "claude.json"
     _write_json(
         malformed,
-        {"summary": "s", "evidence": ["R1|P1|conf=0.855|claim=x|evidence=y|impact=z|verify=v"],
-         "unresolved": []},
+        {
+            "summary": "s",
+            "evidence": ["R1|P1|conf=0.855|claim=x|evidence=y|impact=z|verify=v"],
+            "unresolved": [],
+        },
     )
     out = tmp_path / "ledger.md"
     code = epoch.main(["ledger", "--member", f"claude={malformed}", "--out", str(out)])
@@ -1004,8 +1557,15 @@ def test_epoch_ledger_refuses_bad_rows_existing_output_and_bad_members(tmp_path:
     fresh = tmp_path / "fresh.md"
     assert (
         epoch.main(
-            ["ledger", "--member", f"grok={valid}", "--member", f"grok={valid}",
-             "--out", str(fresh)]
+            [
+                "ledger",
+                "--member",
+                f"grok={valid}",
+                "--member",
+                f"grok={valid}",
+                "--out",
+                str(fresh),
+            ]
         )
         == epoch.EXIT_PRECONDITION
     )
