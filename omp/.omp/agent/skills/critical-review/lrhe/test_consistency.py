@@ -352,10 +352,10 @@ def test_a_finished_step_stops_being_printed():
     reconstruct it by hand. Every step whose completion a gate can see now
     answers for itself.
     """
-    done = {"omp version": preflight.Result(preflight.PASS, "omp 17.1.8")}
+    done = {"omp version": preflight.Result(preflight.PASS, f"omp {preflight.EXPECTED_OMP}")}
     upgrade = next(todo for step, _why, todo in preflight.MANUAL_STEPS if "upgrade" in step)
     assert upgrade(done) is False
-    assert upgrade({"omp version": preflight.Result(preflight.FAIL, "17.1.4")}) is True
+    assert upgrade({"omp version": preflight.Result(preflight.FAIL, "older omp")}) is True
 
 
 def _fake_catalogue(path: Path, provider_id: str, models: list[dict]) -> None:
