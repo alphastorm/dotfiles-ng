@@ -58,6 +58,7 @@ from qualification import (  # noqa: E402
 SKILL = Path.home() / ".omp/agent/skills/critical-review"
 AGENTS = Path.home() / ".omp/agent/agents"
 CONFIG = Path.home() / ".omp/agent/config.yml"
+MODELS_CONFIG = Path.home() / ".omp/agent/models.yml"
 DATA = SKILL / "lrhe-data"
 # OMP's model cache. Read-only, and the only local answer to "does this selector
 # resolve", short of spending a request to find out.
@@ -247,8 +248,10 @@ def check_lanes_held() -> Result:
     return Result(PASS, f"evaluation-enabled {on} all canaried, held {off}")
 
 
+
+
 def _catalogue() -> dict[str, dict[str, set[str]]] | None:
-    """provider -> model -> offered efforts, from OMP's cache, or None if unreadable.
+    """Provider -> model -> cached efforts, before local model overrides.
 
     Scoped providers are keyed `<provider>:models-v1:<hash>` in the cache -- the
     suffix is a cache discriminator built from the provider id and a scope hash,
@@ -282,6 +285,55 @@ def _catalogue() -> dict[str, dict[str, set[str]]] | None:
     return catalogue
 
 
+def _configured_model_efforts() -> tuple[dict[str, dict[str, set[str]]], str | None]:
+    """Return the effective effort ladders replaced by OMP `modelOverrides`."""
+
+    if not MODELS_CONFIG.is_file():
+        return {}, None
+    try:
+        document = yaml.safe_load(MODELS_CONFIG.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return {}, f"{MODELS_CONFIG} is not readable YAML: {exc}"
+    if not isinstance(document, dict):
+        return {}, f"{MODELS_CONFIG} root must be a mapping"
+    providers = document.get("providers", {})
+    if not isinstance(providers, dict):
+        return {}, f"{MODELS_CONFIG} providers must be a mapping"
+
+    order = ("minimal", "low", "medium", "high", "xhigh", "max")
+    configured: dict[str, dict[str, set[str]]] = {}
+    for provider_id, provider_config in providers.items():
+        if not isinstance(provider_id, str) or not isinstance(provider_config, dict):
+            return {}, f"{MODELS_CONFIG} provider entries must be named mappings"
+        model_overrides = provider_config.get("modelOverrides", {})
+        if not isinstance(model_overrides, dict):
+            return {}, f"{MODELS_CONFIG} {provider_id}.modelOverrides must be a mapping"
+        for model_id, override in model_overrides.items():
+            if not isinstance(model_id, str) or not isinstance(override, dict):
+                return {}, f"{MODELS_CONFIG} model override entries must be named mappings"
+            thinking = override.get("thinking")
+            if thinking is None:
+                continue
+            if not isinstance(thinking, dict):
+                return {}, f"{MODELS_CONFIG} {provider_id}/{model_id}.thinking must be a mapping"
+            efforts = thinking.get("efforts", thinking.get("levels"))
+            if efforts is None:
+                minimum = thinking.get("minLevel")
+                maximum = thinking.get("maxLevel")
+                if minimum in order and maximum in order:
+                    first, last = order.index(minimum), order.index(maximum)
+                    efforts = list(order[first : max(first, last) + 1])
+            if not isinstance(efforts, list) or any(
+                not isinstance(effort, str) or effort not in order for effort in efforts
+            ):
+                return (
+                    {},
+                    f"{MODELS_CONFIG} {provider_id}/{model_id}.thinking has invalid efforts",
+                )
+            configured.setdefault(provider_id, {})[model_id] = set(efforts)
+    return configured, None
+
+
 def check_model_selectors() -> Result:
     """A selector that does not resolve fails at dispatch, once the council is running.
 
@@ -300,7 +352,9 @@ def check_model_selectors() -> Result:
     catalogue = _catalogue()
     if catalogue is None:
         return Result(UNKNOWN, f"{MODELS_DB} not readable; nothing to resolve against")
-
+    configured_efforts, config_problem = _configured_model_efforts()
+    if config_problem:
+        return Result(FAIL, config_problem)
     problems: list[str] = []
     resolved = 0
     for name, value in sorted(qualified.items()):
@@ -315,10 +369,14 @@ def check_model_selectors() -> Result:
             )
         elif model not in offered:
             problems.append(f"{name}: {provider} serves no model {model!r}")
-        elif effort and offered[model] and effort not in offered[model]:
-            problems.append(f"{name}: {model} offers {sorted(offered[model])}, not {effort!r}")
         else:
-            resolved += 1
+            effective_efforts = configured_efforts.get(provider, {}).get(model, offered[model])
+            if effort and effort not in effective_efforts:
+                problems.append(
+                    f"{name}: {model} offers {sorted(effective_efforts)}, not {effort!r}"
+                )
+            else:
+                resolved += 1
 
     if problems:
         return Result(FAIL, "; ".join(problems))
@@ -772,28 +830,30 @@ def check_conditional_critic_scope() -> Result:
 
     problems: list[str] = []
     for critic in critics:
-        family = critic.reviewer.family
+        reviewer_id = critic.reviewer.reviewer_id
         selector = critic.reviewer.model
         agent = critic.reviewer.agent
         definition = AGENTS / f"{agent}.md"
         try:
             front = canary._agent_frontmatter(definition)
         except canary.TraceCanaryError as exc:
-            problems.append(f"{family}: {exc}")
+            problems.append(f"{reviewer_id}: {exc}")
             continue
         text = definition.read_text(encoding="utf-8")
         if front.get("model") != [selector]:
             problems.append(
-                f"{family}: agent model {front.get('model')!r} != qualification [{selector!r}]"
+                f"{reviewer_id}: agent model {front.get('model')!r} != "
+                f"qualification [{selector!r}]"
             )
         if front.get("thinkingLevel") != critic.policy.thinking_level:
             problems.append(
-                f"{family}: thinkingLevel {front.get('thinkingLevel')!r} != "
+                f"{reviewer_id}: thinkingLevel {front.get('thinkingLevel')!r} != "
                 f"{critic.policy.thinking_level!r}"
             )
         if overrides.get(agent) != selector:
             problems.append(
-                f"{family}: active override {overrides.get(agent)!r} != qualification {selector!r}"
+                f"{reviewer_id}: active override {overrides.get(agent)!r} != "
+                f"qualification {selector!r}"
             )
         expected_tools = (
             list(READ_ONLY_REPOSITORY_TOOLS)
@@ -802,12 +862,14 @@ def check_conditional_critic_scope() -> Result:
         )
         if front.get("tools") != expected_tools:
             problems.append(
-                f"{family}: agent tools {front.get('tools')!r} != {expected_tools!r} for "
+                f"{reviewer_id}: agent tools {front.get('tools')!r} != {expected_tools!r} for "
                 f"{critic.reviewer.evidence_delivery} delivery"
             )
         if critic.policy.read_only_marker not in text:
-            problems.append(f"{family}: agent is missing {critic.policy.read_only_marker}")
-        problems.extend(_cohort_problems(family, SKILL / critic.scope_receipt, definition, critic))
+            problems.append(f"{reviewer_id}: agent is missing {critic.policy.read_only_marker}")
+        problems.extend(
+            _cohort_problems(reviewer_id, SKILL / critic.scope_receipt, definition, critic)
+        )
     if problems:
         return Result(FAIL, "; ".join(problems))
     return Result(

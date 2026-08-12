@@ -1,4 +1,5 @@
 task:
   disabledAgents:
     - review-claude
+    - review-daybreak-blue
     - review-minimax-floor

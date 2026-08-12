@@ -407,6 +407,7 @@ def _qualification(path: Path, selector: str) -> None:
             "panelId": qualification.LIVE_PANEL_ID,
             "leadFamily": "gpt",
             "initialCritics": [],
+            "initialSpecialists": [],
             "conditionalCritics": [],
             "targetedRefuters": [],
             "evaluationOnly": ["kimi"],
@@ -419,6 +420,14 @@ def _qualification(path: Path, selector: str) -> None:
                 "dispatchRole": "evaluation_only",
                 "dispatchEnabled": False,
                 "evaluationEnabled": True,
+                "model_family": "kimi",
+                "correlation_group": "kimi-k3",
+                "provider_route": "opencode-go",
+                "access_profile": "opencode-go-default",
+                "data_allowlist_key": "opencode",
+                "execution_mode": "task_agent",
+                "independence_class": qualification.NO_LINEAGE_CLAIM,
+                "authority": qualification.NO_LIVE_AUTHORITY,
                 "providerCanary": "passed",
                 "schemaValid": True,
                 "readOnlyBoundary": "passed",
@@ -510,10 +519,14 @@ def test_preflight_resolves_selectors_through_the_hashed_provider_key(tmp_path, 
     _fake_catalogue(
         db,
         "opencode-go:models-v1:1gswkvxt6z2u9",
-        [{"id": "kimi-k3", "thinking": {"efforts": ["low", "high", "max"]}}],
+        [
+            {"id": "kimi-k3", "thinking": {"efforts": ["low", "high", "max"]}},
+            {"id": "no-effort-metadata"},
+        ],
     )
     monkeypatch.setattr(preflight, "MODELS_DB", db)
     monkeypatch.setattr(preflight, "SKILL", tmp_path)
+    monkeypatch.setattr(preflight, "MODELS_CONFIG", tmp_path / "absent-models.yml")
 
     _qualification(tmp_path, "opencode-go/kimi-k3")
     assert preflight.check_model_selectors().state == preflight.PASS
@@ -525,6 +538,7 @@ def test_preflight_resolves_selectors_through_the_hashed_provider_key(tmp_path, 
         ("opencode-nope/kimi-k3", "no cached catalogue"),
         ("opencode-go/kimi-k9", "serves no model"),
         ("opencode-go/kimi-k3:medium", "not 'medium'"),
+        ("opencode-go/no-effort-metadata:max", "offers [], not 'max'"),
     ):
         _qualification(tmp_path, selector)
         result = preflight.check_model_selectors()
@@ -532,9 +546,65 @@ def test_preflight_resolves_selectors_through_the_hashed_provider_key(tmp_path, 
         assert expected in result.detail, result.detail
 
 
+def test_preflight_applies_effective_model_effort_overrides(tmp_path, monkeypatch):
+    db = tmp_path / "models.db"
+    models_config = tmp_path / "models.yml"
+    _fake_catalogue(
+        db,
+        "openai-codex",
+        [
+            {
+                "id": "gpt-daybreak-blue-latest",
+                "thinking": {"efforts": ["minimal", "low", "medium", "high", "xhigh"]},
+            }
+        ],
+    )
+    monkeypatch.setattr(preflight, "MODELS_DB", db)
+    monkeypatch.setattr(preflight, "MODELS_CONFIG", models_config)
+    monkeypatch.setattr(preflight, "SKILL", tmp_path)
+    _qualification(tmp_path, "openai-codex/gpt-daybreak-blue-latest:max")
+
+    unresolved = preflight.check_model_selectors()
+    assert unresolved.state == preflight.FAIL
+    assert "not 'max'" in unresolved.detail
+
+    models_config.write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "openai-codex": {
+                        "modelOverrides": {
+                            "gpt-daybreak-blue-latest": {
+                                "thinking": {
+                                    "mode": "effort",
+                                    "efforts": ["low", "medium", "high", "xhigh", "max"],
+                                    "defaultLevel": "low",
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    resolved = preflight.check_model_selectors()
+    assert resolved.state == preflight.PASS, resolved.detail
+
+    configured = yaml.safe_load(models_config.read_text(encoding="utf-8"))
+    configured["providers"]["openai-codex"]["modelOverrides"][
+        "gpt-daybreak-blue-latest"
+    ]["thinking"]["efforts"] = []
+    models_config.write_text(yaml.safe_dump(configured), encoding="utf-8")
+    empty_ladder = preflight.check_model_selectors()
+    assert empty_ladder.state == preflight.FAIL
+    assert "offers [], not 'max'" in empty_ladder.detail
+
+
 def test_an_absent_catalogue_is_unknown_rather_than_resolved(tmp_path, monkeypatch):
     """On CI there is no OMP cache, and "nothing to check" is not "checks out"."""
     monkeypatch.setattr(preflight, "MODELS_DB", tmp_path / "absent.db")
+    monkeypatch.setattr(preflight, "MODELS_CONFIG", tmp_path / "absent-models.yml")
     monkeypatch.setattr(preflight, "SKILL", tmp_path)
     _qualification(tmp_path, "opencode-go/kimi-k3")
     assert preflight.check_model_selectors().state == preflight.UNKNOWN
@@ -790,6 +860,14 @@ def _conditional_scope_fixture(tmp_path, monkeypatch, attempts: int = 20) -> tup
         "dispatchRole": "conditional_critic",
         "dispatchEnabled": True,
         "evaluationEnabled": True,
+        "model_family": "claude",
+        "correlation_group": "claude-fable-5",
+        "provider_route": "anthropic",
+        "access_profile": "anthropic-subscription",
+        "data_allowlist_key": "anthropic",
+        "execution_mode": "task_agent",
+        "independence_class": qualification.CROSS_FAMILY,
+        "authority": qualification.INDEPENDENT_EVIDENCE,
         "lens": "architecture",
         "agent": "review-claude",
         "model": FABLE_SELECTOR,
@@ -962,8 +1040,8 @@ def test_manifest_reason_codes_match_the_resolver_vocabulary():
     declared = set(schema["$defs"]["reasonCode"]["enum"])
     emitted = {
         qualification.UNCONDITIONAL_REASON_CODE,
+        qualification.SPECIALIST_REASON_CODE,
         qualification.TARGETED_REFUTER_REASON_CODE,
-        qualification.QUALIFICATION_CANARY_REASON_CODE,
         *qualification.SKIP_REASON_CODES,
         *qualification.CONDITIONAL_POLICIES,
     }
@@ -974,11 +1052,78 @@ def test_manifest_reason_codes_match_the_resolver_vocabulary():
     assert skip_only == set(qualification.SKIP_REASON_CODES)
     assert set(schema["properties"]["mode"]["enum"]) == set(qualification.MANIFEST_MODES)
     assert schema["properties"]["schemaVersion"]["const"] == (qualification.MANIFEST_SCHEMA_VERSION)
+    assert set(schema["required"]) == set(schema["properties"])
+
+
+
+
+def test_manifest_role_standing_matches_the_resolver_role_table():
+    """One role table, two enforcers. A schema that disagreed would be the loophole."""
+    schema = json.loads((HERE / "panel-selection.schema.json").read_text(encoding="utf-8"))
+    row = schema["$defs"]["selectedReviewer"]
+    assert set(row["properties"]["role"]["enum"]) == set(qualification.SELECTABLE_ROLES)
+    assert set(row["properties"]["selectionClass"]["enum"]) == set(qualification.SELECTION_CLASSES)
+    assert row["properties"]["execution_mode"]["const"] == "task_agent"
+    assert qualification.EXECUTION_MODES == ("task_agent",)
+    pinned = {
+        branch["if"]["properties"]["role"]["const"]: (
+            branch["then"]["properties"]["independence_class"]["const"],
+            branch["then"]["properties"]["authority"]["const"],
+        )
+        for branch in row["allOf"]
+        if "role" in branch["if"]["properties"]
+    }
+    assert pinned == {
+        role: qualification.LIVE_ROLES[role] for role in qualification.SELECTABLE_ROLES
+    }
+
+
+def test_a_selected_row_names_every_field_the_resolver_emits():
+    """Additional properties are closed in both the resolver and schema.
+
+    The Daybreak fixture must be exactly what `_selected` returns for a native
+    supplemental specialist, key for key and value for value. A fixture that
+    drifted would let schema tests pass against a manifest the resolver never
+    emits.
+    """
+    schema = json.loads((HERE / "panel-selection.schema.json").read_text(encoding="utf-8"))
+    row = schema["$defs"]["selectedReviewer"]
+    assert set(row["required"]) == set(row["properties"])
+    assert "family" not in row["properties"], "the manifest joins on reviewer_id, not lineage"
+    assert set(_OPUS_ENTRY) == set(row["required"])
+    specialist = qualification.LiveReviewer(
+        **{
+            key: _DAYBREAK_ENTRY[key]
+            for key in (
+                "reviewer_id",
+                "model_family",
+                "correlation_group",
+                "provider_route",
+                "access_profile",
+                "data_allowlist_key",
+                "execution_mode",
+                "role",
+                "independence_class",
+                "authority",
+                "agent",
+                "lens",
+                "model",
+                "evidence_delivery",
+            )
+        }
+    )
+    assert (
+        qualification._selected(specialist, "specialist", (qualification.SPECIALIST_REASON_CODE,))
+        == _DAYBREAK_ENTRY
+    )
+    skipped = schema["$defs"]["skippedReviewer"]
+    assert set(skipped["required"]) == set(skipped["properties"])
+    assert "family" not in skipped["properties"]
 
 
 def _manifest(mode: str, selected: list[dict], skipped: list[dict] | None = None) -> dict:
     return {
-        "schemaVersion": 1,
+        "schemaVersion": qualification.MANIFEST_SCHEMA_VERSION,
         "panelId": qualification.LIVE_PANEL_ID,
         "mode": mode,
         "reviewRecordPath": "/frozen/review-record.json",
@@ -986,13 +1131,26 @@ def _manifest(mode: str, selected: list[dict], skipped: list[dict] | None = None
         "subjectDigest": "b" * 64,
         "packetPath": "/frozen/packet.md",
         "packetSha256": "c" * 64,
+        "qualificationPath": qualification.QUALIFICATION_RELATIVE_PATH,
+        "qualificationSha256": "d" * 64,
+        "authorityPath": "/frozen/qualification.yml",
+        "authoritySha256": "e" * 64,
         "selected": selected,
         "skipped": [] if skipped is None else skipped,
     }
 
 
 _OPUS_ENTRY = {
-    "family": "claude-opus",
+    "reviewer_id": "claude-opus",
+    "model_family": "claude",
+    "correlation_group": "claude-opus-5",
+    "provider_route": "anthropic",
+    "access_profile": "anthropic-cvp-approved-org",
+    "data_allowlist_key": "anthropic",
+    "execution_mode": "task_agent",
+    "role": "primary_critic",
+    "independence_class": qualification.CROSS_FAMILY,
+    "authority": qualification.INDEPENDENT_EVIDENCE,
     "agent": "review-claude-opus",
     "lens": "security",
     "model": "anthropic/claude-opus-5:max",
@@ -1001,13 +1159,33 @@ _OPUS_ENTRY = {
     "reasonCodes": ["configured-primary-critic"],
 }
 _FABLE_ENTRY = {
-    "family": "claude",
+    **_OPUS_ENTRY,
+    "reviewer_id": "claude",
+    "correlation_group": "claude-fable-5",
+    "access_profile": "anthropic-subscription",
+    "role": "conditional_critic",
     "agent": "review-claude",
     "lens": "architecture",
     "model": FABLE_SELECTOR,
-    "evidence_delivery": "repository",
     "selectionClass": "conditional",
     "reasonCodes": [FABLE_POLICY.policy],
+}
+_DAYBREAK_ENTRY = {
+    **_OPUS_ENTRY,
+    "reviewer_id": "daybreak-blue",
+    "model_family": "gpt",
+    "correlation_group": "gpt-5.6-sol",
+    "provider_route": "openai-codex",
+    "access_profile": "daybreak-blue",
+    "data_allowlist_key": "openai",
+    "execution_mode": "task_agent",
+    "role": qualification.SPECIALIST_ROLE,
+    "independence_class": qualification.SAME_LINEAGE_BLIND_SAMPLE,
+    "authority": qualification.SUPPLEMENTAL_EVIDENCE,
+    "agent": "review-daybreak-blue",
+    "model": "openai-codex/gpt-daybreak-blue-latest:max",
+    "selectionClass": "specialist",
+    "reasonCodes": [qualification.SPECIALIST_REASON_CODE],
 }
 
 
@@ -1021,7 +1199,7 @@ def test_a_council_manifest_must_keep_an_unconditional_member():
             [_OPUS_ENTRY],
             [
                 {
-                    "family": "claude",
+                    "reviewer_id": "claude",
                     "selectionClass": "conditional",
                     "reasonCodes": ["risk-domain-outside-allowlist"],
                 }
@@ -1033,20 +1211,75 @@ def test_a_council_manifest_must_keep_an_unconditional_member():
     )
 
 
-def test_a_qualification_canary_manifest_cannot_pose_as_a_council():
-    """The bootstrap manifest is structurally separate, not merely labelled."""
+def test_the_fixed_rosters_admit_no_additive_lane_and_no_retired_mode():
+    """Targeted refutation is a distinct roster, and the canary mode is gone."""
     schema = json.loads((HERE / "panel-selection.schema.json").read_text(encoding="utf-8"))
     validator = Draft202012Validator(schema)
-    canary_entry = {
-        **_FABLE_ENTRY,
-        "reasonCodes": [qualification.QUALIFICATION_CANARY_REASON_CODE],
-    }
-    validator.validate(_manifest("qualification-canary", [canary_entry]))
-    assert list(
-        validator.iter_errors(_manifest("qualification-canary", [_OPUS_ENTRY, canary_entry]))
-    ), "a qualification canary carrying an unconditional roster validated"
     assert list(validator.iter_errors(_manifest("targeted-refuter", [_FABLE_ENTRY]))), (
         "a targeted-refuter roster containing a conditional critic validated"
+    )
+    assert list(validator.iter_errors(_manifest("qualification-canary", [_FABLE_ENTRY]))), (
+        "the retired qualification-canary mode still validated"
+    )
+
+
+def test_a_specialist_never_satisfies_the_independent_critic_floor():
+    """Structural, not advisory: a specialist-only roster cannot validate as a council."""
+    schema = json.loads((HERE / "panel-selection.schema.json").read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema)
+    validator.validate(_manifest("initial", [_OPUS_ENTRY, _DAYBREAK_ENTRY, _FABLE_ENTRY]))
+    assert list(validator.iter_errors(_manifest("initial", [_DAYBREAK_ENTRY]))), (
+        "a council of supplemental specialists alone validated"
+    )
+    assert list(validator.iter_errors(_manifest("targeted-refuter", [_DAYBREAK_ENTRY]))), (
+        "a targeted-refuter roster containing a specialist validated"
+    )
+
+
+def test_a_specialist_row_cannot_relabel_what_its_evidence_is_worth():
+    schema = json.loads((HERE / "panel-selection.schema.json").read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema)
+    for field, value in (
+        ("authority", qualification.INDEPENDENT_EVIDENCE),
+        ("independence_class", qualification.CROSS_FAMILY),
+        ("selectionClass", "unconditional"),
+        ("reasonCodes", [qualification.UNCONDITIONAL_REASON_CODE]),
+    ):
+        row = {**_DAYBREAK_ENTRY, field: value}
+        assert list(validator.iter_errors(_manifest("initial", [_OPUS_ENTRY, row]))), (
+            f"a specialist row overriding {field} validated"
+        )
+
+
+def test_every_selected_row_uses_native_task_dispatch():
+    """Reviewer identity never selects a second transport implementation."""
+
+    schema = json.loads((HERE / "panel-selection.schema.json").read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema)
+    validator.validate(_manifest("initial", [_OPUS_ENTRY, _DAYBREAK_ENTRY]))
+    for entry in (_OPUS_ENTRY, _DAYBREAK_ENTRY):
+        forged = {**entry, "execution_mode": "isolated_profile_worker"}
+        assert list(validator.iter_errors(_manifest("initial", [_OPUS_ENTRY, forged]))), (
+            f"{entry['reviewer_id']} accepted a non-native execution mode"
+        )
+
+
+def test_a_held_lane_can_never_appear_on_a_roster():
+    """`no_live_authority` is not a weaker seat at the table; it is no seat."""
+    schema = json.loads((HERE / "panel-selection.schema.json").read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema)
+    held = {
+        **_FABLE_ENTRY,
+        "role": "disabled",
+        "independence_class": qualification.NO_LINEAGE_CLAIM,
+        "authority": qualification.NO_LIVE_AUTHORITY,
+    }
+    for mode in qualification.MANIFEST_MODES:
+        assert list(validator.iter_errors(_manifest(mode, [_OPUS_ENTRY, held]))), (
+            f"a {mode} roster carried a lane held out of live dispatch"
+        )
+    assert "disabled" not in qualification.SELECTABLE_ROLES, (
+        "a role no resolution can emit is still spellable in a manifest row"
     )
 
 
@@ -1060,17 +1293,73 @@ def _live_document() -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def test_the_private_qualification_matches_this_resolver_while_fable_is_held():
-    """Schema migration does not itself activate the conditional critic.
+def test_the_private_qualification_matches_this_resolver_while_daybreak_is_held():
+    """Schema migration does not itself activate an additive lane.
 
-    The private authority must stay readable while Fable remains in `disabled`
-    and `conditionalCritics` stays empty until the quota hold is lifted.
+    The private authority must stay readable while Fable remains in `disabled` and
+    `conditionalCritics` stays empty until the quota hold is lifted, and while the
+    blind security specialist is prewired in `disabled` with no live authority. A
+    lane being representable is not a lane being on the council.
     """
     document = _live_document()
+    live = document["liveDispatch"]
     assert document["schemaVersion"] == qualification.SCHEMA_VERSION
-    assert document["liveDispatch"]["panelId"] == qualification.LIVE_PANEL_ID
-    assert document["liveDispatch"]["conditionalCritics"] == []
-    assert "claude" in document["liveDispatch"]["disabled"]
+    assert live["panelId"] == qualification.LIVE_PANEL_ID
+    assert live["conditionalCritics"] == []
+    assert "claude" in live["disabled"]
+    assert live["initialSpecialists"] == []
+    assert "daybreak-blue" in live["disabled"]
+    daybreak = document["reviewers"]["daybreak-blue"]
+    assert daybreak["dispatchRole"] == qualification.SPECIALIST_ROLE
+    assert daybreak["dispatchEnabled"] is False
+    assert daybreak["execution_mode"] == "task_agent"
+    assert daybreak["authority"] == qualification.SUPPLEMENTAL_EVIDENCE
+    assert daybreak["independence_class"] == qualification.SAME_LINEAGE_BLIND_SAMPLE
+    assert daybreak["blockers"]
+    qualification.validate_qualification(document)
+
+
+def test_every_live_lane_uses_native_task_dispatch():
+    """The dispatcher never guesses a transport or recognizes a reviewer id."""
+
+    document = _live_document()
+    for reviewer_id, entry in document["reviewers"].items():
+        assert entry["execution_mode"] == "task_agent", reviewer_id
+        assert entry["model_family"], reviewer_id
+        assert entry["access_profile"], reviewer_id
+        assert "reviewer_id" not in entry, reviewer_id
+    daybreak = document["reviewers"]["daybreak-blue"]
+    assert daybreak["access_profile"] != daybreak["provider_route"]
+
+
+@needs_agents
+def test_daybreak_agent_matches_native_specialist_authority():
+    document = _live_document()
+    entry = document["reviewers"]["daybreak-blue"]
+    agent_path = preflight.AGENTS / f"{entry['agent']}.md"
+    front = canary._agent_frontmatter(agent_path)
+    config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))
+    task = config["task"]
+    models = yaml.safe_load(preflight.MODELS_CONFIG.read_text(encoding="utf-8"))
+    daybreak_thinking = models["providers"]["openai-codex"]["modelOverrides"][
+        "gpt-daybreak-blue-latest"
+    ]["thinking"]
+
+    assert front["name"] == "review-daybreak-blue"
+    assert front["model"] == [entry["model"]]
+    assert front["thinkingLevel"] == "max"
+    assert daybreak_thinking == {
+        "mode": "effort",
+        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "defaultLevel": "low",
+    }
+    assert tuple(front["tools"]) == qualification.READ_ONLY_REPOSITORY_TOOLS
+    assert task["agentModelOverrides"][entry["agent"]] == entry["model"]
+    assert (entry["agent"] in task["disabledAgents"]) is (not entry["dispatchEnabled"])
+
+    charter = agent_path.read_text(encoding="utf-8")
+    assert "supplemental security specialist" in charter
+    assert "never count toward the independent review floor" in charter
 
 
 @needs_agents
@@ -1109,6 +1398,27 @@ def test_no_fallback_is_declared_for_a_conditional_critic():
         assert not [key for key in front if "fallback" in key.lower()]
 
 
+@needs_agents
+def test_live_reviewers_have_explicit_empty_runtime_fallback_chains():
+    """Native account rotation is allowed; model substitution is not."""
+    document = _live_document()
+    config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))
+    chains = (config.get("retry") or {}).get("fallbackChains") or {}
+    live = document["liveDispatch"]
+    pinned = {
+        *live["initialCritics"],
+        *(live.get("initialSpecialists") or []),
+        *(live.get("conditionalCritics") or []),
+        *live["targetedRefuters"],
+        "daybreak-blue",
+    }
+    for reviewer_id in sorted(pinned):
+        selector = document["reviewers"][reviewer_id]["model"]
+        assert chains.get(selector) == [], (
+            f"{reviewer_id} must have an exact empty retry.fallbackChains entry"
+        )
+
+
 def test_max_concurrency_fits_the_largest_selected_council():
     """One `parallel()` wave must hold every member the resolver can select."""
     document = _live_document()
@@ -1116,7 +1426,11 @@ def test_max_concurrency_fits_the_largest_selected_council():
         pytest.skip("the active config is not present in this checkout")
     config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))
     live = document["liveDispatch"]
-    largest = len(live["initialCritics"]) + len(live.get("conditionalCritics") or [])
+    largest = (
+        len(live["initialCritics"])
+        + len(live.get("initialSpecialists") or [])
+        + len(live.get("conditionalCritics") or [])
+    )
     assert (config.get("task") or {}).get("maxConcurrency", 0) >= largest
 
 

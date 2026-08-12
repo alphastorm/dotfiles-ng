@@ -18,27 +18,42 @@ Live reviewer membership and roles are configuration, not prose:
 - `lrhe/qualification.py` is the sole executable resolver for that definition,
   and it owns roster choice: it reads the frozen record and the immutable packet
   and emits the selection manifest the dispatcher consumes verbatim;
-- `leadFamily` records the accountable GPT lead and MUST NOT appear in
-  `initialCritics`, `conditionalCritics`, or `targetedRefuters`;
-- `initialCritics` are unconditional: they run on every full council;
+- a reviewer's identity is its `reviewers` key, its `reviewer_id`. That is the
+  only join key for manifests, dispatch, results, receipts, and ledger rows.
+  `model_family` and `correlation_group` describe which model answers for a lane,
+  and two reviewer ids may deliberately share one lineage — so never join, dedupe,
+  or substitute on the family;
+- `leadFamily` records the accountable GPT lead's lineage. No reviewer in
+  `initialCritics`, `conditionalCritics`, or `targetedRefuters` may share it, and
+  no two `initialCritics` may share a `model_family` with each other;
+- `initialCritics` are unconditional: they run on every full council and they are
+  the only members that satisfy the independent critic floor;
+- `initialSpecialists` are additive and always on once qualified. A specialist is
+  a blind sample of a lineage the panel already carries, so its `authority` is
+  `supplemental_evidence`: it resolves after every critic, it never replaces or
+  falls back to another member, and a council without an independent critic is
+  never rescued by one;
 - `conditionalCritics` are additive and record-selected. A conditional critic
   dispatches only when the frozen record and packet satisfy its named eligibility
-  policy. It never replaces another member, never falls back to another family,
+  policy. It never replaces another member, never falls back to another lane,
   and its absence never shrinks the unconditional council;
-- `initialCritics`, `conditionalCritics`, and `targetedRefuters` are distinct
-  dispatch roles;
-- `evaluationOnly` lanes and every experiment in `lrhe/panels.yaml` never
-  authorize live review dispatch.
+- `initialCritics`, `initialSpecialists`, `conditionalCritics`, and
+  `targetedRefuters` are distinct dispatch roles;
+- `evaluationOnly` and `disabled` lanes, and every experiment in
+  `lrhe/panels.yaml`, never authorize live review dispatch. A lane in `disabled`
+  may be fully described — role, lineage, transport, lens, agent, model — and is
+  still not on the council. Being representable is not being selected.
 
 Before dispatch:
 
 1. Treat repository work and research as cloud-permitted by default. Block hosted review only when the user, repository, or applicable customer policy explicitly marks the task or material `NO_CLOUD`; do not infer a separate confidential or local-only category.
-2. Read `skill://critical-review/qualification.yml`. A provider is enabled only when its family is in the required `liveDispatch` role, its reviewer entry says `dispatchEnabled: true`, its canary and read-only gates pass, its exact model selector still resolves, and the packet authorizes that provider. A conditional critic additionally needs a fresh passed receipt for the exact scope being requested; a scope recorded `ineligible` is an explicit supported boundary, not a failure to work around.
+2. Read `skill://critical-review/qualification.yml`. A reviewer is enabled only when its `reviewer_id` is in the required `liveDispatch` role, its reviewer entry says `dispatchEnabled: true`, its canary and read-only gates pass, its exact model selector still resolves, and the packet authorizes its provider. A conditional critic additionally needs a fresh passed receipt for the exact scope being requested; a scope recorded `ineligible` is an explicit supported boundary, not a failure to work around.
 3. Treat an explicit provider list in the user's current `/skill:critical-review` request as authorization for only those providers and this review epoch.
 4. If hosted-provider authorization is absent or unclear, invoke Ask before transmitting material. Recommend the safest qualified subset and include a no-effect/non-cloud option. Never send `NO_CLOUD` material to a hosted reviewer.
 5. Never include credential values, private keys, tokens, cookies, environment dumps, secret files, or generated credential stores in a packet. A source file containing secret-handling code may be reviewed only when the chosen providers are authorized for it; redact actual values without changing the reviewed semantics.
+6. Authorize by `access_profile`, not by `provider_route`. Several lanes with different entitlements share one route, so route-level permission proves nothing about a given lane. A member whose `access_profile` is not authorized is `missing`. The packet carries the two grants separately and the resolver matches both exactly: `provider_data_allowlist` must contain the reviewer's `data_allowlist_key`, the vendor-rights token (`anthropic`, `google`, `xai`, `opencode`, `openai`), and `reviewer_access_profile_allowlist` must contain its exact `access_profile`. A missing grant on an unconditional critic or an always-on specialist fails the whole resolution — neither has a not-selected state, so dropping one would silently shrink a council; a conditional critic is skipped with `provider-data-rights-not-authorized` or `access-profile-not-authorized` recorded. In particular, `daybreak-blue` shares the native `openai-codex` route with ordinary GPT lanes and requires both `openai` vendor authorization and explicit `daybreak-blue` access-profile authorization. OMP may rotate among sibling Codex credentials when one account returns a TAC policy denial; credential selection is transport behavior, not a substitute for either packet grant, and authorization for `daybreak-blue` never implies authorization for another lane.
 
-A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is `missing`, never `approved`. Do not substitute another GPT model for an unavailable external family. A conditional critic the resolver did not select is `not_selected/ineligible` — it is neither `missing` nor a failed member, and it never becomes a reason to re-run another family.
+A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is `missing`, never `approved`. Do not substitute another GPT model for an unavailable external lane. A conditional critic the resolver did not select is `not_selected/ineligible` — it is neither `missing` nor a failed member, and it never becomes a reason to re-run another reviewer. A specialist that fails is `missing` like any member, and because its authority is supplemental it never blocks the council and never earns a retry that an independent critic would not get.
 
 ### Internal resource compatibility
 
@@ -309,6 +324,7 @@ design_or_diff:
 known_open_questions:
 rejected_alternatives_and_reasons:
 provider_data_allowlist:
+reviewer_access_profile_allowlist:
 ```
 
 Use concise facts and primary anchors. Include the decision record, not hidden
@@ -338,16 +354,22 @@ It prints exactly the bytes it wrote, validates against
 `lrhe/panel-selection.schema.json`, refuses to overwrite an existing manifest,
 refuses a session-local output path, and refuses to answer at all unless
 `lrhe/review_sequence.py` returns `full-council` for that record. The manifest
-binds the absolute record path, the record SHA-256, the proof-subject digest, and
-the packet path and SHA-256, so a record or packet edited after resolution no
-longer matches the roster it produced.
+binds the absolute record path, the record SHA-256, the proof-subject digest,
+the packet path and SHA-256, the exact qualification authority path and digest,
+and the resolver's own `qualificationPath` and `qualificationSha256`. A changed
+record, packet, authority, or resolver no longer matches the roster it produced.
+The manifest is file- and directory-synced, appears atomically, and lands
+read-only; the dispatcher never needs to `chmod` it or accept partial bytes.
 
 Use the eval kernel as the dispatcher, never as a review authority. Load the
 manifest's `selected` array and the already-complete immutable assignments into
 eval state; do not retype, filter, reorder, or supplement the roster, and never
-re-derive membership from prose or from `qualification.yml` by hand. Each entry's
-`selectionClass` says whether the member is `unconditional` or `conditional`;
-neither class changes how its result is weighed, because there is no vote. Every
+re-derive membership from prose or from `qualification.yml` by hand. Join every
+row by `reviewer_id`; `model_family` is descriptive and two rows may share it.
+Each entry's `selectionClass` says whether the member is `unconditional`,
+`specialist`, or `conditional`, and its `authority` says what its result is worth
+— `supplemental_evidence` never counts toward the independent critic floor. No
+class changes how a result is weighed in debate, because there is no vote. Every
 `skipped` entry carries its sorted `reasonCodes` and is reported as
 `not_selected/ineligible` in the close report. Do not add a live
 `lrhe/dispatch.py` or another workflow framework. `workflowz` is generic guidance
@@ -361,29 +383,39 @@ the successful handles:
 
 ```python
 def dispatch_member(member):
-    family = member["family"]
+    reviewer_id = member["reviewer_id"]
     try:
+        if member["execution_mode"] != "task_agent":
+            raise ValueError(f"unsupported execution_mode {member['execution_mode']!r}")
         node = agent(
-            assignments[family],
+            assignments[reviewer_id],
             agent=member["agent"],
-            label=f"{review_id}:{family}",
+            label=f"{review_id}:{reviewer_id}",
             schema_mode="strict",
             handle=True,
         )
-        return {"family": family, "state": "completed", "node": node}
+        return {
+            "reviewer_id": reviewer_id,
+            "execution_mode": member["execution_mode"],
+            "state": "completed",
+            "node": node,
+        }
     except Exception as exc:
         return {
-            "family": family,
+            "reviewer_id": reviewer_id,
+            "execution_mode": member["execution_mode"],
             "state": "failed",
             "error": f"{type(exc).__name__}: {exc}",
         }
+
 
 round_one = parallel(
     [lambda member=member: dispatch_member(member) for member in members]
 )
 receipts = [
     {
-        "family": result["family"],
+        "reviewer_id": result["reviewer_id"],
+        "execution_mode": result["execution_mode"],
         "state": result["state"],
         "handle": result.get("node", {}).get("handle"),
     }
@@ -392,11 +424,22 @@ receipts = [
 display(receipts)
 ```
 
+Every selected member runs through the same native Task path. The resolved agent
+definition supplies its exact model, thinking level, tool surface, charter, and
+output schema. OMP owns credential selection inside the provider route, including
+sibling-account rotation on account-scoped TAC denials; the dispatcher neither
+pins an OAuth account nor implements a second retry policy. A served model that
+differs from the manifest's exact selector is still invalid.
+Every live reviewer selector, plus a held lane being qualified, must also have an
+exact empty entry in OMP's `retry.fallbackChains`. Native credential rotation may
+preserve the selector; model fallback may not change it.
+
 `handle=True` retains the `agent://` identity but also returns text and structured
 data. Keep `round_one` in kernel state; display only the receipt projection above.
 Immediately run `epoch.py recheck` outside the cell. Only after it passes may a
-second eval cell write each completed `node["data"]` to `<family>.json`, after
-which the lead reads the files separately. A failed recheck makes every node stale.
+second eval cell write each completed member's `node["data"]` to
+`<reviewer_id>.json`, after which the lead reads the files separately. A failed
+recheck makes every node stale.
 
 `parallel()` owns the critic barrier. `pipeline()` may make already-authorized
 mechanical stages readable, but it never substitutes for triage, provider
@@ -406,10 +449,11 @@ cardinality bound; the resolver-owned roster remains the hard dispatch bound.
 `completion()` must never decide Result or Disposition. The standard path uses the
 deterministic `epoch.py ledger` scaffold rather than an LLM normalizer.
 
-Use each resolver result's `agent`, `model`, and `evidence_delivery`; do not
-maintain a second live panel list. Each `agent()` call must pass
-`schema_mode="strict"` and omit `schema` so the agent's configured schema remains
-authoritative. Use this complete assignment shape:
+Use each resolver result's `agent`, `model`, `evidence_delivery`, and
+`execution_mode`; do not maintain a second live panel list and never override the
+agent's model or schema at dispatch. Every live row uses `task_agent`. Each
+`agent()` call must pass `schema_mode="strict"` and omit `schema` so the agent's
+configured schema remains authoritative. Use this complete assignment shape:
 
 ```text
 # Target
@@ -467,7 +511,7 @@ After the epoch digest recheck passes, create `~/.omp/agent/critical-review/<rev
 | Field | Required content |
 | --- | --- |
 | Finding | Stable ID and normalized root-cause claim |
-| Sources | Reviewer families that raised it; agreement is metadata only |
+| Sources | Reviewer ids that raised it; agreement is metadata only, and two ids on one `model_family` are one lineage agreeing with itself |
 | Evidence | Verified source, log, test, or artifact anchors |
 | Severity | P0, P1, P2, or P3 |
 | Confidence | Confidence in evidence, not rhetoric |
@@ -480,9 +524,16 @@ After the epoch digest recheck passes, create `~/.omp/agent/critical-review/<rev
 Scaffold the table mechanically; keep only the judgment manual:
 
 ```bash
-python3 lrhe/epoch.py ledger --member claude=claude.json --member grok=grok.json \
+python3 lrhe/epoch.py ledger --manifest panel-selection.json \
+  --member claude=claude.json --member grok=grok.json \
   --review-id <review-id> --out ledger.md
 ```
+
+Each `--member` key is a `reviewer_id` exactly as the selection manifest names it,
+and it becomes that row's `Sources` cell — so a finding traces back to the lane
+that raised it rather than to a lineage two lanes may share.
+The command refuses any member key absent from that immutable manifest; a typo
+cannot mint finding provenance for a lane that was never selected.
 
 Each saved reviewer yield becomes one row per evidence and unresolved item with
 the mechanical columns filled and `unresolved` prefilled as the U-row Result;
@@ -540,7 +591,7 @@ reviewers with `python3 lrhe/qualification.py targeted-refuter`. That roster is
 fixed and separate: it never contains a conditional critic and takes no record or
 packet. There is at most
 one targeted refutation for the entire review sequence. Select one returned
-family that did not originate the claim when possible, then launch one reviewer
+reviewer that did not originate the claim when possible, then launch one reviewer
 task with `schemaMode: strict`. Give it only:
 
 ```text
@@ -571,7 +622,7 @@ Recheck epoch digests once more before final disposition. Mark the review stale 
 
 - review ID and packet path;
 - exact epoch and digest status;
-- each selected reviewer's model family and `completed`, `missing`, or `invalid` state;
+- each selected reviewer's `reviewer_id`, `model_family`, `authority`, and `completed`, `missing`, or `invalid` state;
 - the selection manifest path and digest, plus every `not_selected/ineligible` lane with its reason codes;
 - ledger path;
 - every blocking or unresolved P0/P1;

@@ -21,6 +21,7 @@ from qualification import (
     QualificationError,
     READ_ONLY_REPOSITORY_TOOLS,
     SCHEMA_VERSION,
+    bind_qualification,
     bind_packet,
     bind_record,
     conditional_critics,
@@ -762,11 +763,35 @@ def _live_qualification() -> dict:
     return document
 
 
-def _unconditional_entry(agent: str, model: str, lens: str) -> dict:
+# route -> the vendor-rights token that route's material is cleared under. The
+# route is per account and the token is per vendor, so the mapping is explicit
+# rather than derived: `opencode-go` and `opencode-judge` are two accounts with
+# one licence grant behind them.
+_VENDOR_TOKENS = {
+    "anthropic": "anthropic",
+    "google-antigravity": "google",
+    "xai-oauth": "xai",
+    "opencode-go": "opencode",
+    "openai-codex": "openai",
+}
+
+
+def _unconditional_entry(
+    agent: str, model: str, lens: str, *, model_family: str, correlation_group: str
+) -> dict:
+    route = model.split("/", 1)[0]
     return {
         "dispatchRole": "primary_critic",
         "dispatchEnabled": True,
         "evaluationEnabled": True,
+        "model_family": model_family,
+        "correlation_group": correlation_group,
+        "provider_route": route,
+        "access_profile": f"{route}-default",
+        "data_allowlist_key": _VENDOR_TOKENS[route],
+        "execution_mode": "task_agent",
+        "independence_class": qualification.CROSS_FAMILY,
+        "authority": qualification.INDEPENDENT_EVIDENCE,
         "lens": lens,
         "agent": agent,
         "model": model,
@@ -784,6 +809,14 @@ def _conditional_entry() -> dict:
         "dispatchRole": "conditional_critic",
         "dispatchEnabled": True,
         "evaluationEnabled": True,
+        "model_family": "claude",
+        "correlation_group": "claude-fable-5",
+        "provider_route": "anthropic",
+        "access_profile": "anthropic-subscription",
+        "data_allowlist_key": "anthropic",
+        "execution_mode": "task_agent",
+        "independence_class": qualification.CROSS_FAMILY,
+        "authority": qualification.INDEPENDENT_EVIDENCE,
         "lens": "architecture",
         "agent": "review-claude",
         "model": "anthropic/claude-fable-5:max",
@@ -816,23 +849,93 @@ def _conditional_entry() -> dict:
     }
 
 
-def _panel(with_conditional: bool = True) -> dict:
-    """One synthetic v6 panel: three unconditional critics and one conditional."""
+_DAYBREAK_SELECTOR = "openai-codex/gpt-daybreak-blue-latest:max"
+
+
+def _specialist_entry(*, enabled: bool) -> dict:
+    """One native Task security specialist on the accountable lead's lineage."""
+
+    return {
+        "dispatchRole": qualification.SPECIALIST_ROLE,
+        "dispatchEnabled": enabled,
+        "evaluationEnabled": False,
+        "model_family": "gpt",
+        "correlation_group": "gpt-5.6-sol",
+        "provider_route": "openai-codex",
+        "access_profile": "daybreak-blue",
+        "data_allowlist_key": "openai",
+        "execution_mode": "task_agent",
+        "independence_class": qualification.SAME_LINEAGE_BLIND_SAMPLE,
+        "authority": qualification.SUPPLEMENTAL_EVIDENCE,
+        "lens": "security",
+        "agent": "review-daybreak-blue",
+        "model": _DAYBREAK_SELECTOR,
+        "providerCanary": "passed",
+        "schemaValid": True,
+        "readOnlyBoundary": "passed",
+        "evidenceDelivery": "repository",
+        "tools": list(READ_ONLY_REPOSITORY_TOOLS),
+        "canaryReceipt": "lrhe-data/review-daybreak-blue-trace.json",
+    }
+
+
+def _panel(with_conditional: bool = True, specialist_group: str = "") -> dict:
+    """One synthetic v7 panel with optional conditional and specialist lanes.
+
+    `specialist_group` names where the Daybreak-shaped lane is listed:
+    `initialSpecialists` for a qualified always-on specialist, `disabled` for one
+    that is prewired and held. Empty declares no specialist at all.
+    """
+
     reviewers = {
         "claude-opus": _unconditional_entry(
-            "review-claude-opus", "anthropic/claude-opus-5:max", "security"
+            "review-claude-opus",
+            "anthropic/claude-opus-5:max",
+            "security",
+            model_family="claude",
+            correlation_group="claude-opus-5",
         ),
         "gemini": _unconditional_entry(
-            "review-gemini", "google-antigravity/gemini-3.6-flash:high", "whole_repo"
+            "review-gemini",
+            "google-antigravity/gemini-3.6-flash:high",
+            "whole_repo",
+            model_family="gemini",
+            correlation_group="gemini-3.6-flash",
         ),
-        "grok": _unconditional_entry("review-grok", "xai-oauth/grok-4.5:xhigh", "adversarial"),
+        "grok": _unconditional_entry(
+            "review-grok",
+            "xai-oauth/grok-4.5:xhigh",
+            "adversarial",
+            model_family="grok",
+            correlation_group="grok-4.5",
+        ),
         "glm": {
-            **_unconditional_entry("review-glm-floor", "opencode-go/glm-5.2:max", "refuter"),
+            **_unconditional_entry(
+                "review-glm-floor",
+                "opencode-go/glm-5.2:max",
+                "refuter",
+                model_family="glm",
+                correlation_group="glm-5.2",
+            ),
             "dispatchRole": "targeted_refuter",
         },
     }
     if with_conditional:
         reviewers["claude"] = _conditional_entry()
+    live = {
+        "panelId": LIVE_PANEL_ID,
+        "leadFamily": "gpt",
+        "initialCritics": ["claude-opus", "gemini", "grok"],
+        "initialSpecialists": [],
+        "conditionalCritics": ["claude"] if with_conditional else [],
+        "targetedRefuters": ["glm"],
+        "evaluationOnly": [],
+        "disabled": [],
+    }
+    if specialist_group:
+        enabled = specialist_group == "initialSpecialists"
+        reviewers["daybreak-blue"] = _specialist_entry(enabled=enabled)
+        live[specialist_group] = ["daybreak-blue"]
     return {
         "schemaVersion": SCHEMA_VERSION,
         "canaryLedgers": {
@@ -844,15 +947,7 @@ def _panel(with_conditional: bool = True) -> dict:
                 "authority": "live-qualification",
             }
         },
-        "liveDispatch": {
-            "panelId": LIVE_PANEL_ID,
-            "leadFamily": "gpt",
-            "initialCritics": ["claude-opus", "gemini", "grok"],
-            "conditionalCritics": ["claude"] if with_conditional else [],
-            "targetedRefuters": ["glm"],
-            "evaluationOnly": [],
-            "disabled": [],
-        },
+        "liveDispatch": live,
         "reviewers": reviewers,
     }
 
@@ -896,7 +991,29 @@ def _with_changed_file(record: dict, path: Path) -> dict:
     return record
 
 
-def _packet_file(tmp_path: Path, record_path: Path, design_or_diff: str = "controller.py") -> Path:
+# Every grant the synthetic panel's lanes need, so a test that changes one grant
+# is changing exactly the thing it names. `daybreak-blue` is present because the
+# specialist rides the same roster; a packet that withheld it would be testing
+# the authorization gate rather than whatever the caller meant to test.
+_PACKET_VENDORS = ["anthropic", "google", "openai", "opencode", "xai"]
+_PACKET_ACCESS_PROFILES = [
+    "anthropic-default",
+    "anthropic-subscription",
+    "daybreak-blue",
+    "google-antigravity-default",
+    "opencode-go-default",
+    "xai-oauth-default",
+]
+
+
+def _packet_file(
+    tmp_path: Path,
+    record_path: Path,
+    design_or_diff: str = "controller.py",
+    *,
+    vendors: list[str] | None = None,
+    access_profiles: list[str] | None = None,
+) -> Path:
     packet_path = tmp_path / "packet.md"
     context = {
         "review_record_path": str(record_path),
@@ -912,7 +1029,10 @@ def _packet_file(tmp_path: Path, record_path: Path, design_or_diff: str = "contr
         "design_or_diff": design_or_diff,
         "known_open_questions": [],
         "rejected_alternatives_and_reasons": ["a second panel authority"],
-        "provider_data_allowlist": ["anthropic"],
+        "provider_data_allowlist": list(_PACKET_VENDORS if vendors is None else vendors),
+        "reviewer_access_profile_allowlist": list(
+            _PACKET_ACCESS_PROFILES if access_profiles is None else access_profiles
+        ),
     }
     packet_path.write_text(
         "# packet\n\n```yaml\n" + yaml.safe_dump(context, sort_keys=True) + "```\n",
@@ -926,26 +1046,45 @@ def _resolve(
     record: dict,
     document: dict | None = None,
     design_or_diff: str = "controller.py",
+    *,
+    vendors: list[str] | None = None,
+    access_profiles: list[str] | None = None,
 ) -> dict:
     tmp_path.mkdir(parents=True, exist_ok=True)
     record_path = tmp_path / "review-record.json"
     _write_json(record_path, record)
-    packet_path = _packet_file(tmp_path, record_path, design_or_diff)
+    packet_path = _packet_file(
+        tmp_path,
+        record_path,
+        design_or_diff,
+        vendors=vendors,
+        access_profiles=access_profiles,
+    )
     bound_record, record_digest, payload = bind_record(record_path)
     bound_packet, packet_digest, packet = bind_packet(packet_path, bound_record, record_digest)
+    authority_path = tmp_path / "qualification.yml"
+    authority_path.write_text(
+        yaml.safe_dump(_panel() if document is None else document),
+        encoding="utf-8",
+    )
+    bound_authority, authority_digest, authority = bind_qualification(authority_path)
     return select_full_council(
-        _panel() if document is None else document,
+        authority,
         payload,
         packet,
         record_path=bound_record,
         record_sha256=record_digest,
         packet_path=bound_packet,
         packet_sha256=packet_digest,
+        authority_path=bound_authority,
+        authority_sha256=authority_digest,
     )
 
 
-def _families(manifest: dict, key: str = "selected") -> list[str]:
-    return [entry["family"] for entry in manifest[key]]
+
+
+def _reviewer_ids(manifest: dict, key: str = "selected") -> list[str]:
+    return [entry["reviewer_id"] for entry in manifest[key]]
 
 
 def test_live_panel_roles_are_derived_from_private_authority() -> None:
@@ -953,16 +1092,19 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
     document = load_qualification(QUALIFICATION)
     reviewers = root["reviewers"]
     live = root["liveDispatch"]
-    memberships = [family for group in live.values() if isinstance(group, list) for family in group]
+    memberships = [
+        reviewer_id for group in live.values() if isinstance(group, list) for reviewer_id in group
+    ]
     assert len(memberships) == len(set(memberships)) == len(reviewers)
     for group in ("initialCritics", "conditionalCritics", "targetedRefuters"):
-        assert live["leadFamily"] not in live[group]
+        for reviewer_id in live[group]:
+            assert reviewers[reviewer_id]["model_family"] != live["leadFamily"]
     assert all(
-        reviewers[item.family]["dispatchEnabled"] is True
+        reviewers[item.reviewer_id]["dispatchEnabled"] is True
         for item in live_reviewers(document, "initial")
     )
     assert all(
-        reviewers[item.family]["dispatchEnabled"] is True
+        reviewers[item.reviewer_id]["dispatchEnabled"] is True
         for item in live_reviewers(document, "targeted-refuter")
     )
     canaries = [str(entry["lastCanary"]) for entry in reviewers.values() if "lastCanary" in entry]
@@ -973,10 +1115,14 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
 
 
 @pytest.mark.parametrize("group", ("initialCritics", "conditionalCritics", "targetedRefuters"))
-def test_qualification_rejects_lead_as_live_reviewer(group: str) -> None:
+def test_qualification_rejects_the_lead_lineage_as_a_live_reviewer(group: str) -> None:
+    """Independence is checked against the lineage, never against the reviewer id."""
     current = _live_qualification()
-    current["liveDispatch"][group].append(current["liveDispatch"]["leadFamily"])
-    with pytest.raises(QualificationError, match="lead family"):
+    members = current["liveDispatch"][group]
+    if not members:
+        pytest.skip(f"liveDispatch.{group} is empty in this checkout")
+    current["reviewers"][members[0]]["model_family"] = current["liveDispatch"]["leadFamily"]
+    with pytest.raises(QualificationError, match="accountable lead's own lineage"):
         validate_qualification(current)
 
 
@@ -987,8 +1133,8 @@ def test_qualification_schema_version_fails_closed() -> None:
 
 def test_private_qualification_live_gate_fails_closed() -> None:
     current = _live_qualification()
-    family = current["liveDispatch"]["initialCritics"][0]
-    current["reviewers"][family]["readOnlyBoundary"] = "unknown"
+    reviewer_id = current["liveDispatch"]["initialCritics"][0]
+    current["reviewers"][reviewer_id]["readOnlyBoundary"] = "unknown"
     with pytest.raises(QualificationError, match="readOnlyBoundary"):
         validate_qualification(current)
 
@@ -1015,11 +1161,100 @@ def test_qualification_pins_the_activated_panel_id() -> None:
         validate_qualification(document)
 
 
+def test_qualification_rejects_two_critics_from_one_model_family() -> None:
+    """Two samples of one lineage are one opinion, however the lanes are named."""
+    document = _panel()
+    document["reviewers"]["claude-opus-twin"] = _unconditional_entry(
+        "review-claude-opus-twin",
+        "anthropic/claude-opus-5:max",
+        "adversarial",
+        model_family="claude",
+        correlation_group="claude-opus-5",
+    )
+    document["liveDispatch"]["initialCritics"].append("claude-opus-twin")
+    with pytest.raises(QualificationError, match="two samples of one lineage"):
+        validate_qualification(document)
+
+
+def test_a_specialist_may_share_the_lead_lineage_but_a_critic_may_not() -> None:
+    """The exemption is the role: a specialist is a blind sample, not a peer."""
+    document = _panel(specialist_group="initialSpecialists")
+    specialist = document["reviewers"]["daybreak-blue"]
+    assert specialist["model_family"] == document["liveDispatch"]["leadFamily"]
+    validate_qualification(document)
+
+    document["liveDispatch"]["initialSpecialists"] = []
+    document["liveDispatch"]["initialCritics"].append("daybreak-blue")
+    specialist["dispatchRole"] = "primary_critic"
+    specialist["independence_class"] = qualification.CROSS_FAMILY
+    specialist["authority"] = qualification.INDEPENDENT_EVIDENCE
+    with pytest.raises(QualificationError, match="accountable lead's own lineage"):
+        validate_qualification(document)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("independence_class", qualification.CROSS_FAMILY, "independence_class must be"),
+        ("authority", qualification.INDEPENDENT_EVIDENCE, "authority must be"),
+        ("model_family", "", "model_family must be a non-empty string"),
+        ("correlation_group", "", "correlation_group must be a non-empty string"),
+        ("access_profile", "", "access_profile must be a non-empty string"),
+        ("execution_mode", "task_agent_but_isolated", "execution_mode must be one of"),
+    ),
+)
+def test_qualification_rejects_malformed_specialist_semantics(
+    field: str, value: str, message: str
+) -> None:
+    """A specialist cannot promote itself to independent, nor hide how it is run."""
+    document = _panel(specialist_group="initialSpecialists")
+    document["reviewers"]["daybreak-blue"][field] = value
+    with pytest.raises(QualificationError, match=message):
+        validate_qualification(document)
+
+
+def test_a_specialist_cannot_carry_a_conditional_eligibility_block() -> None:
+    """Scope and role activate together, and a specialist has no eligibility policy."""
+    document = _panel(specialist_group="initialSpecialists")
+    document["reviewers"]["daybreak-blue"]["eligibility"] = _conditional_entry()["eligibility"]
+    with pytest.raises(QualificationError, match="declares eligibility without"):
+        validate_qualification(document)
+
+
+@pytest.mark.parametrize(
+    "reviewer_id",
+    ("claude-opus", "gemini", "grok", "glm", "claude", "daybreak-blue"),
+)
+def test_no_reviewer_can_declare_a_model_fallback(reviewer_id: str) -> None:
+    """Credential rotation may preserve identity; model substitution may not."""
+    document = _panel(specialist_group="initialSpecialists")
+    document["reviewers"][reviewer_id]["fallbackAllowed"] = True
+    with pytest.raises(QualificationError, match="may never change models"):
+        validate_qualification(document)
+
+
+def test_a_specialist_is_only_listed_as_a_specialist_or_held() -> None:
+    document = _panel(specialist_group="initialSpecialists")
+    document["liveDispatch"]["initialSpecialists"] = []
+    document["liveDispatch"]["targetedRefuters"].append("daybreak-blue")
+    with pytest.raises(QualificationError, match="dispatchRole must be one of"):
+        validate_qualification(document)
+
+
+def test_retired_profile_binding_cannot_reenter_native_task_dispatch() -> None:
+    """A stale profile block must not silently become a second routing authority."""
+
+    document = _panel(specialist_group="initialSpecialists")
+    document["reviewers"]["daybreak-blue"]["profileBinding"] = {"profile": "daybreak"}
+    with pytest.raises(QualificationError, match="profileBinding is no longer supported"):
+        validate_qualification(document)
+
+
 def test_safe_architecture_record_selects_every_critic_including_the_conditional_one(
     tmp_path: Path,
 ) -> None:
     manifest = _resolve(tmp_path, _ready_record(tmp_path / "safe"))
-    assert _families(manifest) == ["claude-opus", "gemini", "grok", "claude"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "claude"]
     assert manifest["skipped"] == []
     conditional = manifest["selected"][-1]
     assert conditional["selectionClass"] == "conditional"
@@ -1036,7 +1271,7 @@ def test_safe_design_record_selects_the_conditional_critic(tmp_path: Path) -> No
     """`initial` is the full-council resolution, not the record's review mode."""
     manifest = _resolve(tmp_path, _design_record(tmp_path / "design"))
     assert manifest["mode"] == "initial"
-    assert _families(manifest) == ["claude-opus", "gemini", "grok", "claude"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "claude"]
 
 
 @pytest.mark.parametrize(
@@ -1057,10 +1292,10 @@ def test_denied_and_ambiguous_domains_skip_only_the_conditional_critic(
     record = _with_domains(_ready_record(tmp_path / "denied"), [domain])
     _remint_receipt(record)
     manifest = _resolve(tmp_path, record)
-    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok"]
     assert manifest["skipped"] == [
         {
-            "family": "claude",
+            "reviewer_id": "claude",
             "selectionClass": "conditional",
             "reasonCodes": ["risk-domain-outside-allowlist"],
         }
@@ -1072,8 +1307,8 @@ def test_one_denied_domain_beside_safe_domains_still_skips_the_conditional_criti
 ) -> None:
     record = _with_domains(_ready_record(tmp_path / "mixed"), ["architecture", "privacy"])
     manifest = _resolve(tmp_path, record)
-    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
-    assert _families(manifest, "skipped") == ["claude"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok"]
+    assert _reviewer_ids(manifest, "skipped") == ["claude"]
 
 
 def test_an_applicable_proof_class_status_skips_the_conditional_critic(tmp_path: Path) -> None:
@@ -1084,7 +1319,7 @@ def test_an_applicable_proof_class_status_skips_the_conditional_critic(tmp_path:
         "receipt_id": "focused-proof",
     }
     manifest = _resolve(tmp_path, record)
-    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok"]
     assert manifest["skipped"][0]["reasonCodes"] == ["authorization-proof-applicable"]
 
 
@@ -1097,21 +1332,21 @@ def test_a_denied_changed_path_skips_the_conditional_critic(tmp_path: Path) -> N
     """The path filter holds even when the declared domain list looks safe."""
     record = _ready_record(tmp_path / "subject")
     control = _resolve(tmp_path / "control", record)
-    assert _families(control, "skipped") == []
+    assert _reviewer_ids(control, "skipped") == []
 
     _with_changed_file(record, tmp_path / "subject" / "oauth_gateway.py")
     manifest = _resolve(tmp_path / "denied", record)
-    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok"]
     assert manifest["skipped"][0]["reasonCodes"] == ["security-sensitive-path"]
 
 
 def test_a_denied_packet_source_path_skips_the_conditional_critic(tmp_path: Path) -> None:
     record = _ready_record(tmp_path / "subject")
     control = _resolve(tmp_path / "control", record)
-    assert _families(control, "skipped") == []
+    assert _reviewer_ids(control, "skipped") == []
 
     manifest = _resolve(tmp_path / "denied", record, design_or_diff="src/auth/session.py")
-    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok"]
     assert manifest["skipped"][0]["reasonCodes"] == ["security-sensitive-path"]
 
 
@@ -1149,20 +1384,112 @@ def test_the_eligibility_policy_alone_still_names_an_empty_domain_list(tmp_path:
 
 def test_targeted_refuter_resolution_never_contains_a_conditional_critic() -> None:
     document = _panel()
-    assert [item.reviewer.family for item in conditional_critics(document)] == ["claude"]
-    assert [item.family for item in live_reviewers(document, "targeted-refuter")] == ["glm"]
-    assert [item.family for item in live_reviewers(document, "initial")] == [
+    assert [item.reviewer.reviewer_id for item in conditional_critics(document)] == ["claude"]
+    assert [item.reviewer_id for item in live_reviewers(document, "targeted-refuter")] == ["glm"]
+    assert [item.reviewer_id for item in live_reviewers(document, "initial")] == [
         "claude-opus",
         "gemini",
         "grok",
     ]
+    assert qualification.live_specialists(document) == ()
+
+
+def test_a_qualified_specialist_resolves_after_every_critic(tmp_path: Path) -> None:
+    """One roster, and the order of that array is the dispatch order."""
+    document = _panel(specialist_group="initialSpecialists")
+    manifest = _resolve(tmp_path, _ready_record(tmp_path / "specialist"), document)
+    assert _reviewer_ids(manifest) == [
+        "claude-opus",
+        "gemini",
+        "grok",
+        "daybreak-blue",
+        "claude",
+    ]
+    specialist = manifest["selected"][3]
+    assert specialist["selectionClass"] == "specialist"
+    assert specialist["role"] == qualification.SPECIALIST_ROLE
+    assert specialist["independence_class"] == qualification.SAME_LINEAGE_BLIND_SAMPLE
+    assert specialist["authority"] == qualification.SUPPLEMENTAL_EVIDENCE
+    assert specialist["reasonCodes"] == [qualification.SPECIALIST_REASON_CODE]
+    assert specialist["model"] == _DAYBREAK_SELECTOR
+    assert specialist["correlation_group"] == "gpt-5.6-sol"
+    assert specialist["access_profile"] == "daybreak-blue"
+    assert specialist["execution_mode"] == "task_agent"
+    assert specialist["agent"] == "review-daybreak-blue"
+    configured = document["reviewers"]["daybreak-blue"]
+    assert configured["evidenceDelivery"] == "repository"
+    assert tuple(configured["tools"]) == READ_ONLY_REPOSITORY_TOOLS
+
+
+def test_every_selected_member_uses_native_task_dispatch(tmp_path: Path) -> None:
+    """Critics and same-lineage specialists share one resolved transport."""
+
+    document = _panel(specialist_group="initialSpecialists")
+    manifest = _resolve(tmp_path, _ready_record(tmp_path / "transport"), document)
+    assert {entry["execution_mode"] for entry in manifest["selected"]} == {"task_agent"}
+    legacy = {
+        "profile",
+        "profile_config_sha256",
+        "account_witness",
+        "canary_receipt_path",
+        "canary_receipt_sha256",
+    }
+    assert all(not (legacy & set(entry)) for entry in manifest["selected"])
+
+
+def test_a_held_specialist_validates_and_never_enters_live_selection(tmp_path: Path) -> None:
+    """Prewiring is not activation: readable, resolvable against, and absent."""
+    document = _panel(specialist_group="disabled")
+    validate_qualification(document)
+    assert qualification.live_specialists(document) == ()
+    manifest = _resolve(tmp_path, _ready_record(tmp_path / "held"), document)
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "claude"]
+
+
+def test_a_held_specialist_needs_no_earned_gate_keys() -> None:
+    """Prewiring declares intent; it does not claim a canary has passed."""
+
+    document = _panel(specialist_group="disabled")
+    held = document["reviewers"]["daybreak-blue"]
+    for key in ("providerCanary", "schemaValid", "readOnlyBoundary"):
+        held.pop(key)
+    validate_qualification(document)
+    assert qualification.live_specialists(document) == ()
+
+
+def test_specialists_cannot_stand_in_for_the_independent_critic_floor(tmp_path: Path) -> None:
+    """A council of blind samples of the lead's own lineage is not a council."""
+    document = _panel(False, specialist_group="initialSpecialists")
+    document["liveDispatch"]["initialCritics"] = []
+    for reviewer_id in ("claude-opus", "gemini", "grok"):
+        document["reviewers"].pop(reviewer_id)
+    with pytest.raises(QualificationError, match="selects no independent critic"):
+        _resolve(tmp_path, _ready_record(tmp_path / "floorless"), document)
+
+
+def test_native_specialist_qualification_loads_without_transport_receipts(
+    tmp_path: Path,
+) -> None:
+    """The authority file is self-contained; OMP owns credential routing."""
+
+    root = tmp_path / "skill"
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "qualification.yml"
+    path.write_text(
+        yaml.safe_dump(_panel(specialist_group="initialSpecialists")),
+        encoding="utf-8",
+    )
+    loaded = load_qualification(path)
+    daybreak = loaded["reviewers"]["daybreak-blue"]
+    assert daybreak["execution_mode"] == "task_agent"
+    assert "profileBinding" not in daybreak
 
 
 def test_the_unconditional_council_survives_an_absent_conditional_critic(
     tmp_path: Path,
 ) -> None:
     manifest = _resolve(tmp_path, _ready_record(tmp_path / "nofable"), _panel(False))
-    assert _families(manifest) == ["claude-opus", "gemini", "grok"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok"]
     assert manifest["skipped"] == []
 
 
@@ -1172,7 +1499,9 @@ def test_opus_is_selected_for_every_full_council(tmp_path: Path) -> None:
         ("denied", _with_domains(_ready_record(tmp_path / "opus-denied"), ["privacy"])),
     ):
         manifest = _resolve(tmp_path / name, record)
-        opus = next(entry for entry in manifest["selected"] if entry["family"] == "claude-opus")
+        opus = next(
+            entry for entry in manifest["selected"] if entry["reviewer_id"] == "claude-opus"
+        )
         assert opus["model"] == "anthropic/claude-opus-5:max"
         assert opus["selectionClass"] == "unconditional"
 
@@ -1182,11 +1511,14 @@ def test_manifest_binds_the_record_packet_and_subject_digests(tmp_path: Path) ->
     manifest = _resolve(tmp_path, record)
     record_path = (tmp_path / "review-record.json").resolve()
     packet_path = (tmp_path / "packet.md").resolve()
-    assert manifest["schemaVersion"] == 1
+    assert manifest["schemaVersion"] == qualification.MANIFEST_SCHEMA_VERSION
     assert manifest["panelId"] == LIVE_PANEL_ID
     assert manifest["reviewRecordPath"] == str(record_path)
     assert manifest["reviewRecordSha256"] == _sha256(record_path)
     assert manifest["subjectDigest"] == proof_subject_digest(record)
+    authority_path = (tmp_path / "qualification.yml").resolve()
+    assert manifest["authorityPath"] == str(authority_path)
+    assert manifest["authoritySha256"] == _sha256(authority_path)
     assert manifest["packetPath"] == str(packet_path)
     assert manifest["packetSha256"] == _sha256(packet_path)
 
@@ -1245,12 +1577,46 @@ def test_resolver_cli_persists_exactly_the_manifest_it_prints(tmp_path: Path, ca
     printed = capsys.readouterr().out
     assert out.read_text(encoding="utf-8") == printed
     manifest = json.loads(printed)
-    assert _families(manifest) == ["claude-opus", "gemini", "grok", "claude"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "claude"]
 
     # A second resolution never silently replaces the roster that was dispatched.
     with pytest.raises(SystemExit):
         qualification.main(argv)
     assert out.read_text(encoding="utf-8") == printed
+
+
+def test_manifest_writer_syncs_bytes_and_directory(tmp_path: Path, monkeypatch) -> None:
+    calls: list[int] = []
+    real_fsync = qualification.os.fsync
+
+    def observed_fsync(descriptor: int) -> None:
+        calls.append(descriptor)
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(qualification.os, "fsync", observed_fsync)
+    out = tmp_path / "panel-selection.json"
+    qualification.write_manifest(out, "{}\n")
+    assert len(calls) == 3
+    assert out.stat().st_mode & 0o777 == 0o444
+
+
+def test_record_and_packet_bindings_read_each_subject_once(tmp_path: Path, monkeypatch) -> None:
+    record_path = tmp_path / "review-record.json"
+    _write_json(record_path, _ready_record(tmp_path / "subject"))
+    packet_path = _packet_file(tmp_path, record_path)
+    original = Path.read_bytes
+    counts = {record_path.resolve(): 0, packet_path.resolve(): 0}
+
+    def counted(path: Path) -> bytes:
+        resolved = path.resolve()
+        if resolved in counts:
+            counts[resolved] += 1
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", counted)
+    bound_record, digest, _ = bind_record(record_path)
+    bind_packet(packet_path, bound_record, digest)
+    assert counts == {record_path.resolve(): 1, packet_path.resolve(): 1}
 
 
 def test_resolver_cli_refuses_a_session_local_manifest(tmp_path: Path) -> None:
@@ -1499,10 +1865,17 @@ def test_epoch_ledger_normalizes_reviewer_yields(tmp_path: Path, capsys) -> None
             "unresolved": [],
         },
     )
+    manifest = tmp_path / "panel-selection.json"
+    _write_json(
+        manifest,
+        {"selected": [{"reviewer_id": "claude"}, {"reviewer_id": "grok"}]},
+    )
     out = tmp_path / "ledger.md"
     code = epoch.main(
         [
             "ledger",
+            "--manifest",
+            str(manifest),
             "--member",
             f"claude={claude}",
             "--member",
@@ -1542,15 +1915,40 @@ def test_epoch_ledger_refuses_bad_rows_existing_output_and_bad_members(tmp_path:
             "unresolved": [],
         },
     )
+    manifest = tmp_path / "panel-selection.json"
+    _write_json(
+        manifest,
+        {"selected": [{"reviewer_id": "claude"}, {"reviewer_id": "grok"}]},
+    )
     out = tmp_path / "ledger.md"
-    code = epoch.main(["ledger", "--member", f"claude={malformed}", "--out", str(out)])
+    code = epoch.main(
+        [
+            "ledger",
+            "--manifest",
+            str(manifest),
+            "--member",
+            f"claude={malformed}",
+            "--out",
+            str(out),
+        ]
+    )
     assert code == epoch.EXIT_PRECONDITION
     assert not out.exists(), "a refused scaffold must write nothing"
 
     valid = tmp_path / "grok.json"
     _write_json(valid, {"summary": "s", "evidence": [], "unresolved": []})
     out.write_text("lead judgment already here\n", encoding="utf-8")
-    code = epoch.main(["ledger", "--member", f"grok={valid}", "--out", str(out)])
+    code = epoch.main(
+        [
+            "ledger",
+            "--manifest",
+            str(manifest),
+            "--member",
+            f"grok={valid}",
+            "--out",
+            str(out),
+        ]
+    )
     assert code == epoch.EXIT_PRECONDITION
     assert out.read_text(encoding="utf-8") == "lead judgment already here\n"
 
@@ -1559,6 +1957,8 @@ def test_epoch_ledger_refuses_bad_rows_existing_output_and_bad_members(tmp_path:
         epoch.main(
             [
                 "ledger",
+                "--manifest",
+                str(manifest),
                 "--member",
                 f"grok={valid}",
                 "--member",
@@ -1572,7 +1972,17 @@ def test_epoch_ledger_refuses_bad_rows_existing_output_and_bad_members(tmp_path:
     incomplete = tmp_path / "incomplete.json"
     _write_json(incomplete, {"summary": "s", "evidence": []})
     assert (
-        epoch.main(["ledger", "--member", f"kimi={incomplete}", "--out", str(fresh)])
+        epoch.main(
+            [
+                "ledger",
+                "--manifest",
+                str(manifest),
+                "--member",
+                f"kimi={incomplete}",
+                "--out",
+                str(fresh),
+            ]
+        )
         == epoch.EXIT_PRECONDITION
     )
     assert not fresh.exists()

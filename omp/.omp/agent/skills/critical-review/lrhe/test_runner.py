@@ -95,25 +95,29 @@ def test_refusal_never_reaches_a_transport(spy, over, expect_reason):
 
 
 def test_an_unqualified_lane_never_reaches_a_transport(spy):
-    """The qualification gate, proved on whichever lane is actually held.
+    """The qualification gate, proved on held lanes declared for evaluation.
 
-    This case used to name Kimi and became stale after Kimi qualified. Held
-    evaluation lanes are facts in qualification.yml, so the test derives them
-    there rather than duplicating membership.
+    This case used to name Kimi and became stale after Kimi qualified. Evaluation
+    experiments and live-dispatch roles are separate authorities, so a disabled
+    live-only specialist is not required to appear in panels.yaml.
     """
     import yaml
     qual = yaml.safe_load((SKILL / "qualification.yml").read_text())["reviewers"]
-    held = [f for f, e in qual.items() if not e.get("evaluationEnabled")]
+    held = [
+        (family, declared)
+        for family, entry in qual.items()
+        if not entry.get("evaluationEnabled")
+        if (declared := _declaring_experiment(family)) is not None
+    ]
     if not held:
-        pytest.skip("every evaluation lane is enabled; no held lane to refuse")
+        pytest.skip("every declared evaluation lane is enabled")
 
-    for family in held:
-        declared = _declaring_experiment(family)
-        assert declared, f"{family} is held but no experiment declares it either"
-        experiment, lens = declared
+    for family, (experiment, lens) in held:
         outcome = run_review.prepare(
             _args(family=family, lens=lens, experiment_id=experiment))
-        assert isinstance(outcome, run_review.Refusal), f"{family} is not qualified but was not refused"
+        assert isinstance(outcome, run_review.Refusal), (
+            f"{family} is not qualified but was not refused"
+        )
         assert outcome.reason_code == "lane_not_qualified"
         assert spy == [], "a refused request reached a transport"
 

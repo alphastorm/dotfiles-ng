@@ -228,43 +228,67 @@ def cmd_ledger(args: argparse.Namespace) -> int:
     that fail the pinned pipe grammar refuse the whole scaffold rather than
     dropping feedback silently.
     """
+    try:
+        manifest: object = json.loads(args.manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"unreadable-manifest:{exc}", file=sys.stderr)
+        return EXIT_PRECONDITION
+    selected = manifest.get("selected") if isinstance(manifest, dict) else None
+    if not isinstance(selected, list):
+        print("invalid-manifest:selected must be a list", file=sys.stderr)
+        return EXIT_PRECONDITION
+    selected_ids: list[str] = []
+    for index, row in enumerate(selected):
+        reviewer_id = row.get("reviewer_id") if isinstance(row, dict) else None
+        if not isinstance(reviewer_id, str) or not reviewer_id:
+            print(f"invalid-manifest:selected[{index}].reviewer_id", file=sys.stderr)
+            return EXIT_PRECONDITION
+        selected_ids.append(reviewer_id)
+    if len(selected_ids) != len(set(selected_ids)):
+        print("invalid-manifest:duplicate reviewer_id", file=sys.stderr)
+        return EXIT_PRECONDITION
+    selected_set = set(selected_ids)
+
     errors: list[str] = []
     members: list[tuple[str, Path]] = []
     seen: set[str] = set()
     for spec in args.member:
-        family, separator, path = spec.partition("=")
-        family = family.strip()
-        if not separator or not family or not path:
+        reviewer_id, separator, path = spec.partition("=")
+        reviewer_id = reviewer_id.strip()
+        if not separator or not reviewer_id or not path:
             errors.append(f"invalid-member-spec:{spec}")
             continue
-        if family in seen:
-            errors.append(f"duplicate-member:{family}")
-        seen.add(family)
-        members.append((family, Path(path)))
+        if reviewer_id in seen:
+            errors.append(f"duplicate-member:{reviewer_id}")
+        seen.add(reviewer_id)
+        if reviewer_id not in selected_set:
+            errors.append(f"member-not-selected:{reviewer_id}")
+        members.append((reviewer_id, Path(path)))
 
     rows: list[dict[str, str]] = []
-    for family, path in members:
+    for reviewer_id, path in members:
         try:
             value: object = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            errors.append(f"unreadable-member:{family}: {exc}")
+            errors.append(f"unreadable-member:{reviewer_id}: {exc}")
             continue
         if not isinstance(value, dict) or not {"summary", "evidence", "unresolved"} <= set(value):
             errors.append(
-                f"invalid-member-result:{family}: summary, evidence, and unresolved are required"
+                f"invalid-member-result:{reviewer_id}: summary, evidence, and unresolved "
+                "are required"
             )
             continue
         for kind, pattern in (("evidence", EVIDENCE_ROW), ("unresolved", UNRESOLVED_ROW)):
             items = value.get(kind)
             if not isinstance(items, list) or any(not isinstance(item, str) for item in items):
-                errors.append(f"invalid-member-result:{family}: {kind} must be a string list")
+                errors.append(f"invalid-member-result:{reviewer_id}: {kind} must be a string list")
                 continue
             for index, item in enumerate(items):
                 match = pattern.fullmatch(item)
                 if match is None:
-                    errors.append(f"unparseable-row:{family}:{kind}[{index}]:{item[:60]}")
+                    errors.append(f"unparseable-row:{reviewer_id}:{kind}[{index}]:{item[:60]}")
                     continue
-                rows.append({"family": family, "kind": kind, **match.groupdict()})
+                rows.append({"reviewer_id": reviewer_id, "kind": kind, **match.groupdict()})
 
     if args.out.exists():
         errors.append(f"ledger-already-exists:{args.out}")
@@ -273,7 +297,7 @@ def cmd_ledger(args: argparse.Namespace) -> int:
             print(error, file=sys.stderr)
         return EXIT_PRECONDITION
 
-    rows.sort(key=lambda row: (row["severity"], row["family"], row["kind"], int(row["row"])))
+    rows.sort(key=lambda row: (row["severity"], row["reviewer_id"], row["kind"], int(row["row"])))
     lines: list[str] = []
     if args.review_id:
         lines.extend((f"# Finding ledger — {args.review_id}", ""))
@@ -281,14 +305,17 @@ def cmd_ledger(args: argparse.Namespace) -> int:
     lines.append("|" + " --- |" * len(LEDGER_COLUMNS))
     for row in rows:
         if row["kind"] == "evidence":
-            finding = f"{row['family']}-R{row['row']} — {row['claim']} — impact: {row['impact']}"
+            finding = (
+                f"{row['reviewer_id']}-R{row['row']} — {row['claim']} "
+                f"— impact: {row['impact']}"
+            )
             evidence, result = row["evidence"], ""
         else:
-            finding = f"{row['family']}-U{row['row']} — {row['question']}"
+            finding = f"{row['reviewer_id']}-U{row['row']} — {row['question']}"
             evidence, result = f"missing: {row['missing']}", "unresolved"
         cells = (
             finding,
-            row["family"],
+            row["reviewer_id"],
             evidence,
             f"P{row['severity']}",
             row["conf"],
@@ -306,6 +333,7 @@ def cmd_ledger(args: argparse.Namespace) -> int:
             "op": "ledger",
             "out": str(args.out),
             "members": sorted(seen),
+            "manifest": str(args.manifest),
             "rows": len(rows),
             "unresolved_rows": sum(1 for row in rows if row["kind"] == "unresolved"),
         }
@@ -353,11 +381,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         "ledger", help="normalize reviewer yields into a finding-ledger skeleton"
     )
     ledger.add_argument(
+        "--manifest",
+        type=Path,
+        required=True,
+        help="the immutable panel-selection manifest whose reviewer_ids may be attributed",
+    )
+    ledger.add_argument(
         "--member",
         action="append",
         required=True,
-        metavar="FAMILY=RESULT.json",
-        help="reviewer family and its yielded summary/evidence/unresolved JSON",
+        metavar="REVIEWER_ID=RESULT.json",
+        help=(
+            "the reviewer_id exactly as the selection manifest names it, and that "
+            "member's yielded summary/evidence/unresolved JSON"
+        ),
     )
     ledger.add_argument("--review-id", default="")
     ledger.add_argument("--out", type=Path, required=True)

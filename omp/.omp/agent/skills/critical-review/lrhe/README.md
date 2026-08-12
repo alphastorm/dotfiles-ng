@@ -251,21 +251,51 @@ bookkeeping that is a retrieval hint and never evidence.
 ## Live dispatch and evaluation are separate
 
 `qualification.yml` `liveDispatch` is the sole authoritative live panel. Its
-`leadFamily` records the accountable GPT lead and is disjoint from every live reviewer
-role. Resolve the current full-council or targeted-refuter roster with
-`qualification.py`; do not duplicate family names or counts in public tests, packets, or
-policy prose. This public package never grants live membership.
+`leadFamily` records the accountable GPT lead's lineage and is disjoint from every live
+critic, conditional critic, and refuter. Resolve the current full-council or
+targeted-refuter roster with `qualification.py`; do not duplicate reviewer ids, family
+names, or counts in public tests, packets, or policy prose. This public package never
+grants live membership.
 
-Membership is private; scope is public. `initialCritics` are unconditional and run on
-every full council. `conditionalCritics` are additive and record-selected: the resolver
-admits one only when the frozen record and its packet satisfy the eligibility its policy
-pins in `qualification.py`. That split is the point of the design. A private edit can
-retire a conditional critic or move it back to `disabled`, but it cannot widen one into
-security review, because the allowed modes, the allowed risk domains, the required
+A reviewer is not a model lineage. The `reviewers` mapping key is the `reviewer_id`, and
+that is the only join key a manifest, a dispatcher, or a finding ledger uses;
+`model_family` and `correlation_group` say which model answers for that lane. The two
+are separate because two reviewer ids may deliberately share one lineage, and a manifest
+that joined on the family would silently merge them into one opinion. `initialCritics`
+are therefore checked for mutually distinct `model_family` values as well as for
+disjointness from `leadFamily`: two samples of one lineage are one opinion however the
+lanes are named.
+
+Membership is private; scope, independence, and authority are public. `initialCritics`
+are unconditional and run on every full council, and they alone satisfy the independent
+critic floor. `initialSpecialists` are additive and always on once qualified, but a
+specialist is a `same_lineage_blind_sample` — it duplicates a lineage the panel already
+carries — so its authority is `supplemental_evidence`, it resolves after every critic in
+the same `selected` array, and a council with no independent critic is never rescued by
+one. It is exempt from the cross-family rule precisely because sharing a lineage is what
+it is for. `conditionalCritics` are additive and record-selected: the resolver admits one
+only when the frozen record and its packet satisfy the eligibility its policy pins in
+`qualification.py`. That split is the point of the design. A private edit can retire a
+conditional critic or move it back to `disabled`, but it cannot widen one into security
+review, because the allowed modes, the allowed risk domains, the required
 `proof_classes.authorization` status, the deny-path rule, and the cohort promotion gates
 all live in public code and are checked against the private file rather than read from
-it. A conditional critic never replaces a member, never falls back to another family,
-and never shrinks the council when it is skipped.
+it. Nor can a private edit promote a blind sample into independent evidence:
+`independence_class` and `authority` are pinned per role in public code and the private
+file must agree with them. Neither additive role ever replaces a member, falls back to
+another lane, or shrinks the council when it is absent.
+
+How a member is executed is resolved rather than inferred from its id. Every live
+row carries `execution_mode: task_agent` together with the exact named agent and
+model selector, so the dispatcher uses one native Task path for critics,
+specialists, and refuters. The agent definition owns thinking level, read-only
+tools, output schema, and reviewer charter. OMP owns provider credential
+selection and sibling-account rotation; the council does not implement a second
+OAuth router.
+
+`access_profile` remains separate from `provider_route`: several entitlement
+lanes can share one native route, so authorization for one profile never implies
+authorization for another.
 
 LRHE experiments remain asymmetric evaluation designs:
 
@@ -279,7 +309,7 @@ Conflating experiment membership with live dispatch turns evaluation lanes into
 unapproved reviewers and makes independent roles look like votes. `panels.yaml`
 therefore owns experiments only; `qualification.yml` owns live dispatch.
 
-`qualification.py` fails closed unless schema version 6, the pinned panel id, role
+`qualification.py` fails closed unless schema version 7, the pinned panel id, role
 membership, dispatch/evaluation flags, canary results, read-only proof, agents, and
 selectors are internally consistent. A conditional critic proves the common
 schema/read-only gates and one `passed` scope with a fresh receipt, per scope rather
@@ -296,15 +326,38 @@ exactly that record path and digest, and writes one manifest validated by
 `panel-selection.schema.json`. It refuses to overwrite an existing manifest and refuses
 a session-local output path, for the same reason the epoch tool does: a roster that
 lives only in a session directory cannot be re-read after the session ends, and one that
-can be overwritten is not evidence of what was dispatched.
+can be overwritten is not evidence of what was dispatched. The bytes are staged,
+file-synced, hard-linked into place at mode `0444`, and directory-synced before
+publication returns. The roster therefore appears whole or not at all, lands
+read-only, and survives an acknowledged publication.
 
-Two parts of that manifest go beyond the implementation packet's recommended shape,
-deliberately. `packetPath`/`packetSha256` bind the packet bytes as well as the record
-bytes, which closes the window in which a resolved packet is edited between resolution
-and dispatch; the packet's own §4.4 makes a record/packet digest mismatch fail closed,
-and binding only the record would leave that check with nothing to compare against
-later. The `reasonCodes` vocabulary is a closed enum, so a new selection or skip reason
-costs a schema change — the same argument `item.schema.json` makes above.
+Three parts of that manifest go beyond the implementation packet's recommended
+shape, deliberately. `packetPath`/`packetSha256` bind the packet bytes as well as
+the record bytes, which closes the window in which a resolved packet is edited
+between resolution and dispatch; the packet's own §4.4 makes a record/packet
+digest mismatch fail closed, and binding only the record would leave that check
+with nothing to compare against later.
+`qualificationPath`/`qualificationSha256` record the fixed resolver path and the
+digest of the module that produced the roster. `authorityPath`/`authoritySha256`
+separately bind the exact private qualification bytes that were parsed to choose
+the roster. The former is deterministic resolver provenance; the latter is the
+load-bearing roster input. The `reasonCodes` vocabulary is a closed enum, so a
+new selection or skip reason costs a schema change — the same argument
+`item.schema.json` makes above.
+
+Authorization is two grants and never one. A reviewer's `data_allowlist_key` is
+the vendor-rights token its material may reach (`anthropic`, `google`, `xai`,
+`opencode`, `openai`) and must appear in the packet's
+`provider_data_allowlist`; its `access_profile` is the entitlement lane and must
+appear in `reviewer_access_profile_allowlist`. Three names answer three
+questions: `openai-codex` is a native route shared by ordinary GPT and
+`daybreak-blue`, while the licence decision concerns the receiving vendor and
+the access-profile grant concerns the selected lane. A withheld grant fails the
+whole resolution for an unconditional critic or always-on specialist — neither
+has a not-selected state — and skips a conditional critic with the reason
+recorded. Neither allowlist is scanned by the conditional critic's deny-path
+rule: they are closed grant vocabularies matched exactly against reviewer
+metadata.
 
 Skip reasons are reported as a sorted set, not first-match: a packet ineligible on three
 independent grounds is a different fact from one ineligible on a single ground, and the
@@ -315,33 +368,50 @@ critic is considered, and that strict whole-record failure is not weakened into 
 conditional-critic skip; the code keeps it so the eligibility policy is complete and
 testable on its own.
 
-### The qualification-canary bootstrap
+### Daybreak native Task lane
 
-A conditional critic cannot dispatch without a fresh scoped cohort receipt, and the
-production reviewer agent will not run without a resolver manifest. Minting the first
-receipt therefore needs a manifest that live selection cannot yet produce.
-`qualification.py qualification-canary --family <lane> --policy <policy> --selector
-<provider/model:effort>` is that one narrow path. It applies the same record gate, the
-same packet binding, and the same eligibility filter, but it names exactly one candidate,
-carries no unconditional roster, and records `qualification-canary-only`, which
-`panel-selection.schema.json` structurally separates from a council roster. The
-alternatives were both worse: relaxing live selection so an unqualified lane can be
-picked, or writing a passed receipt nobody earned.
+Daybreak Blue is an entitlement alias, not another generic Sol invocation. Its
+thin named agent requests
+`openai-codex/gpt-daybreak-blue-latest:max` and fixes the read-only tools,
+structured finding schema, and supplemental security charter. The accountable
+lead remains the GPT lineage, so this second blind sample is supplemental
+evidence and never an independent critic, vote, floor member, tie-breaker, or
+refuter.
 
-Identity still comes from one authority. The canary's family, agent, and model base are
-read from `qualification.yml`; only the effort suffix may differ from the currently
-recorded selector, and it must equal the policy's pinned thinking level. That is what
-lets a lane still recorded at `:high` be qualified at `:max` without a second panel
-definition, and it is why activation is atomic: the same edit that moves the lane into
-`conditionalCritics` also pins `model` at the qualified selector, and the public resolver
-refuses any other combination.
+The Codex catalog advertises distinct `xhigh` and `max` tiers for this alias.
+Current OMP Codex discovery reduces that metadata to a reasoning boolean, then
+infers the generic ladder from the opaque Daybreak id and drops `max`. The
+private `models.yml` uses OMP's native per-model override to restore the
+provider-advertised `low` through `max` ladder. Preflight proves that the local
+OMP selector resolves against the effective catalog; the required harmless
+canary separately proves the provider-served identity before activation. Remove
+the override once OMP preserves `supported_reasoning_levels` for entitlement
+aliases.
+
+The lane uses the same `task_agent` execution mode as every other reviewer. It
+has no named OMP profile, copied credential database, account witness, profile
+canary, or bespoke worker. OMP 17.2.12 and later classify Codex
+`cyber_policy`/Trusted Access for Cyber denials as account-scoped and rotate
+through sibling `openai-codex` credentials before higher-level model/provider
+fallback. The council delegates that transport behavior to OMP instead of
+duplicating it.
+
+Qualification remains explicit and lane-scoped. Before live activation the
+generic reviewer canary must prove the exact served model, schema, and read-only
+boundary; preflight must resolve the exact selector; and the packet must carry
+both `openai` in `provider_data_allowlist` and `daybreak-blue` in
+`reviewer_access_profile_allowlist`. Native account rotation answers which
+credential can serve the request. It does not grant the vendor or lane
+authorization needed to send the packet.
+
+
 
 ### Scoped cohort receipts
 
-`preflight.py` owns the bytes. `qualification.py` checks shapes and agreement and never
-reads a receipt; `check_conditional_critic_scope` re-reads the agent definition, the
-active config override, and the cohort receipt, and grades the cohort against the
-policy's promotion gates: at least 20 eligible attempts, at least 90% direct completion,
+`preflight.py` owns conditional-reviewer cohort bytes.
+`check_conditional_critic_scope` re-reads the agent definition, the active
+config override, and the cohort receipt, then grades the cohort against the
+roster's promotion gates: at least 20 eligible attempts, at least 90% direct completion,
 100% exact served-model match, zero security misroutes, zero forbidden tool attempts or
 executions, and no more than 10% false positives on guarded negative controls. Seeded-
 defect counts remain diagnostic rather than a hard gate: exact-path and per-finding

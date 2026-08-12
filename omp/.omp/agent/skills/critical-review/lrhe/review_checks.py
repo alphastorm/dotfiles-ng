@@ -29,6 +29,7 @@ _TRANSPORT_ASSERTION = (
 )
 
 
+
 def command_for(tier: str) -> tuple[str, ...]:
     """Return the cwd-independent command wrapped by a proof receipt."""
 
