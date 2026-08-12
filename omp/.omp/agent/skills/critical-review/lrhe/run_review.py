@@ -162,6 +162,10 @@ def render_packet(
         f"item_id: {packet.get('item_id', '')}",
         f"stratum: {packet.get('stratum', '')}",
         f"lens: {lens}",
+        f"provider_data_allowlist: "
+        f"{json.dumps(packet.get('provider_data_allowlist') or [], ensure_ascii=False)}",
+        f"reviewer_access_profile_allowlist: "
+        f"{json.dumps(packet.get('reviewer_access_profile_allowlist') or [], ensure_ascii=False)}",
         "",
         *((assignment, "") if assignment else ()),
         "## Goal",

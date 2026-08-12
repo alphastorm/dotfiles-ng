@@ -378,6 +378,12 @@ lead remains the GPT lineage, so this second blind sample is supplemental
 evidence and never an independent critic, vote, floor member, tie-breaker, or
 refuter.
 
+OMP 17.2.15 preserves the Responses Lite
+`reasoning.context=all_turns` requirement for the opaque alias. On 2026-08-12
+the lane passed all three authorized response probes and one exact repository
+trace at Max with no model fallback or forbidden tool use. It is live under
+`initialSpecialists`; that changes availability, not its supplemental authority.
+
 The Codex catalog advertises distinct `xhigh` and `max` tiers for this alias.
 Current OMP Codex discovery reduces that metadata to a reasoning boolean, then
 infers the generic ladder from the opaque Daybreak id and drops `max`. The
@@ -396,10 +402,11 @@ through sibling `openai-codex` credentials before higher-level model/provider
 fallback. The council delegates that transport behavior to OMP instead of
 duplicating it.
 
-Qualification remains explicit and lane-scoped. Before live activation the
-generic reviewer canary must prove the exact served model, schema, and read-only
-boundary; preflight must resolve the exact selector; and the packet must carry
-both `openai` in `provider_data_allowlist` and `daybreak-blue` in
+Qualification remains explicit and lane-scoped. Live activation requires the
+three response probes plus a validated repository trace to prove exact served
+model, schema, and read-only conduct; preflight must resolve the exact selector;
+and every dispatched packet must carry both `openai` in
+`provider_data_allowlist` and `daybreak-blue` in
 `reviewer_access_profile_allowlist`. Native account rotation answers which
 credential can serve the request. It does not grant the vendor or lane
 authorization needed to send the packet.
@@ -770,7 +777,11 @@ provider has no cached catalogue, and the gate says so by name.
 python3 canary.py selftest                     # graders vs replies built to fail them
 python3 canary.py run --transport stub --out canary-apparatus-vN.jsonl
 python3 canary.py prompts --out cp.jsonl       # ... answered through the agent lane ...
-python3 canary.py grade --prompts cp.jsonl --responses cr.jsonl --out canary-vN.jsonl
+python3 canary.py trace-receipt --trace session.jsonl --agent-definition agent.md \
+    --agent review-X --selector provider/model:effort \
+    --evidence-delivery repository --out trace-receipt.json
+python3 canary.py grade --prompts cp.jsonl --responses cr.jsonl \
+    --trace-receipt trace-receipt.json --out canary-vN.jsonl
 ```
 
 Every output path is explicit. Probe and trace generation refuses to replace an
@@ -789,6 +800,14 @@ right answer is known before the reply arrives:
 | `structured_output` | does the reply validate against the reviewer's own output schema? | no |
 | `anchor_lookup` | are the citations real, and are there any? | no |
 | `empty_abstention` | given nothing to find, does it return nothing? | yes |
+
+For a repository-delivery lane the fourth qualification gate is the validated
+repository trace, not the legacy synthetic `tool_surface` reply. `grade
+--trace-receipt` requires exactly one lane, validates the receipt against that
+lane's current agent definition and selector, binds its digest into all three
+response records, and reports `4/4` only when every response probe and the trace
+pass. The legacy four-response path remains available for historical inline
+canaries.
 
 The split matters. The first two judge the *shape* of a reply and are meaningful
 against any reply, canned included. The third asks what the model chose to say,

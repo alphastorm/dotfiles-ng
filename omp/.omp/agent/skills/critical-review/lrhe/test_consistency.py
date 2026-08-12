@@ -1293,29 +1293,26 @@ def _live_document() -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def test_the_private_qualification_matches_this_resolver_while_daybreak_is_held():
-    """Schema migration does not itself activate an additive lane.
-
-    The private authority must stay readable while Fable remains in `disabled` and
-    `conditionalCritics` stays empty until the quota hold is lifted, and while the
-    blind security specialist is prewired in `disabled` with no live authority. A
-    lane being representable is not a lane being on the council.
-    """
+def test_the_private_qualification_activates_the_qualified_daybreak_specialist():
+    """The live roster carries Daybreak only after every recorded gate passes."""
     document = _live_document()
     live = document["liveDispatch"]
     assert document["schemaVersion"] == qualification.SCHEMA_VERSION
     assert live["panelId"] == qualification.LIVE_PANEL_ID
     assert live["conditionalCritics"] == []
     assert "claude" in live["disabled"]
-    assert live["initialSpecialists"] == []
-    assert "daybreak-blue" in live["disabled"]
+    assert live["initialSpecialists"] == ["daybreak-blue"]
+    assert "daybreak-blue" not in live["disabled"]
     daybreak = document["reviewers"]["daybreak-blue"]
     assert daybreak["dispatchRole"] == qualification.SPECIALIST_ROLE
-    assert daybreak["dispatchEnabled"] is False
+    assert daybreak["dispatchEnabled"] is True
     assert daybreak["execution_mode"] == "task_agent"
     assert daybreak["authority"] == qualification.SUPPLEMENTAL_EVIDENCE
     assert daybreak["independence_class"] == qualification.SAME_LINEAGE_BLIND_SAMPLE
-    assert daybreak["blockers"]
+    assert daybreak["providerCanary"] == "passed"
+    assert daybreak["schemaValid"] is True
+    assert daybreak["readOnlyBoundary"] == "passed"
+    assert "blockers" not in daybreak
     qualification.validate_qualification(document)
 
 
@@ -1503,6 +1500,26 @@ def test_canary_prompts_refuse_to_overwrite_an_existing_output(tmp_path):
 
     assert code == canary.EXIT_UNRESOLVED
     assert output.read_text(encoding="utf-8") == original
+
+
+@needs_agents
+def test_canary_prompts_carry_exact_lane_authorization(tmp_path):
+    """A reviewer must see both grants; operator approval outside the packet is not enough."""
+    output = tmp_path / "daybreak-prompts.jsonl"
+
+    assert (
+        canary.main(["prompts", "--family", "daybreak-blue", "--out", str(output)])
+        == canary.EXIT_OK
+    )
+
+    prompts = [json.loads(line) for line in output.read_text().splitlines() if line.strip()]
+    assert len(prompts) == len(canary.PROBES)
+    for prompt in prompts:
+        assert 'provider_data_allowlist: ["openai"]' in prompt["prompt"]
+        assert (
+            'reviewer_access_profile_allowlist: ["daybreak-blue"]'
+            in prompt["prompt"]
+        )
 
 
 def test_canary_ledger_appends_or_refuses_without_truncating(tmp_path):
@@ -2147,6 +2164,89 @@ def test_trace_receipt_proves_repository_read_and_read_only_surface(tmp_path):
     assert validated["agent_tools"] == ["read", "grep", "glob", "lsp", "ast_grep"]
     assert validated["declared_tools"] == ["read", "grep", "glob", "yield"]
     assert "read" in validated["tool_executions"]
+
+
+def test_repository_trace_completes_three_response_probe_gate(tmp_path, monkeypatch):
+    selector = "xai-oauth/grok-4.5:xhigh"
+    agent = tmp_path / "review-grok.md"
+    trace = tmp_path / "trace.jsonl"
+    receipt_path = tmp_path / "receipt.json"
+    prompts = tmp_path / "prompts.jsonl"
+    responses = tmp_path / "responses.jsonl"
+    ledger = tmp_path / "canary.jsonl"
+    entry = {
+        "agent": "review-grok",
+        "model": selector,
+        "access_profile": "xai-oauth-default",
+        "data_allowlist_key": "xai",
+    }
+    monkeypatch.setattr(canary, "AGENTS", tmp_path)
+    monkeypatch.setattr(run_review, "AGENTS", tmp_path)
+    monkeypatch.setattr(canary, "_reviewers", lambda: {"grok": entry})
+    _write_trace_agent(agent, selector, "repository")
+    _write_trace(
+        trace,
+        evidence_delivery="repository",
+        attempted=("read", "yield"),
+        executed=("read", "yield"),
+    )
+    receipt_path.write_text(
+        json.dumps(
+            canary.capture_trace_receipt(
+                trace, agent, "review-grok", selector, "repository"
+            )
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        canary.main(["prompts", "--family", "grok", "--out", str(prompts)])
+        == canary.EXIT_OK
+    )
+    replies = [
+        _canary_reply(
+            "grok|structured_output",
+            selector,
+            [
+                "R1|P2|conf=0.80|claim=retry budget grew"
+                "|evidence=src/canary/retry.py:1 loop bound"
+                "|impact=latency|verify=inspect"
+            ],
+        ),
+        _canary_reply(
+            "grok|anchor_lookup",
+            selector,
+            [
+                "R1|P1|conf=0.90|claim=missing deny path"
+                "|evidence=src/canary/authz.py:10 comparison"
+                "|impact=authz|verify=test"
+            ],
+        ),
+        _canary_reply("grok|empty_abstention", selector, []),
+    ]
+    responses.write_text(
+        "".join(json.dumps(reply) + "\n" for reply in replies),
+        encoding="utf-8",
+    )
+
+    code = canary.main(
+        [
+            "grade",
+            "--prompts",
+            str(prompts),
+            "--responses",
+            str(responses),
+            "--trace-receipt",
+            str(receipt_path),
+            "--out",
+            str(ledger),
+        ]
+    )
+
+    records = [json.loads(line) for line in ledger.read_text().splitlines()]
+    assert code == canary.EXIT_OK
+    assert len(records) == len(canary.RESPONSE_PROBE_IDS)
+    assert all(record["passed"] for record in records)
+    assert len({record["trace_receipt_sha256"] for record in records}) == 1
 
 
 def test_repository_trace_receipt_records_current_task_runtime_tools(tmp_path):

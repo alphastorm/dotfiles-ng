@@ -4,11 +4,13 @@
     ./.venv/bin/python canary.py selftest                    # graders vs known-bad
     ./.venv/bin/python canary.py run --family kimi --transport stub --out apparatus.jsonl
     ./.venv/bin/python canary.py prompts --out cp.jsonl      # ... dispatch by hand ...
-    ./.venv/bin/python canary.py grade --prompts cp.jsonl --responses cr.jsonl --out canary-vN.jsonl
+    ./.venv/bin/python canary.py grade --prompts cp.jsonl --responses cr.jsonl \
+        --trace-receipt trace.json --out canary-vN.jsonl
 
 `qualification.yml` records `schemaValid`, `readOnlyBoundary` and
-`providerCanary` for every lane, and until now nothing produced any of them.
-Three probes answer them, each built so the correct reply is known in advance:
+`providerCanary` for every lane. Three response probes plus a validated
+repository trace establish those gates; each response probe has a correct
+answer known before the reply arrives:
 
   structured_output   does the reply validate against the reviewer's own output
                       schema? A reviewer whose schema fails returns free text,
@@ -252,6 +254,21 @@ def _packet(item_id: str, goal: str, diff: str, files: list[str]) -> dict[str, A
         "provider_data_allowlist": ["opencode", "anthropic", "google-antigravity", "xai"],
     }
 
+def _authorized_probe_packet(probe: Probe, entry: dict[str, Any]) -> dict[str, Any]:
+    """Bind a synthetic probe to the one vendor and entitlement lane receiving it."""
+    vendor = entry.get("data_allowlist_key")
+    access_profile = entry.get("access_profile")
+    if not isinstance(vendor, str) or not vendor:
+        raise QualificationError("canary reviewer data_allowlist_key is missing")
+    if not isinstance(access_profile, str) or not access_profile:
+        raise QualificationError("canary reviewer access_profile is missing")
+    return {
+        **probe.packet,
+        "provider_data_allowlist": [vendor],
+        "reviewer_access_profile_allowlist": [access_profile],
+    }
+
+
 
 # ------------------------------------------------------------------ graders
 
@@ -476,14 +493,19 @@ PROBES: tuple[Probe, ...] = (
         },
     ),
 )
+RESPONSE_PROBE_IDS = frozenset(
+    probe.probe_id for probe in PROBES if probe.probe_id != "tool_surface"
+)
+
 
 
 # -------------------------------------------------------------------- runner
 
 
 def _request(family: str, probe: Probe, entry: dict[str, Any]) -> run_review.AuthorizedRequest:
+    packet = _authorized_probe_packet(probe, entry)
     return run_review.AuthorizedRequest(
-        item_id=probe.packet["item_id"],
+        item_id=packet["item_id"],
         family=family,
         lens=entry.get("lens", "floor"),
         arm="CANARY",
@@ -495,12 +517,12 @@ def _request(family: str, probe: Probe, entry: dict[str, Any]) -> run_review.Aut
         provider_route="canary",
         account_type="unknown",
         agent=str(entry.get("agent", "")),
-        packet=probe.packet,
+        packet=packet,
         data_rights={
             "decision": "not_applicable",
             "reason": "self-authored probe, no corpus content",
         },
-        packet_digest=run_review._digest(probe.packet),
+        packet_digest=run_review._digest(packet),
         assignment_manifest_digest="not-applicable",
         terms_snapshot_id="not-applicable",
     )
@@ -609,6 +631,7 @@ def cmd_prompts(args: argparse.Namespace) -> int:
             print(f"{family}: no qualification.yml entry", file=sys.stderr)
             return EXIT_UNRESOLVED
         for probe in PROBES:
+            packet = _authorized_probe_packet(probe, entry)
             out.append(
                 {
                 "canary_id": f"{family}|{probe.probe_id}",
@@ -617,8 +640,8 @@ def cmd_prompts(args: argparse.Namespace) -> int:
                 "question": probe.question,
                 "agent": str(entry.get("agent", "")),
                 "requested_model": str(entry.get("model", "")),
-                "packet_digest": run_review._digest(probe.packet),
-                "prompt": run_review.render_packet(probe.packet),
+                "packet_digest": run_review._digest(packet),
+                "prompt": run_review.render_packet(packet),
                 }
             )
 
@@ -653,7 +676,48 @@ def cmd_grade(args: argparse.Namespace) -> int:
     # are not being re-canaried -- and reading their unanswered prompts as a gap
     # would make one held lane's evidence unreportable until all seven answered.
     answered_lanes = {by_id[c]["family"] for c in answered}
-    missing = sorted(c for c in set(by_id) - answered if by_id[c]["family"] in answered_lanes)
+    trace_receipts: dict[str, str] = {}
+    if args.trace_receipt:
+        if len(answered_lanes) != 1:
+            print(
+                "--trace-receipt requires responses for exactly one lane",
+                file=sys.stderr,
+            )
+            return EXIT_UNRESOLVED
+        family = next(iter(answered_lanes))
+        reviewers = _reviewers()
+        entry = (reviewers or {}).get(family)
+        if not isinstance(entry, dict):
+            print(f"{family}: no qualification.yml entry for trace validation", file=sys.stderr)
+            return EXIT_UNRESOLVED
+        agent = entry.get("agent")
+        selector = entry.get("model")
+        if not isinstance(agent, str) or not isinstance(selector, str):
+            print(f"{family}: agent or selector absent for trace validation", file=sys.stderr)
+            return EXIT_UNRESOLVED
+        try:
+            validate_trace_receipt(
+                args.trace_receipt,
+                AGENTS / f"{agent}.md",
+                agent,
+                selector,
+                "repository",
+            )
+            trace_receipts[family] = (
+                "sha256:" + hashlib.sha256(args.trace_receipt.read_bytes()).hexdigest()
+            )
+        except (OSError, TraceCanaryError) as exc:
+            print(f"{family}: repository trace failed: {exc}", file=sys.stderr)
+            return EXIT_FAILED
+    missing = sorted(
+        canary_id
+        for canary_id in set(by_id) - answered
+        if by_id[canary_id]["family"] in answered_lanes
+        and not (
+            by_id[canary_id]["family"] in trace_receipts
+            and by_id[canary_id]["probe_id"] == "tool_surface"
+        )
+    )
 
     records, failed = [], False
     for reply in responses:
@@ -706,6 +770,11 @@ def cmd_grade(args: argparse.Namespace) -> int:
             # The digest is what makes a later edit to the replies detectable.
             "responses_digest": responses_digest,
             "request_observed": False,
+            **(
+                {"trace_receipt_sha256": trace_receipts[prompt["family"]]}
+                if prompt["family"] in trace_receipts
+                else {}
+            ),
             }
         )
         print(
@@ -740,16 +809,34 @@ def cmd_grade(args: argparse.Namespace) -> int:
         lanes.setdefault(family, {})[probe_id] = (sum(r["passed"] for r in got), len(got))
     print()
     for family in sorted(lanes):
-        probes = lanes[family]
-        # A probe replicated n times passes on a majority; at n=1 that is just "passes".
-        # Only `empty_abstention` is replicated, and only because it is declared
-        # `requires_judgement` -- the other three are mechanical and a majority over them
-        # would be a way to pass a lane that emits invalid JSON one time in three.
-        won = {p: passed * 2 > total for p, (passed, total) in probes.items()}
-        complete = len(probes) == len(PROBES) and all(won.values())
-        detail = " ".join(f"{p}={probes[p][0]}/{probes[p][1]}" for p in sorted(probes))
+        probe_results = lanes[family]
+        # A response probe replicated n times passes on a majority; at n=1 that is
+        # just "passes". A validated repository trace replaces the legacy synthetic
+        # tool-surface prompt for repository-delivery lanes.
+        won = {
+            probe_id: passed * 2 > total
+            for probe_id, (passed, total) in probe_results.items()
+        }
+        required_responses = (
+            RESPONSE_PROBE_IDS if family in trace_receipts else frozenset(probes)
+        )
+        complete = required_responses <= set(won) and all(
+            won[probe_id] for probe_id in required_responses
+        )
+        gate_wins = sum(won.get(probe_id, False) for probe_id in required_responses)
+        gate_total = len(required_responses)
+        detail = " ".join(
+            f"{probe_id}={probe_results[probe_id][0]}/{probe_results[probe_id][1]}"
+            for probe_id in sorted(required_responses & set(probe_results))
+        )
+        if family in trace_receipts:
+            gate_wins += 1
+            gate_total += 1
+            detail = f"{detail} repository_trace=1/1"
+        if family in answered_lanes:
+            failed |= not complete
         print(
-            f"  {family:<9} {sum(won.values())}/{len(PROBES)} probes -- "
+            f"  {family:<9} {gate_wins}/{gate_total} qualification gates -- "
             f"{'may be enabled' if complete else 'stays held'}   {detail}"
         )
 
@@ -762,8 +849,8 @@ def cmd_grade(args: argparse.Namespace) -> int:
     if missing:
         print(
             f"\n{len(missing)} prompt(s) unanswered: {', '.join(missing[:6])}\n"
-              f"A lane is qualified by all {len(PROBES)} probes or by none -- two green "
-            f"probes and a silence is not a passed canary.",
+            "A lane is qualified only when every required response probe and its "
+            "repository trace pass; silence is not evidence.",
             file=sys.stderr,
         )
     if unmatched or missing:
@@ -1194,6 +1281,14 @@ def main(argv: list[str] | None = None) -> int:
     grade = sub.add_parser("grade", help="grade replies obtained through the agent lane")
     grade.add_argument("--prompts", type=Path, required=True)
     grade.add_argument("--responses", type=Path, required=True)
+    grade.add_argument(
+        "--trace-receipt",
+        type=Path,
+        help=(
+            "validated repository trace that replaces the legacy synthetic "
+            "tool-surface response for one repository-delivery lane"
+        ),
+    )
     grade.add_argument(
         "--out",
         type=Path,
