@@ -1315,14 +1315,16 @@ def _live_document() -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def test_the_private_qualification_activates_the_qualified_daybreak_specialist():
-    """The live roster carries Daybreak only after every recorded gate passes."""
+def test_the_private_qualification_activates_the_selected_specialists():
+    """The live roster carries only lanes whose recorded gates pass."""
     document = _live_document()
     live = document["liveDispatch"]
     assert document["schemaVersion"] == qualification.SCHEMA_VERSION
     assert live["panelId"] == qualification.LIVE_PANEL_ID
-    assert live["conditionalCritics"] == []
-    assert "claude" in live["disabled"]
+    assert live["initialCritics"] == ["gemini", "grok"]
+    assert live["conditionalCritics"] == ["claude"]
+    assert "claude" not in live["disabled"]
+    assert "claude-opus" in live["disabled"]
     assert live["initialSpecialists"] == ["daybreak-blue"]
     assert "daybreak-blue" not in live["disabled"]
     daybreak = document["reviewers"]["daybreak-blue"]

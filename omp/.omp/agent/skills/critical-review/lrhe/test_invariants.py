@@ -1749,7 +1749,7 @@ def test_evaluation_agents_are_hidden_unless_the_lrhe_overlay_is_loaded():
 def test_evaluation_overlay_keeps_failed_lanes_hidden():
     overlay = yaml.safe_load((HERE / "evaluation-agents.yml").read_text())
     disabled = set(overlay["task"]["disabledAgents"])
-    assert {"review-claude", "review-minimax-floor"} <= disabled
+    assert {"review-claude-opus", "review-minimax-floor"} <= disabled
 
 
 def test_a_judgement_from_an_unrequested_model_drops_its_claim(tmp_path: Path):

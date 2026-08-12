@@ -1,4 +1,4 @@
 task:
   disabledAgents:
-    - review-claude
+    - review-claude-opus
     - review-minimax-floor
