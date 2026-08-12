@@ -232,6 +232,28 @@ def test_every_preflight_gate_reports_instead_of_raising(monkeypatch):
         assert result.detail, f"{name} reported {result.state} with no detail"
 
 
+def test_evaluation_lane_gate_does_not_call_live_specialists_held(monkeypatch):
+    """Dispatch and evaluation are separate authorities in operator output."""
+    monkeypatch.setattr(preflight, "load_qualification", lambda _path: {})
+    monkeypatch.setattr(
+        preflight,
+        "qualification_reviewers",
+        lambda _document: {
+            "daybreak-blue": {"dispatchEnabled": True, "evaluationEnabled": False},
+            "grok": {"dispatchEnabled": True, "evaluationEnabled": True},
+        },
+    )
+
+    result = preflight.check_lanes_held()
+
+    assert result.state == preflight.PASS
+    assert result.detail == (
+        "evaluation-enabled ['grok'] all canaried; "
+        "evaluation-disabled ['daybreak-blue']"
+    )
+    assert "held" not in result.detail
+
+
 def test_preflight_will_not_pass_a_lock_frozen_under_the_wrong_toolchain(tmp_path, monkeypatch):
     """The lock must name the version that actually runs.
 

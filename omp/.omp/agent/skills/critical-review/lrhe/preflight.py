@@ -245,7 +245,7 @@ def check_lanes_held() -> Result:
         if isinstance(value, dict) and value.get("evaluationEnabled") is True
     )
     off = sorted(set(qualified) - set(on))
-    return Result(PASS, f"evaluation-enabled {on} all canaried, held {off}")
+    return Result(PASS, f"evaluation-enabled {on} all canaried; evaluation-disabled {off}")
 
 
 
@@ -1032,7 +1032,7 @@ GATES = (
     ("reviewer definitions", check_agent_definitions),
     ("reviewer agents", check_reviewer_agents_resolve),
     ("no live transport", check_no_live_transport),
-    ("lanes held", check_lanes_held),
+    ("evaluation lanes", check_lanes_held),
     ("model selectors", check_model_selectors),
     ("reviewer evidence contracts", check_reviewer_evidence_contracts),
     ("conditional critic scope", check_conditional_critic_scope),
