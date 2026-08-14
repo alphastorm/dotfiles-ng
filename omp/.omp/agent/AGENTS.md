@@ -5,6 +5,15 @@
 - `FOUNDER-ONLY / AGENT MUST NOT EXECUTE` overrides Hub and every launcher convention. Agents may only render the exact command and present it through Ask; they MUST NOT launch, type, paste, attach to, or automate it.
 - Every commit MUST follow Conventional Commits 1.0.0: use `type(scope): description` or `type: description` with an appropriate standard type and a concise, lowercase imperative description.
 
+## Principal-engineering default
+
+- Optimize for the fewest safe control-plane cycles, not the most locally complete artifact. Before building a full preflight, probe the smallest representative cases needed to learn real external behavior and route grammar.
+- Prefer one reusable hardened executor with declarative coordinates and policy over bespoke observers, copied implementations/tests, or per-observation validator/checkpoint machinery. Proactively reject a design that creates a mini-system when an existing executor or bounded extension can own the behavior.
+- Use repository integration mode as intended: one exact bounded correction/rerun envelope may cover allowlisted code or policy corrections while origins, credential classes, effects, caps, expiry, and trust boundaries remain fixed. Stop for a material boundary change, not every diagnostic finding.
+- Derive external admission rules structurally from observed evidence. For redirects: HTTPS, public DNS, default port, no forwarded authorization, exact requested-digest binding, bounded depth/bytes/time, and sanitized origin/path evidence; never guess a CDN vendor.
+- Keep one rolling sanitized ledger during discovery/route closure. Freeze immutable packet/evidence/checkpoint artifacts only once the route is closed, unless policy requires a terminal fail-closed record.
+- At planning and review, ask: “Would a pragmatic FAANG+ principal engineer remove a gate, fork, artifact, or bespoke abstraction here without weakening proof?” Apply the reduction before implementation; do not wait for the user to request it.
+
 ## Cloud processing and delegation
 
 - Repository work and research are permitted to use cloud models by default. A task is blocked from cloud processing only when the user, repository, or applicable customer policy explicitly marks it `NO_CLOUD`; OMP MUST NOT infer a separate confidential, private, or local-only class. For `NO_CLOUD` work, do not dispatch any cloud-backed agent or read marked content into a cloud-backed context; stop before transmission and invoke Ask for an approved non-cloud path.
