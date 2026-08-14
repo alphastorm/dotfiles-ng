@@ -1321,10 +1321,10 @@ def test_the_private_qualification_activates_the_selected_specialists():
     live = document["liveDispatch"]
     assert document["schemaVersion"] == qualification.SCHEMA_VERSION
     assert live["panelId"] == qualification.LIVE_PANEL_ID
-    assert live["initialCritics"] == ["gemini", "grok"]
+    assert live["initialCritics"] == ["claude-opus", "gemini", "grok"]
     assert live["conditionalCritics"] == ["claude"]
     assert "claude" not in live["disabled"]
-    assert "claude-opus" in live["disabled"]
+    assert "claude-opus" not in live["disabled"]
     assert live["initialSpecialists"] == ["daybreak-blue"]
     assert "daybreak-blue" not in live["disabled"]
     daybreak = document["reviewers"]["daybreak-blue"]
@@ -1337,6 +1337,17 @@ def test_the_private_qualification_activates_the_selected_specialists():
     assert daybreak["schemaValid"] is True
     assert daybreak["readOnlyBoundary"] == "passed"
     assert "blockers" not in daybreak
+    opus = document["reviewers"]["claude-opus"]
+    assert opus["dispatchRole"] == "primary_critic"
+    assert opus["dispatchEnabled"] is True
+    assert opus["evaluationEnabled"] is True
+    assert opus["independence_class"] == qualification.CROSS_FAMILY
+    assert opus["authority"] == qualification.INDEPENDENT_EVIDENCE
+    assert opus["access_profile"] == "anthropic-cvp-approved-org"
+    assert opus["providerCanary"] == "passed"
+    assert opus["schemaValid"] is True
+    assert opus["readOnlyBoundary"] == "passed"
+    assert "blockers" not in opus
     qualification.validate_qualification(document)
 
 

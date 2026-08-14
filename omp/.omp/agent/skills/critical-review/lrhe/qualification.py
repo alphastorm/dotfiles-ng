@@ -81,9 +81,9 @@ from review_sequence import (
 )
 
 SCHEMA_VERSION = 7
-# Pinned beside the schema version so activation is atomic: a v7 resolver and a
-# v2 panel definition cannot half-agree about who is on the council.
-LIVE_PANEL_ID = "critical-review-primary-v3"
+# Pinned beside the schema version so activation is atomic: a v7 resolver and
+# v4 panel definition cannot half-agree about who is on the council.
+LIVE_PANEL_ID = "critical-review-primary-v4"
 MANIFEST_SCHEMA_VERSION = 6
 DEFAULT_QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
 # The manifest records which resolver bytes produced its roster. This is
