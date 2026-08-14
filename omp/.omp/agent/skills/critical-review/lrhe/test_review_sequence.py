@@ -897,10 +897,10 @@ def _panel(with_conditional: bool = True, specialist_group: str = "") -> dict:
         ),
         "gemini": _unconditional_entry(
             "review-gemini",
-            "google-antigravity/gemini-3.6-flash:high",
+            "google-antigravity/gemini-3.7-flash:high",
             "whole_repo",
             model_family="gemini",
-            correlation_group="gemini-3.6-flash",
+            correlation_group="gemini-3.7-flash",
         ),
         "grok": _unconditional_entry(
             "review-grok",

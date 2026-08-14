@@ -871,12 +871,12 @@ def test_judge_lrhe_ingest_is_order_deterministic_for_bytes(tmp_path: Path):
         {"judge_id": "r1|01|grok", "verdict": "CONFIRMED", "label_id": "L1", "confidence": 0.9,
          "judge_family": "grok", "served_model": "xai-oauth/grok-build"},
         {"judge_id": "r1|01|gemi", "verdict": "CONFIRMED", "label_id": "L1", "confidence": 0.8,
-         "judge_family": "gemi", "served_model": "google-antigravity/gemini-3.6-flash"},
+         "judge_family": "gemi", "served_model": "google-antigravity/gemini-3.7-flash"},
     ]
     responses_two = list(reversed(responses_one))
     _write_jsonl(responses_a, responses_one)
     _write_jsonl(responses_b, responses_two)
-    expect = ["grok=xai-oauth/grok-build", "gemi=google-antigravity/gemini-3.6-flash:high"]
+    expect = ["grok=xai-oauth/grok-build", "gemi=google-antigravity/gemini-3.7-flash:high"]
 
     first = _run_cmd([
         "judge_lrhe.py",

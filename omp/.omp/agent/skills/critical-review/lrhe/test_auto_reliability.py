@@ -268,7 +268,7 @@ def test_05_every_family_is_tool_less():
     agents = Path.home() / ".omp/agent/agents"
     if not agents.is_dir():
         pytest.skip("judge agent definitions are not present in this checkout")
-    assert len(auto_reliability.FAMILIES) == 5
+    assert len(auto_reliability.FAMILIES) == 4
     for family, definition in auto_reliability.FAMILIES.items():
         path = agents / f"{definition['agent']}.md"
         assert path.is_file(), f"missing {family} definition {path}"

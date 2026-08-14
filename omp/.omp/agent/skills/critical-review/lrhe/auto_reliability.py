@@ -72,7 +72,7 @@ CASE_ID_FMT = "AR-{:04d}"
 FAMILIES: dict[str, dict[str, str]] = {
     "claude": {"agent": "judge-claude", "selector": "anthropic/claude-opus-5:max",
                "role": "fresh repeat of an original judge family"},
-    "gemini": {"agent": "judge-gemini", "selector": "google-antigravity/gemini-3.6-flash:high",
+    "gemini": {"agent": "judge-gemini", "selector": "google-antigravity/gemini-3.7-flash:high",
                "role": "fresh repeat of an original judge family"},
     "grok": {"agent": "judge-grok", "selector": "xai-oauth/grok-build",
              "role": "fresh repeat of an original judge family"},
