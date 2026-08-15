@@ -14,6 +14,13 @@
 - Keep one rolling sanitized ledger during discovery/route closure. Freeze immutable packet/evidence/checkpoint artifacts only once the route is closed, unless policy requires a terminal fail-closed record.
 - At planning and review, ask: “Would a pragmatic FAANG+ principal engineer remove a gate, fork, artifact, or bespoke abstraction here without weakening proof?” Apply the reduction before implementation; do not wait for the user to request it.
 
+## Goal-mode default
+
+- Proactively use the native `goal` tool for exactly one open-ended objective likely to require autonomous continuation across turns. Keep known deliverables inside that objective in `todo`; keep independent bounded branches in Task.
+- Before `goal create`, inspect the available repository, requirements, and threat-model evidence; draft the objective; then red-team ways a future agent could satisfy it lazily. Encode observable success, non-goals, verification, boundaries, and stop or escalation conditions. Define the outcome, not the implementation path.
+- Do not create goals for bounded retrieval, routine edits, user-supplied checklists, or work waiting on a user decision or external authority. Do not combine competing outcomes in one goal; use separate top-level Goal sessions.
+- For security and bug hunts, derive realistic attacker capabilities and excluded preconditions from the repository threat model when available. Keep attack-surface discovery, coverage measurement, each finding hunt, and independent validation as separate outcomes; when the objective requires one valid finding, “none found” is not completion.
+
 ## Cloud processing and delegation
 
 - Repository work and research are permitted to use cloud models by default. A task is blocked from cloud processing only when the user, repository, or applicable customer policy explicitly marks it `NO_CLOUD`; OMP MUST NOT infer a separate confidential, private, or local-only class. For `NO_CLOUD` work, do not dispatch any cloud-backed agent or read marked content into a cloud-backed context; stop before transmission and invoke Ask for an approved non-cloud path.
