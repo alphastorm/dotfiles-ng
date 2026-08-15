@@ -105,9 +105,10 @@ Every change admitted to the full council has one `review_sequence_id`. Every fr
 one machine-readable `review-record.json`. `lrhe/review_sequence.py` is the sole
 dispatch-action selector; packet prose cannot override its result. Its modes are:
 
-- `design`: an optional pre-implementation council on the frozen design
-  artifact; at most one per sequence, always the first epoch, and it never
-  counts toward the two general implementation passes;
+- `design`: a pre-implementation council on the frozen design artifact; required
+  for every `credentialed-external-lifecycle`, optional otherwise, at most one
+  per sequence, always the first epoch, and never counted toward the two general
+  implementation passes;
 - `initial`: the first general council for the sequence;
 - `remediation`: a correction scoped to named findings, changed paths, and
   adjacent invariants;
@@ -134,7 +135,13 @@ The frozen machine record must contain exactly these fields; any additional key 
 6. mode-specific fields. Initial mode rejects remediation metadata. Remediation
    requires an exact finding/scope/verification disposition. Material redesign
    additionally requires one named material category and proof that all named
-   parent findings are resolved.
+   parent findings are resolved;
+7. `lifecycle_design_artifacts` when `touched_risk_domains` contains
+   `credentialed-external-lifecycle`: distinct, digest-bound state-machine and
+   failure-matrix JSON artifacts. The executable gate validates their schemas,
+   transition/failure-state coverage, inclusion in the design review subject,
+   and the later implementation epoch's exact binding to one completed
+   first-epoch design council.
 
 Every proof receipt is JSON with `schemaVersion: 1`, `result: passed`,
 `exit_code: 0`, and the `subject_digest` computed from the frozen artifact digest
@@ -229,6 +236,21 @@ epoch.
 
 A design-stage council is optional by default. Use it only when the design itself establishes a production/hard-to-reverse boundary and early independent review is likely cheaper than correcting the implementation. Skip it for small or reversible changes, bounded experiments, ordinary internal tooling, or when one review of the frozen implementation is sufficient, unless an existing executable prerequisite applies. Never run a design council merely because the implementation may later receive a council.
 
+The `credentialed-external-lifecycle` risk domain is mandatory when a change
+combines live credentials with external effects and owns any recovery, retry,
+concurrency, teardown, revocation, or uncertain-effect behavior. For that
+domain, review the lifecycle design before code, credential acquisition, or
+authorization-packet generation. This is an executable prerequisite, not
+advice: an implementation `initial`, `remediation`, or `material-redesign`
+record touching the domain fails closed without one first-epoch design record
+whose action was `full-council`.
+
+For other consequential changes, prefer design review before code exists. The
+shadow ledger's confirmed P0/P1 findings are dominantly design-level — ordering
+that makes a commit unreachable, rollback that deletes its own recovery path,
+single-check containment — and every one is cheaper to catch in the document
+than in a remediation chain.
+
 A design epoch is a full council at near-zero ceremony:
 
 - the frozen subject is the design artifact itself: `artifact.diff` is the
@@ -236,15 +258,26 @@ A design epoch is a full council at near-zero ceremony:
   run, `proof_receipts` may be empty (`{}`) with every proof class
   `not-applicable` under a concrete justification. A `passed` class still
   requires a subject-bound receipt;
+- a credentialed external lifecycle additionally carries distinct
+  `lifecycle-state-machine.json` and `lifecycle-failure-matrix.json` files.
+  `lrhe/review_sequence.py` requires the state machine to name every state,
+  guarded transition, terminal state, and failure state; the failure matrix
+  must bind each failure state to trigger, durable state, recovery, retry,
+  cleanup, and decisive verification. Both files must be in `changed_files`;
 - `review_mode: design` requires an empty `sequence_history`: the design
   council is always the sequence's first epoch, and there is at most one;
 - a design pass never consumes an implementation council: the later `initial`
-  epoch reviews the implementation with the design ledger's dispositions in
-  its packet context;
+  epoch reviews the implementation with the design ledger's dispositions and
+  exact `lifecycle_design_artifacts` bindings in its packet context;
 - design findings land in the ledger like any council's; resolve them in the
   revised design or carry them into the implementation packet's
   `known_open_questions`. They never spawn remediation epochs — remediation
-  belongs to implementation reviews.
+  belongs to implementation reviews;
+- after implementation, review is verification-only unless the correction
+  introduces a new risk class or materially changes architecture, trust
+  boundary, compatibility, persistent state, migration/rollback, or production
+  effects. Named-finding remediation does not reopen design or create another
+  full council merely because implementation changed.
 
 The panel resolves through the same record-aware resolver call below, and
 dispatch still requires the frozen full gate on the design record. A `design`

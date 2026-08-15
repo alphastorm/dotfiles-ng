@@ -5,6 +5,7 @@ The gate validates one JSON record against its frozen artifact, changed-file
 bytes, proof receipts, invariant coverage, and ordered sequence history. It does
 not call providers and cannot turn reviewer agreement into approval.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,6 +25,7 @@ RISK_DOMAINS = frozenset(
         "cache-invalidation",
         "concurrency",
         "cross-system-boundary",
+        "credentialed-external-lifecycle",
         "documentation-policy",
         "money-or-assets",
         "persistent-state",
@@ -51,6 +53,9 @@ MATERIAL_CHANGE_CATEGORIES = frozenset(
         "production-effect",
     }
 )
+CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN = "credentialed-external-lifecycle"
+LIFECYCLE_STATE_MACHINE_SCHEMA = "omp.critical-review.lifecycle-state-machine.v1"
+LIFECYCLE_FAILURE_MATRIX_SCHEMA = "omp.critical-review.lifecycle-failure-matrix.v1"
 RECORD_FIELDS = frozenset(
     {
         "review_sequence_id",
@@ -72,6 +77,7 @@ RECORD_FIELDS = frozenset(
         "new_risk_classes",
         "cross_subsystem_omissions",
         "incomplete_invariant_ids",
+        "lifecycle_design_artifacts",
         "remediated_finding_ids",
         "resolved_finding_ids",
         "disputed_or_unresolved_p01",
@@ -186,6 +192,266 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _bound_json_artifact(
+    value: object,
+    *,
+    name: str,
+    errors: list[str],
+) -> tuple[Mapping[str, object] | None, str | None]:
+    reference = _mapping(value)
+    prefix = f"invalid-lifecycle-design-artifact:{name}"
+    if reference is None or set(reference) != {"path", "sha256"}:
+        errors.append(prefix)
+        return None, None
+    path_value = reference.get("path")
+    digest = reference.get("sha256")
+    if (
+        not isinstance(path_value, str)
+        or not path_value
+        or not isinstance(digest, str)
+        or not _SHA256.fullmatch(digest)
+    ):
+        errors.append(prefix)
+        return None, None
+    path = Path(path_value)
+    if _is_session_local(path):
+        errors.append(f"ephemeral-lifecycle-design-artifact:{name}")
+        return None, path_value
+    if not path.is_file() or _sha256(path) != digest:
+        errors.append(prefix)
+        return None, path_value
+    try:
+        payload_value: object = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        errors.append(prefix)
+        return None, path_value
+    payload = _mapping(payload_value)
+    if payload is None:
+        errors.append(prefix)
+        return None, path_value
+    return payload, path_value
+
+
+def _state_machine_errors(
+    value: Mapping[str, object],
+) -> tuple[set[str], set[str], tuple[str, ...]]:
+    errors: list[str] = []
+    if (
+        set(value)
+        != {
+            "schema_version",
+            "states",
+            "initial_state",
+            "terminal_states",
+            "transitions",
+        }
+        or value.get("schema_version") != LIFECYCLE_STATE_MACHINE_SCHEMA
+    ):
+        return set(), set(), ("invalid-lifecycle-state-machine",)
+    states_value = _sequence(value.get("states"))
+    terminal_values = _sequence(value.get("terminal_states"))
+    transitions = _sequence(value.get("transitions"))
+    states = (
+        {state.strip() for state in states_value if isinstance(state, str) and state.strip()}
+        if states_value is not None
+        else set()
+    )
+    terminals = (
+        {state.strip() for state in terminal_values if isinstance(state, str) and state.strip()}
+        if terminal_values is not None
+        else set()
+    )
+    if (
+        states_value is None
+        or not states
+        or len(states) != len(states_value)
+        or terminal_values is None
+        or not terminals
+        or len(terminals) != len(terminal_values)
+        or not terminals <= states
+        or value.get("initial_state") not in states
+        or not transitions
+    ):
+        errors.append("invalid-lifecycle-state-machine")
+    failure_states: set[str] = set()
+    transition_sources: set[str] = set()
+    for index, transition_value in enumerate(transitions or ()):
+        transition = _mapping(transition_value)
+        prefix = f"invalid-lifecycle-transition:{index}"
+        if transition is None or set(transition) != {
+            "from_state",
+            "event",
+            "to_state",
+            "guard",
+            "failure_state",
+        }:
+            errors.append(prefix)
+            continue
+        from_state = transition.get("from_state")
+        to_state = transition.get("to_state")
+        failure_state = transition.get("failure_state")
+        if (
+            from_state not in states
+            or to_state not in states
+            or failure_state not in states
+            or not isinstance(transition.get("event"), str)
+            or not cast(str, transition["event"]).strip()
+            or not isinstance(transition.get("guard"), str)
+            or not cast(str, transition["guard"]).strip()
+        ):
+            errors.append(prefix)
+            continue
+        transition_sources.add(cast(str, from_state))
+        failure_states.add(cast(str, failure_state))
+    if states - terminals - transition_sources:
+        errors.append("lifecycle-state-without-transition")
+    return states, failure_states, tuple(errors)
+
+
+def _failure_matrix_errors(
+    value: Mapping[str, object],
+    *,
+    states: set[str],
+    required_failure_states: set[str],
+) -> tuple[str, ...]:
+    if set(value) != {"schema_version", "failure_rows"} or (
+        value.get("schema_version") != LIFECYCLE_FAILURE_MATRIX_SCHEMA
+    ):
+        return ("invalid-lifecycle-failure-matrix",)
+    rows = _sequence(value.get("failure_rows"))
+    if not rows:
+        return ("invalid-lifecycle-failure-matrix",)
+    errors: list[str] = []
+    identifiers: set[str] = set()
+    covered_states: set[str] = set()
+    fields = {
+        "failure_id",
+        "stage",
+        "trigger",
+        "durable_state",
+        "recovery_action",
+        "retry_policy",
+        "cleanup",
+        "decisive_check",
+    }
+    for index, row_value in enumerate(rows):
+        row = _mapping(row_value)
+        prefix = f"invalid-lifecycle-failure-row:{index}"
+        if row is None or set(row) != fields:
+            errors.append(prefix)
+            continue
+        if any(
+            not isinstance(row.get(field), str) or not cast(str, row[field]).strip()
+            for field in fields
+        ):
+            errors.append(prefix)
+            continue
+        identifier = cast(str, row["failure_id"]).strip()
+        durable_state = cast(str, row["durable_state"]).strip()
+        if identifier in identifiers:
+            errors.append("duplicate-lifecycle-failure-id")
+        identifiers.add(identifier)
+        if durable_state not in states:
+            errors.append(f"{prefix}:unknown-durable-state")
+        covered_states.add(durable_state)
+    if required_failure_states - covered_states:
+        errors.append("lifecycle-failure-state-coverage-mismatch")
+    return tuple(errors)
+
+
+def _lifecycle_design_errors(
+    record: Mapping[str, object],
+    *,
+    mode: object,
+    touched_domains: set[str],
+) -> tuple[str, ...]:
+    errors: list[str] = []
+    lifecycle = CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN in touched_domains
+    artifacts_value = record.get("lifecycle_design_artifacts")
+    if not lifecycle:
+        if artifacts_value not in (None, {}):
+            errors.append("unexpected-lifecycle-design-artifacts")
+        return tuple(errors)
+    artifacts = _mapping(artifacts_value)
+    if artifacts is None or set(artifacts) != {"state_machine", "failure_matrix"}:
+        return ("missing-lifecycle-design-artifacts",)
+    state_machine, state_path = _bound_json_artifact(
+        artifacts.get("state_machine"),
+        name="state-machine",
+        errors=errors,
+    )
+    failure_matrix, failure_path = _bound_json_artifact(
+        artifacts.get("failure_matrix"),
+        name="failure-matrix",
+        errors=errors,
+    )
+    states: set[str] = set()
+    failure_states: set[str] = set()
+    if state_machine is not None:
+        states, failure_states, state_errors = _state_machine_errors(state_machine)
+        errors.extend(state_errors)
+    if failure_matrix is not None:
+        errors.extend(
+            _failure_matrix_errors(
+                failure_matrix,
+                states=states,
+                required_failure_states=failure_states,
+            )
+        )
+    if state_path is not None and state_path == failure_path:
+        errors.append("lifecycle-design-artifacts-not-distinct")
+
+    changed_files = set(_strict_strings(record, "changed_files", errors, allow_empty=False))
+    if mode == "design":
+        if {state_path, failure_path} - changed_files:
+            errors.append("lifecycle-design-artifact-not-reviewed")
+        return tuple(errors)
+
+    history_values = _sequence(record.get("sequence_history")) or ()
+    design_rows = [
+        row
+        for value in history_values
+        if (row := _mapping(value)) is not None and row.get("review_mode") == "design"
+    ]
+    if len(design_rows) != 1 or design_rows[0].get("action") != "full-council":
+        errors.append("credentialed-lifecycle-design-review-required")
+        return tuple(errors)
+    design_row = design_rows[0]
+    record_path_value = design_row.get("record_path")
+    record_digest = design_row.get("record_sha256")
+    if (
+        not isinstance(record_path_value, str)
+        or not isinstance(record_digest, str)
+        or not _SHA256.fullmatch(record_digest)
+    ):
+        errors.append("credentialed-lifecycle-design-record-invalid")
+        return tuple(errors)
+    design_path = Path(record_path_value)
+    try:
+        design_value: object = json.loads(design_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        errors.append("credentialed-lifecycle-design-record-invalid")
+        return tuple(errors)
+    design_record = _mapping(design_value)
+    if design_record is None:
+        design_domains: set[str] = set()
+        design_changed_files: set[str] = set()
+    else:
+        design_domains = set(_strict_strings(design_record, "touched_risk_domains", errors))
+        design_changed_files = set(_strict_strings(design_record, "changed_files", errors))
+    if (
+        design_record is None
+        or _sha256(design_path) != record_digest
+        or design_record.get("review_sequence_id") != record.get("review_sequence_id")
+        or design_record.get("review_mode") != "design"
+        or CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN not in design_domains
+        or design_record.get("lifecycle_design_artifacts") != artifacts
+        or {state_path, failure_path} - design_changed_files
+    ):
+        errors.append("credentialed-lifecycle-design-record-mismatch")
+    return tuple(errors)
+
+
 def proof_subject_digest(record: Mapping[str, object]) -> str:
     """Digest the exact frozen artifact and changed-file identity under proof."""
 
@@ -280,7 +546,11 @@ def _binding_errors(record: Mapping[str, object]) -> tuple[str, ...]:
             continue
         path_value = receipt.get("path")
         expected = receipt.get("sha256")
-        if not isinstance(path_value, str) or not isinstance(expected, str) or not _SHA256.fullmatch(expected):
+        if (
+            not isinstance(path_value, str)
+            or not isinstance(expected, str)
+            or not _SHA256.fullmatch(expected)
+        ):
             errors.append(prefix)
             continue
         path = Path(path_value)
@@ -499,7 +769,9 @@ def _correction_errors(
     if scope is None:
         errors.append("missing-remediation-scope")
     else:
-        scoped_findings = set(_strict_row_strings(scope, "finding_ids", "remediation-scope", errors))
+        scoped_findings = set(
+            _strict_row_strings(scope, "finding_ids", "remediation-scope", errors)
+        )
         if scoped_findings != remediated:
             errors.append("remediation-finding-scope-mismatch")
         _strict_row_strings(scope, "adjacent_invariant_ids", "remediation-scope", errors)
@@ -558,12 +830,21 @@ def readiness_errors(record: Mapping[str, object]) -> tuple[str, ...]:
     errors.extend(_binding_errors(record))
     errors.extend(_history_errors(record, mode))
 
-    touched_domains = set(_strict_strings(record, "touched_risk_domains", errors, allow_empty=False))
+    touched_domains = set(
+        _strict_strings(record, "touched_risk_domains", errors, allow_empty=False)
+    )
     unknown_domains = touched_domains - RISK_DOMAINS
     if unknown_domains:
         errors.extend(f"unknown-risk-domain:{domain}" for domain in sorted(unknown_domains))
     changed_files = set(_strict_strings(record, "changed_files", errors, allow_empty=False))
     errors.extend(_matrix_errors(record, changed_files, touched_domains))
+    errors.extend(
+        _lifecycle_design_errors(
+            record,
+            mode=mode,
+            touched_domains=touched_domains,
+        )
+    )
 
     deterministic_failures = _strict_strings(record, "known_deterministic_failures", errors)
     if deterministic_failures:
@@ -579,7 +860,11 @@ def readiness_errors(record: Mapping[str, object]) -> tuple[str, ...]:
         errors.append("incomplete-invariant-proof")
 
     if mode in {"design", "initial"}:
-        for field in ("remediated_finding_ids", "resolved_finding_ids", "disputed_or_unresolved_p01"):
+        for field in (
+            "remediated_finding_ids",
+            "resolved_finding_ids",
+            "disputed_or_unresolved_p01",
+        ):
             if _strict_strings(record, field, errors):
                 errors.append(f"{mode}-review-has-{field}")
         if record.get("remediation_scope") not in (None, {}):
@@ -589,7 +874,9 @@ def readiness_errors(record: Mapping[str, object]) -> tuple[str, ...]:
     elif mode == "remediation":
         errors.extend(_correction_errors(record, require_all_resolved=False))
     elif mode == "material-redesign":
-        material = set(_strict_strings(record, "material_change_categories", errors, allow_empty=False))
+        material = set(
+            _strict_strings(record, "material_change_categories", errors, allow_empty=False)
+        )
         unknown = material - MATERIAL_CHANGE_CATEGORIES
         if unknown:
             errors.extend(f"unknown-material-change-category:{item}" for item in sorted(unknown))
@@ -692,7 +979,11 @@ def triage_errors(record: Mapping[str, object]) -> tuple[str, ...]:
         errors.append("incomplete-invariant-proof")
 
     if mode in {"design", "initial"}:
-        for field in ("remediated_finding_ids", "resolved_finding_ids", "disputed_or_unresolved_p01"):
+        for field in (
+            "remediated_finding_ids",
+            "resolved_finding_ids",
+            "disputed_or_unresolved_p01",
+        ):
             if _strict_strings(record, field, errors):
                 errors.append(f"{mode}-review-has-{field}")
         if record.get("remediation_scope") not in (None, {}):
@@ -702,7 +993,9 @@ def triage_errors(record: Mapping[str, object]) -> tuple[str, ...]:
     elif mode == "remediation":
         errors.extend(_correction_errors(record, require_all_resolved=False))
     elif mode == "material-redesign":
-        material = set(_strict_strings(record, "material_change_categories", errors, allow_empty=False))
+        material = set(
+            _strict_strings(record, "material_change_categories", errors, allow_empty=False)
+        )
         unknown = material - MATERIAL_CHANGE_CATEGORIES
         if unknown:
             errors.extend(f"unknown-material-change-category:{item}" for item in sorted(unknown))

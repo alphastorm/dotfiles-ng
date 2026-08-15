@@ -62,6 +62,7 @@ DRAFT_TEMPLATE: dict[str, object] = {
     "new_risk_classes": [],
     "cross_subsystem_omissions": [],
     "incomplete_invariant_ids": [],
+    "lifecycle_design_artifacts": None,
     "remediated_finding_ids": [],
     "resolved_finding_ids": [],
     "disputed_or_unresolved_p01": [],
@@ -91,9 +92,7 @@ def _load_record(path: Path) -> dict[str, object]:
 def _write_record(path: Path, record: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(
-        json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    temporary.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(path)
 
 
@@ -306,8 +305,7 @@ def cmd_ledger(args: argparse.Namespace) -> int:
     for row in rows:
         if row["kind"] == "evidence":
             finding = (
-                f"{row['reviewer_id']}-R{row['row']} — {row['claim']} "
-                f"— impact: {row['impact']}"
+                f"{row['reviewer_id']}-R{row['row']} — {row['claim']} — impact: {row['impact']}"
             )
             evidence, result = row["evidence"], ""
         else:
@@ -345,9 +343,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    scaffold = commands.add_parser(
-        "scaffold", help="emit a pre-freeze triage draft record"
-    )
+    scaffold = commands.add_parser("scaffold", help="emit a pre-freeze triage draft record")
     scaffold.add_argument("--mode", choices=sorted(REVIEW_MODES), required=True)
     scaffold.add_argument("--sequence-id", required=True)
     scaffold.add_argument("--review-id", required=True)
@@ -364,9 +360,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     freeze.add_argument("--out", type=Path)
     freeze.set_defaults(handler=cmd_freeze)
 
-    recheck = commands.add_parser(
-        "recheck", help="verify the live tree against the frozen subject"
-    )
+    recheck = commands.add_parser("recheck", help="verify the live tree against the frozen subject")
     recheck.add_argument("--record", type=Path, required=True)
     recheck.set_defaults(handler=cmd_recheck)
 

@@ -7,6 +7,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 import yaml
@@ -32,9 +33,12 @@ from qualification import (
     validate_qualification,
 )
 from review_sequence import (
+    CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN,
     EXIT_CEREMONY_REQUIRED,
     PROOF_CLASSES,
     SESSION_LOCAL_ROOT,
+    LIFECYCLE_FAILURE_MATRIX_SCHEMA,
+    LIFECYCLE_STATE_MACHINE_SCHEMA,
     proof_subject_digest,
     readiness_errors,
     select_review_action,
@@ -230,12 +234,200 @@ def _design_record(tmp_path: Path) -> dict[str, object]:
     return record
 
 
+def _lifecycle_design_record(tmp_path: Path) -> dict[str, object]:
+    record = _design_record(tmp_path)
+    state_machine = tmp_path / "lifecycle-state-machine.json"
+    failure_matrix = tmp_path / "lifecycle-failure-matrix.json"
+    _write_json(
+        state_machine,
+        {
+            "schema_version": LIFECYCLE_STATE_MACHINE_SCHEMA,
+            "states": ["prepared", "running", "safe-pause", "closed"],
+            "initial_state": "prepared",
+            "terminal_states": ["closed"],
+            "transitions": [
+                {
+                    "from_state": "prepared",
+                    "event": "authorize",
+                    "to_state": "running",
+                    "guard": "exact authority and credential binding",
+                    "failure_state": "safe-pause",
+                },
+                {
+                    "from_state": "running",
+                    "event": "execute",
+                    "to_state": "safe-pause",
+                    "guard": "one durable claim",
+                    "failure_state": "safe-pause",
+                },
+                {
+                    "from_state": "safe-pause",
+                    "event": "revoke",
+                    "to_state": "closed",
+                    "guard": "bound revocation and negative authentication",
+                    "failure_state": "safe-pause",
+                },
+            ],
+        },
+    )
+    _write_json(
+        failure_matrix,
+        {
+            "schema_version": LIFECYCLE_FAILURE_MATRIX_SCHEMA,
+            "failure_rows": [
+                {
+                    "failure_id": "F-001",
+                    "stage": "any external effect",
+                    "trigger": "response or process uncertainty",
+                    "durable_state": "safe-pause",
+                    "recovery_action": "reconcile before continuation",
+                    "retry_policy": "bounded response-only retry",
+                    "cleanup": "reverse teardown and credential closure",
+                    "decisive_check": "zero inventory and bound negative auth",
+                }
+            ],
+        },
+    )
+    design = Path(cast(str, record["artifact_path"]))
+    changed_files = [str(design), str(state_machine), str(failure_matrix)]
+    domains = [
+        "architecture",
+        "authorization",
+        "concurrency",
+        "cross-system-boundary",
+        CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN,
+        "secrets-cryptography",
+    ]
+    record["changed_files"] = changed_files
+    record["changed_file_digests"] = {path: _sha256(Path(path)) for path in changed_files}
+    record["touched_risk_domains"] = domains
+    record["invariant_proof_matrix"] = [
+        {
+            "invariant_id": "INV-LIFECYCLE-DESIGN",
+            "changed_paths": changed_files,
+            "risk_domains": domains,
+            "preserved_guard": "Every effect has a durable failure state and cleanup path.",
+            "decisive_check": "machine-validated state machine and failure matrix",
+            "result": "passed",
+            "evidence": "lifecycle design artifacts",
+        }
+    ]
+    record["lifecycle_design_artifacts"] = {
+        "state_machine": {
+            "path": str(state_machine),
+            "sha256": _sha256(state_machine),
+        },
+        "failure_matrix": {
+            "path": str(failure_matrix),
+            "sha256": _sha256(failure_matrix),
+        },
+    }
+    return record
+
+
+def _bound_design_history(
+    tmp_path: Path,
+    record: dict[str, object],
+    *,
+    action: str = "full-council",
+) -> dict[str, str]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    record["review_id"] = "CR-design"
+    record_path = tmp_path / "design-review-record.json"
+    _write_json(record_path, record)
+    return {
+        "review_id": "CR-design",
+        "review_mode": "design",
+        "action": action,
+        "record_path": str(record_path),
+        "record_sha256": _sha256(record_path),
+    }
+
+
+def _implementation_with_lifecycle_design(
+    tmp_path: Path,
+    design: dict[str, object],
+    history: dict[str, str] | None,
+) -> dict[str, object]:
+    record = _ready_record(tmp_path, "initial")
+    domains = [
+        "architecture",
+        "authorization",
+        "concurrency",
+        "cross-system-boundary",
+        CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN,
+        "secrets-cryptography",
+    ]
+    record["touched_risk_domains"] = domains
+    for row in cast(list[dict[str, object]], record["invariant_proof_matrix"]):
+        row["risk_domains"] = domains
+    record["lifecycle_design_artifacts"] = design["lifecycle_design_artifacts"]
+    if history is not None:
+        record["sequence_history"] = [history]
+        record["parent_review_id"] = "CR-design"
+    return record
+
+
 def test_design_mode_reviews_a_document_without_receipts(tmp_path: Path) -> None:
     record = _design_record(tmp_path)
     decision = select_review_action(record)
     assert (decision.status, decision.action) == ("ready", "full-council")
     triage = select_triage_action(record)
     assert (triage.status, triage.projected_action) == ("ceremony-required", "full-council")
+
+
+def test_credentialed_lifecycle_design_requires_machine_checked_artifacts(
+    tmp_path: Path,
+) -> None:
+    record = _lifecycle_design_record(tmp_path)
+    decision = select_review_action(record)
+    assert (decision.status, decision.action) == ("ready", "full-council")
+
+    failure_path = Path(
+        cast(
+            dict[str, str],
+            cast(dict[str, object], record["lifecycle_design_artifacts"])["failure_matrix"],
+        )["path"]
+    )
+    failure_value = json.loads(failure_path.read_text(encoding="utf-8"))
+    failure_value["failure_rows"][0]["durable_state"] = "unknown"
+    _write_json(failure_path, failure_value)
+    cast(
+        dict[str, str],
+        cast(dict[str, object], record["lifecycle_design_artifacts"])["failure_matrix"],
+    )["sha256"] = _sha256(failure_path)
+    record["changed_file_digests"][str(failure_path)] = _sha256(failure_path)
+    assert "invalid-lifecycle-failure-row:0:unknown-durable-state" in readiness_errors(record)
+
+
+def test_credentialed_lifecycle_initial_requires_bound_design_council(
+    tmp_path: Path,
+) -> None:
+    design = _lifecycle_design_record(tmp_path / "design")
+    missing = _implementation_with_lifecycle_design(
+        tmp_path / "missing",
+        design,
+        None,
+    )
+    assert "credentialed-lifecycle-design-review-required" in readiness_errors(missing)
+
+    history = _bound_design_history(tmp_path / "history", design)
+    implementation = _implementation_with_lifecycle_design(
+        tmp_path / "implementation",
+        design,
+        history,
+    )
+    decision = select_review_action(implementation)
+    assert (decision.status, decision.action) == ("ready", "full-council")
+
+    unreviewed = dict(history)
+    unreviewed["action"] = "none"
+    skipped = _implementation_with_lifecycle_design(
+        tmp_path / "skipped",
+        design,
+        unreviewed,
+    )
+    assert "credentialed-lifecycle-design-review-required" in readiness_errors(skipped)
 
 
 def test_design_pass_does_not_consume_the_implementation_council(tmp_path: Path) -> None:
@@ -1081,8 +1273,6 @@ def _resolve(
     )
 
 
-
-
 def _reviewer_ids(manifest: dict, key: str = "selected") -> list[str]:
     return [entry["reviewer_id"] for entry in manifest[key]]
 
@@ -1757,6 +1947,7 @@ def test_epoch_tool_scaffolds_freezes_and_rechecks(tmp_path: Path) -> None:
         == 0
     )
     scaffolded = json.loads(draft.read_text())
+    assert scaffolded["lifecycle_design_artifacts"] is None
     triage = select_triage_action(scaffolded)
     assert (triage.status, triage.projected_action) == ("ceremony-required", "full-council")
 
