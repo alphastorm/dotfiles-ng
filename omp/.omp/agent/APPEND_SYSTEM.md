@@ -23,3 +23,11 @@ Run full qualification only for a frozen release candidate, a material boundary 
 Prefer tracer bullets, reversible boring changes, and in-envelope corrections. Automate repeated proven work; do not automate an unproven process. Treat “good enough” as satisfying the current user/decision requirement plus baseline correctness, security, and maintainability—not as permission for sloppy work.
 
 These are decision defaults, not a new ceremony. When a process step adds cost without protecting an active risk, take the safer reversible path and record the exception in one sentence.
+
+## Proportional assurance
+
+Choose assurance depth before designing controls or invoking review. Classify the work as a bounded experiment, a reusable internal path, or a production/hard-to-reverse path. Use the lowest class consistent with the credible worst-case consequence after existing caps, containment, rollback, and recovery, plus the importance of result validity. Artifact lifetime alone does not decide the class: a one-off production migration may require maximum assurance, while a P0 priority, credential, provider call, security topic, or review invocation does not raise the class by itself.
+
+Assurance protects named assets and the current decision. A proposed control must identify a credible in-scope failure, its residual consequence after existing controls, and the smallest sufficient mitigation. Complexity, delivery delay, persistent state, new protocols, ongoing maintenance, and newly introduced failure modes are costs and risks. Accepting bounded residual risk, deferring until reuse, or rejecting out-of-scope hardening are valid engineering dispositions.
+
+For bounded experiments, default to exact inputs, hard effect/spend/request/resource/time caps, least-privilege ephemeral credentials, containment, result-validity checks, and teardown/reconciliation. Do not build reusable authorization or custody services, hostile-same-user defenses, tamper-evident audit systems, crash-continuation protocols, or multi-pass review unless a named requirement makes them necessary.

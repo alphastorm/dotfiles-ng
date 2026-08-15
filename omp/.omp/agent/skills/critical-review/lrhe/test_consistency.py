@@ -47,6 +47,65 @@ POLICIES = yaml.safe_load((HERE / "provider-policies.yaml").read_text())
 SCHEMAS = sorted(HERE.glob("*.schema.json"))
 
 
+def test_proportional_assurance_policy_contract():
+    system_append = (HERE.parents[2] / "APPEND_SYSTEM.md").read_text(encoding="utf-8").lower()
+    skill = (HERE.parent / "SKILL.md").read_text(encoding="utf-8").lower()
+    classes = ("bounded experiment", "reusable internal path", "production/hard-to-reverse")
+
+    for document in (system_append, skill):
+        assert all(name in document for name in classes)
+        assert all(marker in document for marker in ("p0", "credential", "provider call", "security"))
+    assert "does not raise the class by itself" in system_append
+    assert "do not independently raise it" in skill
+
+    assert "assurance selection — before ceremony" in skill
+    assert "perform it before `epoch.py scaffold`" in skill
+    assert "every change admitted to the full council has one `review_sequence_id`" in skill
+    assert "a design-stage council is optional" in skill
+
+    focused_routing = skill.split("#### focused review routing", 1)[1]
+    focused_routing = focused_routing.split("when a full council is justified", 1)[0]
+    assert "`review-claude-opus` under cvp" in focused_routing
+    assert "non-security architecture or operational correctness defaults to `review-claude`" in focused_routing
+    assert "`review-gemini` or `review-grok`" in focused_routing
+    assert "use exactly one focused reviewer" in focused_routing
+    assert "do not escalate to multiple reviewers by fallback shopping" in focused_routing
+    assert "`review-daybreak-blue` remains supplemental only" in focused_routing
+    assert "full-council membership remains resolver-owned" in focused_routing
+
+    assignment = skill.split("use this complete assignment shape:", 1)[1].split("```text", 1)[1]
+    assignment = assignment.split("```", 1)[0]
+    for marker in (
+        "class",
+        "assets and invariants",
+        "credible adversary",
+        "caps",
+        "recovery contract",
+        "result-validity conditions",
+        "non-goals",
+    ):
+        assert marker in assignment
+
+    decisions = skill.split("decision rules:", 1)[1].split("### capture outcomes", 1)[0]
+    assert "in-scope residual" in decisions
+    assert "assign severity after declared caps" in decisions
+    assert "findings are proposals, not implementation orders" in decisions
+    assert all(f"`{disposition}`" in decisions for disposition in ("accept", "defer", "reject", "mitigate"))
+
+    packet_context = skill.split("the packet context is:", 1)[1].split("```yaml", 1)[1]
+    packet_context = packet_context.split("```", 1)[0]
+    assert "assurance_class:" not in packet_context
+    for forbidden_machine_extension in (
+        "assurance_mode:",
+        "review_mode: bounded",
+        "review_mode: reusable",
+        "review_mode: production",
+        "proportional-assurance.schema",
+        "pragmatic reviewer",
+    ):
+        assert forbidden_machine_extension not in skill
+
+
 def _routes_in_panels() -> set[str]:
     return {f["providerRoute"] for e in PANELS["experiments"] for f in e["families"]}
 
