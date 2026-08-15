@@ -1373,18 +1373,14 @@ def test_daybreak_agent_matches_native_specialist_authority():
     config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))
     task = config["task"]
     models = yaml.safe_load(preflight.MODELS_CONFIG.read_text(encoding="utf-8"))
-    daybreak_thinking = models["providers"]["openai-codex"]["modelOverrides"][
-        "gpt-daybreak-blue-latest"
-    ]["thinking"]
+    model_overrides = (
+        models.get("providers", {}).get("openai-codex", {}).get("modelOverrides", {})
+    )
 
     assert front["name"] == "review-daybreak-blue"
     assert front["model"] == [entry["model"]]
     assert front["thinkingLevel"] == "max"
-    assert daybreak_thinking == {
-        "mode": "effort",
-        "efforts": ["low", "medium", "high", "xhigh", "max"],
-        "defaultLevel": "low",
-    }
+    assert "gpt-daybreak-blue-latest" not in model_overrides
     assert tuple(front["tools"]) == qualification.READ_ONLY_REPOSITORY_TOOLS
     assert task["agentModelOverrides"][entry["agent"]] == entry["model"]
     assert (entry["agent"] in task["disabledAgents"]) is (not entry["dispatchEnabled"])
