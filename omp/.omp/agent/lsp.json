@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "tsgo": {
+      "command": "/opt/homebrew/bin/tsc",
+      "args": ["--lsp", "--stdio"],
+      "fileTypes": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+      "rootMarkers": ["package.json", "tsconfig.json", "jsconfig.json"]
+    },
+    "typescript-language-server": {
+      "disabled": true
+    },
+    "pyright": {
+      "disabled": true
+    }
+  }
+}
