@@ -48,6 +48,7 @@ from review_sequence import (
 
 QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
 SKILL = Path(__file__).resolve().parent.parent / "SKILL.md"
+LIVE_PROTOCOL = Path(__file__).resolve().parent / "LIVE-PROTOCOL.md"
 
 
 def _sha256(path: Path) -> str:
@@ -234,95 +235,134 @@ def _design_record(tmp_path: Path) -> dict[str, object]:
     return record
 
 
-def _lifecycle_design_record(tmp_path: Path) -> dict[str, object]:
-    record = _design_record(tmp_path)
-    state_machine = tmp_path / "lifecycle-state-machine.json"
-    failure_matrix = tmp_path / "lifecycle-failure-matrix.json"
-    _write_json(
-        state_machine,
-        {
-            "schema_version": LIFECYCLE_STATE_MACHINE_SCHEMA,
-            "states": ["prepared", "running", "safe-pause", "closed"],
-            "initial_state": "prepared",
-            "terminal_states": ["closed"],
-            "transitions": [
-                {
-                    "from_state": "prepared",
-                    "event": "authorize",
-                    "to_state": "running",
-                    "guard": "exact authority and credential binding",
-                    "failure_state": "safe-pause",
-                },
-                {
-                    "from_state": "running",
-                    "event": "execute",
-                    "to_state": "safe-pause",
-                    "guard": "one durable claim",
-                    "failure_state": "safe-pause",
-                },
-                {
-                    "from_state": "safe-pause",
-                    "event": "revoke",
-                    "to_state": "closed",
-                    "guard": "bound revocation and negative authentication",
-                    "failure_state": "safe-pause",
-                },
-            ],
-        },
-    )
-    _write_json(
-        failure_matrix,
-        {
-            "schema_version": LIFECYCLE_FAILURE_MATRIX_SCHEMA,
-            "failure_rows": [
-                {
-                    "failure_id": "F-001",
-                    "stage": "any external effect",
-                    "trigger": "response or process uncertainty",
-                    "durable_state": "safe-pause",
-                    "recovery_action": "reconcile before continuation",
-                    "retry_policy": "bounded response-only retry",
-                    "cleanup": "reverse teardown and credential closure",
-                    "decisive_check": "zero inventory and bound negative auth",
-                }
-            ],
-        },
-    )
-    design = Path(cast(str, record["artifact_path"]))
-    changed_files = [str(design), str(state_machine), str(failure_matrix)]
-    domains = [
-        "architecture",
-        "authorization",
-        "concurrency",
-        "cross-system-boundary",
-        CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN,
-        "secrets-cryptography",
-    ]
+# The domain is descriptive risk input, so a lifecycle record needs no more than
+# the domain itself; the padding domains the mandatory gate used to carry proved
+# nothing about the lifecycle rule.
+_LIFECYCLE_DOMAINS = ("architecture", CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN)
+
+
+def _state_machine_payload() -> dict[str, object]:
+    return {
+        "schema_version": LIFECYCLE_STATE_MACHINE_SCHEMA,
+        "states": ["prepared", "running", "safe-pause", "closed"],
+        "initial_state": "prepared",
+        "terminal_states": ["closed"],
+        "transitions": [
+            {
+                "from_state": "prepared",
+                "event": "authorize",
+                "to_state": "running",
+                "guard": "exact authority and credential binding",
+                "failure_state": "safe-pause",
+            },
+            {
+                "from_state": "running",
+                "event": "execute",
+                "to_state": "safe-pause",
+                "guard": "one durable claim",
+                "failure_state": "safe-pause",
+            },
+            {
+                "from_state": "safe-pause",
+                "event": "revoke",
+                "to_state": "closed",
+                "guard": "bound revocation and negative authentication",
+                "failure_state": "safe-pause",
+            },
+        ],
+    }
+
+
+def _failure_matrix_payload(durable_state: str = "safe-pause") -> dict[str, object]:
+    return {
+        "schema_version": LIFECYCLE_FAILURE_MATRIX_SCHEMA,
+        "failure_rows": [
+            {
+                "failure_id": "F-001",
+                "stage": "any external effect",
+                "trigger": "response or process uncertainty",
+                "durable_state": durable_state,
+                "recovery_action": "reconcile before continuation",
+                "retry_policy": "bounded response-only retry",
+                "cleanup": "reverse teardown and credential closure",
+                "decisive_check": "zero inventory and bound negative auth",
+            }
+        ],
+    }
+
+
+def _lifecycle_artifacts(tmp_path: Path) -> dict:
+    """Write one valid lifecycle pair and return the reference a record supplies."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    reference: dict = {}
+    for name, payload in (
+        ("state_machine", _state_machine_payload()),
+        ("failure_matrix", _failure_matrix_payload()),
+    ):
+        path = tmp_path / f"lifecycle-{name.replace('_', '-')}.json"
+        _write_json(path, payload)
+        reference[name] = {"path": str(path), "sha256": _sha256(path)}
+    return reference
+
+
+def _artifact_path(artifacts: dict, name: str) -> Path:
+    return Path(artifacts[name]["path"])
+
+
+def _with_subject_files(record: dict, *paths: Path) -> dict:
+    """Adopt already-written files into the frozen subject without rewriting them."""
+    changed_files = [*record["changed_files"], *(str(path) for path in paths)]
     record["changed_files"] = changed_files
     record["changed_file_digests"] = {path: _sha256(Path(path)) for path in changed_files}
-    record["touched_risk_domains"] = domains
-    record["invariant_proof_matrix"] = [
-        {
-            "invariant_id": "INV-LIFECYCLE-DESIGN",
-            "changed_paths": changed_files,
-            "risk_domains": domains,
-            "preserved_guard": "Every effect has a durable failure state and cleanup path.",
-            "decisive_check": "machine-validated state machine and failure matrix",
-            "result": "passed",
-            "evidence": "lifecycle design artifacts",
-        }
-    ]
-    record["lifecycle_design_artifacts"] = {
-        "state_machine": {
-            "path": str(state_machine),
-            "sha256": _sha256(state_machine),
-        },
-        "failure_matrix": {
-            "path": str(failure_matrix),
-            "sha256": _sha256(failure_matrix),
-        },
-    }
+    for row in record["invariant_proof_matrix"]:
+        row["changed_paths"] = changed_files
+    _remint_receipt(record)
     return record
+
+
+def _rewrite_artifact(record: dict, artifacts: dict, name: str, payload: object) -> None:
+    """Rewrite one supplied artifact and re-bind every digest that names it."""
+    path = _artifact_path(artifacts, name)
+    _write_json(path, payload)
+    artifacts[name]["sha256"] = _sha256(path)
+    digests = record["changed_file_digests"]
+    if str(path) in digests:
+        digests[str(path)] = _sha256(path)
+    _remint_receipt(record)
+
+
+def _lifecycle_record(tmp_path: Path, artifacts: object) -> dict[str, object]:
+    """An implementation epoch whose review evidence includes a lifecycle pair."""
+    record = _ready_record(tmp_path, "initial")
+    record["lifecycle_design_artifacts"] = artifacts
+    return cast(dict[str, object], _with_domains(record, [*_LIFECYCLE_DOMAINS]))
+
+
+def _supplied_lifecycle_case(tmp_path: Path) -> tuple[dict, dict[str, object]]:
+    """One implementation epoch that reviews its own supplied lifecycle pair."""
+    artifacts = _lifecycle_artifacts(tmp_path)
+    record = _with_subject_files(
+        _lifecycle_record(tmp_path, artifacts),
+        _artifact_path(artifacts, "state_machine"),
+        _artifact_path(artifacts, "failure_matrix"),
+    )
+    return artifacts, cast(dict[str, object], record)
+
+
+def _lifecycle_design_record(tmp_path: Path) -> dict[str, object]:
+    """A design epoch whose own frozen subject is the supplied lifecycle pair."""
+    record = _design_record(tmp_path)
+    artifacts = _lifecycle_artifacts(tmp_path)
+    record["lifecycle_design_artifacts"] = artifacts
+    _with_domains(record, [*_LIFECYCLE_DOMAINS])
+    return cast(
+        dict[str, object],
+        _with_subject_files(
+            record,
+            _artifact_path(artifacts, "state_machine"),
+            _artifact_path(artifacts, "failure_matrix"),
+        ),
+    )
 
 
 def _bound_design_history(
@@ -344,27 +384,9 @@ def _bound_design_history(
     }
 
 
-def _implementation_with_lifecycle_design(
-    tmp_path: Path,
-    design: dict[str, object],
-    history: dict[str, str] | None,
-) -> dict[str, object]:
-    record = _ready_record(tmp_path, "initial")
-    domains = [
-        "architecture",
-        "authorization",
-        "concurrency",
-        "cross-system-boundary",
-        CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN,
-        "secrets-cryptography",
-    ]
-    record["touched_risk_domains"] = domains
-    for row in cast(list[dict[str, object]], record["invariant_proof_matrix"]):
-        row["risk_domains"] = domains
-    record["lifecycle_design_artifacts"] = design["lifecycle_design_artifacts"]
-    if history is not None:
-        record["sequence_history"] = [history]
-        record["parent_review_id"] = "CR-design"
+def _with_design_history(record: dict[str, object], history: dict[str, str]) -> dict[str, object]:
+    record["sequence_history"] = [history]
+    record["parent_review_id"] = "CR-design"
     return record
 
 
@@ -376,58 +398,131 @@ def test_design_mode_reviews_a_document_without_receipts(tmp_path: Path) -> None
     assert (triage.status, triage.projected_action) == ("ceremony-required", "full-council")
 
 
-def test_credentialed_lifecycle_design_requires_machine_checked_artifacts(
-    tmp_path: Path,
+@pytest.mark.parametrize("supplied", ("absent", "null", "empty"))
+def test_credentialed_lifecycle_alone_needs_no_lifecycle_evidence(
+    tmp_path: Path, supplied: str
 ) -> None:
-    record = _lifecycle_design_record(tmp_path)
+    """The risk domain is a descriptive input, not a demand for lifecycle machinery.
+
+    Absent, `null`, and `{}` are the three ways a record declines the optional
+    evidence, and none of them may produce a lifecycle readiness error or a
+    prior-design-council prerequisite.
+    """
+    record = _ready_record(tmp_path / supplied)
+    _with_domains(record, [*_LIFECYCLE_DOMAINS])
+    if supplied == "null":
+        record["lifecycle_design_artifacts"] = None
+    elif supplied == "empty":
+        record["lifecycle_design_artifacts"] = {}
+    assert readiness_errors(record) == ()
     decision = select_review_action(record)
     assert (decision.status, decision.action) == ("ready", "full-council")
 
-    failure_path = Path(
-        cast(
-            dict[str, str],
-            cast(dict[str, object], record["lifecycle_design_artifacts"])["failure_matrix"],
-        )["path"]
-    )
-    failure_value = json.loads(failure_path.read_text(encoding="utf-8"))
-    failure_value["failure_rows"][0]["durable_state"] = "unknown"
-    _write_json(failure_path, failure_value)
-    cast(
-        dict[str, str],
-        cast(dict[str, object], record["lifecycle_design_artifacts"])["failure_matrix"],
-    )["sha256"] = _sha256(failure_path)
-    record["changed_file_digests"][str(failure_path)] = _sha256(failure_path)
-    assert "invalid-lifecycle-failure-row:0:unknown-durable-state" in readiness_errors(record)
 
-
-def test_credentialed_lifecycle_initial_requires_bound_design_council(
-    tmp_path: Path,
-) -> None:
+def test_supplied_lifecycle_artifacts_need_no_prior_design_council(tmp_path: Path) -> None:
+    """Artifacts are evidence for the epoch that carries them, at either stage."""
     design = _lifecycle_design_record(tmp_path / "design")
-    missing = _implementation_with_lifecycle_design(
-        tmp_path / "missing",
-        design,
-        None,
-    )
-    assert "credentialed-lifecycle-design-review-required" in readiness_errors(missing)
+    assert readiness_errors(design) == ()
+    assert select_review_action(design).action == "full-council"
 
-    history = _bound_design_history(tmp_path / "history", design)
-    implementation = _implementation_with_lifecycle_design(
-        tmp_path / "implementation",
-        design,
-        history,
-    )
+    _, implementation = _supplied_lifecycle_case(tmp_path / "implementation")
+    assert implementation["sequence_history"] == [], "no design epoch precedes this record"
+    assert readiness_errors(implementation) == ()
     decision = select_review_action(implementation)
     assert (decision.status, decision.action) == ("ready", "full-council")
 
-    unreviewed = dict(history)
-    unreviewed["action"] = "none"
-    skipped = _implementation_with_lifecycle_design(
-        tmp_path / "skipped",
-        design,
-        unreviewed,
+
+def test_a_bound_historical_design_epoch_stays_valid(tmp_path: Path) -> None:
+    """A record that did hold a design council keeps verifying against it."""
+    design = _lifecycle_design_record(tmp_path / "design")
+    history = _bound_design_history(tmp_path / "history", design)
+    record = _with_design_history(
+        _lifecycle_record(tmp_path / "implementation", design["lifecycle_design_artifacts"]),
+        history,
     )
-    assert "credentialed-lifecycle-design-review-required" in readiness_errors(skipped)
+    assert readiness_errors(record) == ()
+    decision = select_review_action(record)
+    assert (decision.status, decision.action) == ("ready", "full-council")
+
+
+def test_a_supplied_artifact_stays_path_and_digest_bound(tmp_path: Path) -> None:
+    """Optional evidence is still exact evidence: every reference is machine checked."""
+    artifacts, record = _supplied_lifecycle_case(tmp_path / "digest")
+    artifacts["state_machine"]["sha256"] = "0" * 64
+    assert "invalid-lifecycle-design-artifact:state-machine" in readiness_errors(record)
+
+    artifacts, record = _supplied_lifecycle_case(tmp_path / "absent")
+    artifacts["failure_matrix"]["path"] = str(tmp_path / "absent" / "not-written.json")
+    assert "invalid-lifecycle-design-artifact:failure-matrix" in readiness_errors(record)
+
+    artifacts, record = _supplied_lifecycle_case(tmp_path / "reference")
+    del artifacts["state_machine"]["sha256"]
+    assert "invalid-lifecycle-design-artifact:state-machine" in readiness_errors(record)
+
+    artifacts, record = _supplied_lifecycle_case(tmp_path / "ephemeral")
+    artifacts["state_machine"]["path"] = str(SESSION_LOCAL_ROOT / "state-machine.json")
+    assert "ephemeral-lifecycle-design-artifact:state-machine" in readiness_errors(record)
+
+    artifacts, record = _supplied_lifecycle_case(tmp_path / "pair")
+    record["lifecycle_design_artifacts"] = {"state_machine": artifacts["state_machine"]}
+    assert "invalid-lifecycle-design-artifacts" in readiness_errors(record)
+
+    artifacts, record = _supplied_lifecycle_case(tmp_path / "distinct")
+    artifacts["failure_matrix"] = dict(artifacts["state_machine"])
+    assert "lifecycle-design-artifacts-not-distinct" in readiness_errors(record)
+
+
+def test_a_supplied_artifact_stays_schema_and_state_bound(tmp_path: Path) -> None:
+    """A supplied model must still name every failure state it claims to cover."""
+    artifacts, record = _supplied_lifecycle_case(tmp_path / "schema")
+    _rewrite_artifact(
+        record,
+        artifacts,
+        "state_machine",
+        {**_state_machine_payload(), "schema_version": "omp.critical-review.invented.v9"},
+    )
+    assert "invalid-lifecycle-state-machine" in readiness_errors(record)
+
+    artifacts, record = _supplied_lifecycle_case(tmp_path / "durable")
+    _rewrite_artifact(record, artifacts, "failure_matrix", _failure_matrix_payload("unknown"))
+    assert "invalid-lifecycle-failure-row:0:unknown-durable-state" in readiness_errors(record)
+
+    artifacts, record = _supplied_lifecycle_case(tmp_path / "coverage")
+    _rewrite_artifact(record, artifacts, "failure_matrix", _failure_matrix_payload("closed"))
+    assert "lifecycle-failure-state-coverage-mismatch" in readiness_errors(record)
+
+
+def test_a_supplied_artifact_must_be_reviewed_by_some_epoch(tmp_path: Path) -> None:
+    """Unreviewed artifacts are not evidence: bind them to this subject or a design epoch."""
+    artifacts = _lifecycle_artifacts(tmp_path / "artifacts")
+    record = _lifecycle_record(tmp_path / "implementation", artifacts)
+    assert "lifecycle-design-artifact-not-reviewed" in readiness_errors(record)
+
+
+def test_a_malformed_historical_design_binding_still_fails(tmp_path: Path) -> None:
+    """Optional history is not unchecked history once a design row is supplied."""
+    design = _lifecycle_design_record(tmp_path / "design")
+    artifacts = design["lifecycle_design_artifacts"]
+    history = _bound_design_history(tmp_path / "history", design)
+
+    skipped = _with_design_history(
+        _lifecycle_record(tmp_path / "skipped", artifacts),
+        {**history, "action": "none"},
+    )
+    assert "credentialed-lifecycle-design-record-invalid" in readiness_errors(skipped)
+
+    unreadable = _with_design_history(
+        _lifecycle_record(tmp_path / "unreadable", artifacts),
+        {**history, "record_path": str(tmp_path / "unreadable" / "not-written.json")},
+    )
+    assert "credentialed-lifecycle-design-record-invalid" in readiness_errors(unreadable)
+
+    other = _lifecycle_design_record(tmp_path / "other")
+    mismatched = _with_design_history(
+        _lifecycle_record(tmp_path / "mismatched", artifacts),
+        _bound_design_history(tmp_path / "other-history", other),
+    )
+    assert "credentialed-lifecycle-design-record-mismatch" in readiness_errors(mismatched)
 
 
 def test_design_pass_does_not_consume_the_implementation_council(tmp_path: Path) -> None:
@@ -1916,16 +2011,26 @@ def test_the_scope_receipt_path_stays_inside_the_skill_data_root() -> None:
 
 
 def test_skill_preserves_critical_review_safety_controls() -> None:
-    policy = SKILL.read_text(encoding="utf-8")
-    required = (
-        "Recompute the same artifact and file digests",
-        "until every member has settled",
+    """The controls survived the admission/mechanics split with one owner each:
+    the lead's disposition authority stays where admission happens, and the digest
+    recheck and round-one barrier stay in the protocol that performs them."""
+    assert LIVE_PROTOCOL.is_file(), "full-council mechanics have no on-demand document"
+    admission = SKILL.read_text(encoding="utf-8")
+    protocol = LIVE_PROTOCOL.read_text(encoding="utf-8")
+    for control in (
         "Every returned item receives a ledger row and final disposition",
         "A confirmed P0 or P1 blocks closure",
         "P2/P3 items receive explicit dispositions but do not trigger open-ended debate",
         "There is no majority verdict",
-    )
-    assert all(control in policy for control in required)
+    ):
+        assert control in admission, f"admission lost {control!r}"
+        assert control not in protocol, f"the protocol restates {control!r}"
+    for control in (
+        "Recompute the same artifact and file digests",
+        "until every member has settled",
+    ):
+        assert control in protocol, f"the protocol lost {control!r}"
+        assert control not in admission, f"admission restates {control!r}"
 
 
 def test_epoch_tool_scaffolds_freezes_and_rechecks(tmp_path: Path) -> None:
@@ -2093,6 +2198,32 @@ def test_epoch_ledger_normalizes_reviewer_yields(tmp_path: Path, capsys) -> None
     assert "claude-U1" in body[3]
     assert "| missing: signal path for worker.py:120-160 |" in body[3]
     assert "| unresolved |" in body[3]
+
+
+def test_zero_findings_remains_a_valid_review_result(tmp_path: Path, capsys) -> None:
+    """A council that finds nothing closes on an empty ledger, not on a failure."""
+    member = tmp_path / "grok.json"
+    _write_json(member, {"summary": "no defect found", "evidence": [], "unresolved": []})
+    manifest = tmp_path / "panel-selection.json"
+    _write_json(manifest, {"selected": [{"reviewer_id": "grok"}]})
+    out = tmp_path / "ledger.md"
+    code = epoch.main(
+        [
+            "ledger",
+            "--manifest",
+            str(manifest),
+            "--member",
+            f"grok={member}",
+            "--out",
+            str(out),
+        ]
+    )
+    assert code == 0
+    emitted = json.loads(capsys.readouterr().out)
+    assert (emitted["rows"], emitted["unresolved_rows"]) == (0, 0)
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("| Finding | Sources |")
+    assert len(lines) == 2, "an empty ledger is the header and its rule, and nothing else"
 
 
 def test_epoch_ledger_refuses_bad_rows_existing_output_and_bad_members(tmp_path: Path) -> None:

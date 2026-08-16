@@ -47,15 +47,145 @@ POLICIES = yaml.safe_load((HERE / "provider-policies.yaml").read_text())
 SCHEMAS = sorted(HERE.glob("*.schema.json"))
 
 
+SKILL_DOC = HERE.parent / "SKILL.md"
+LIVE_PROTOCOL_DOC = HERE / "LIVE-PROTOCOL.md"
+CRITICAL_REVIEW_DOCS = (SKILL_DOC, LIVE_PROTOCOL_DOC)
+
+LIVE_PROTOCOL_POINTER = "read `./lrhe/live-protocol.md` only after admission selects a full council"
+STATE_FIDELITY_REQUIREMENT = "assumed starting state with the bound predecessor evidence"
+
+# Admission, focused routing, state fidelity, and the lead's disposition authority.
+# A session that reads only SKILL.md must be able to decide against a council and
+# act on that decision, so these are stated there and nowhere else.
+SKILL_OWNED_CONTROLS = (
+    "assurance selection — before ceremony",
+    "perform it before `epoch.py scaffold`",
+    "do not independently raise it",
+    "stop before review ceremony",
+    "#### focused review routing",
+    "use exactly one focused reviewer",
+    "do not escalate to multiple reviewers by fallback shopping",
+    "`review-daybreak-blue` remains supplemental only",
+    "full-council membership remains resolver-owned",
+    "a design-stage council is optional",
+    "# state fidelity",
+    STATE_FIDELITY_REQUIREMENT,
+    "does not prove a successor transition",
+    "every change admitted to the full council has one `review_sequence_id`",
+    "decision rules:",
+    "a confirmed p0 or p1 blocks closure",
+    "findings are proposals, not implementation orders",
+    "p2/p3 items receive explicit dispositions",
+    "every returned item receives a ledger row and final disposition",
+    "there is no majority verdict",
+    "merge duplicates only when they share a root cause",
+    "zero findings is valid",
+)
+
+# Full-council mechanics: roster and provider authorization, the frozen record,
+# freeze and receipts, dispatch, the single bounded retry, ledger provenance,
+# refutation, and close. An invocation that never admits a council must never pay
+# to read these, and a control stated in both documents is one that will drift.
+LIVE_PROTOCOL_OWNED_MECHANICS = (
+    "`livedispatch` is the sole authoritative live panel definition",
+    "`initialcritics` are unconditional",
+    "authorize by `access_profile`, not by `provider_route`",
+    "`reviewer_access_profile_allowlist` must contain its exact `access_profile`",
+    "is `missing`, never `approved`",
+    "not_selected/ineligible",
+    "never pass an internal url glob to `glob`",
+    "the frozen machine record must contain exactly these fields",
+    "`general_review_pass_count`",
+    "`targeted_refutation_used`",
+    "`lifecycle_design_artifacts`",
+    "`subject_digest` computed from the frozen artifact digest",
+    "`schemaversion: 1`",
+    "never re-run an identical check against an unchanged subject",
+    "receipt on failure or drift",
+    "a nonzero result prohibits provider dispatch",
+    "recompute the same artifact and file digests",
+    "the packet context is:",
+    "the manifest binds the absolute record path",
+    "until every member has settled",
+    "`parallel()` wave",
+    'schema_mode="strict"',
+    "do not disclose round-one responses between reviewers",
+    "one total retry per member per epoch",
+    "exactly one byte-identical retry",
+    "missing/transport_failure",
+    "missing/provider_policy_refusal",
+    "invalid/schema_invalid",
+    "invalid/model_mismatch",
+    "stable id and normalized root-cause claim",
+    "the command refuses any member key absent from that immutable manifest",
+    "### capture outcomes",
+    "shadow_ledger.py",
+    "one targeted refutation for the entire review sequence",
+    "close the frozen epoch before modifying reviewed files",
+    "mark the review stale instead of synthesizing",
+)
+
+# Both documents are read from the skill root, so every relocated command names
+# its tool through `./lrhe/`. The pre-split spellings resolved from two different
+# directories, which is how `./review_checks.py` came to name nothing.
+MOVED_COMMANDS = (
+    "./lrhe/review_sequence.py --triage",
+    "./lrhe/review_sequence.py review-record.json",
+    "./lrhe/epoch.py scaffold",
+    "./lrhe/epoch.py bind",
+    "./lrhe/epoch.py freeze",
+    "./lrhe/epoch.py recheck",
+    "./lrhe/epoch.py ledger",
+    "./lrhe/make_receipt.py",
+    "./lrhe/qualification.py initial",
+    "./lrhe/qualification.py targeted-refuter",
+    "./lrhe/shadow_ledger.py",
+    "./lrhe/review_checks.py quick",
+    "./lrhe/review_checks.py full",
+)
+
+_FENCE = re.compile(r"^```(?P<language>[\w-]*)[ \t]*\n(?P<body>.*?)^```", re.DOTALL | re.MULTILINE)
+_INVOKED_TOOL = re.compile(r"\./((?:[\w.-]+/)*[\w.-]+\.py)\b")
+_LEGACY_INVOCATION = re.compile(r"python3?\s+[\"']?\$?[\w.${}/-]*\.py")
+
+
+def _raw(path: Path) -> str:
+    assert path.is_file(), (
+        f"{path.name} is missing: admission and full-council mechanics are two documents"
+    )
+    return path.read_text(encoding="utf-8")
+
+
+def _flat(text: str) -> str:
+    """Lowercased and whitespace-collapsed. Relocating a paragraph rewraps it, and
+    a control that survived the move must not fail on where the lines now break."""
+    return re.sub(r"\s+", " ", text.lower())
+
+
+def _document(path: Path) -> str:
+    return _flat(_raw(path))
+
+
+def _owners(marker: str) -> set[str]:
+    """Which of the two canonical documents states this control. Exactly one must:
+    absent means the split dropped it, both means the next edit only fixes one."""
+    return {path.name for path in CRITICAL_REVIEW_DOCS if marker in _document(path)}
+
+
+def _section(flat: str, anchor: str) -> str:
+    return flat.split(anchor, 1)[1].split(" ## ", 1)[0]
+
+
 def test_proportional_assurance_policy_contract():
-    system_append = (HERE.parents[2] / "APPEND_SYSTEM.md").read_text(encoding="utf-8").lower()
-    skill = (HERE.parent / "SKILL.md").read_text(encoding="utf-8").lower()
+    system_append = _flat((HERE.parents[2] / "APPEND_SYSTEM.md").read_text(encoding="utf-8"))
+    skill = _document(SKILL_DOC)
     classes = ("bounded experiment", "reusable internal path", "production/hard-to-reverse")
 
+    assert all(name in skill for name in classes)
     for document in (system_append, skill):
-        assert all(name in document for name in classes)
         assert all(marker in document for marker in ("p0", "credential", "provider call", "security"))
-    assert "does not raise the class by itself" in system_append
+    assert "credible residual consequence after caps, containment, rollback, and recovery" in system_append
+    assert "not from p0 labels, security vocabulary, credentials, provider calls" in system_append
     assert "do not independently raise it" in skill
 
     assert "assurance selection — before ceremony" in skill
@@ -83,19 +213,20 @@ def test_proportional_assurance_policy_contract():
         "recovery contract",
         "result-validity conditions",
         "non-goals",
+        "zero findings is valid",
+        "# state fidelity",
+        STATE_FIDELITY_REQUIREMENT,
     ):
         assert marker in assignment
 
-    decisions = skill.split("decision rules:", 1)[1].split("### capture outcomes", 1)[0]
+    decisions = _section(skill, "decision rules:")
     assert "in-scope residual" in decisions
     assert "assign severity after declared caps" in decisions
     assert "findings are proposals, not implementation orders" in decisions
     assert all(f"`{disposition}`" in decisions for disposition in ("accept", "defer", "reject", "mitigate"))
 
-    packet_context = skill.split("the packet context is:", 1)[1].split("```yaml", 1)[1]
-    packet_context = packet_context.split("```", 1)[0]
-    assert "assurance_class:" not in packet_context
     for forbidden_machine_extension in (
+        "assurance_class:",
         "assurance_mode:",
         "review_mode: bounded",
         "review_mode: reusable",
@@ -104,6 +235,116 @@ def test_proportional_assurance_policy_contract():
         "pragmatic reviewer",
     ):
         assert forbidden_machine_extension not in skill
+        assert forbidden_machine_extension not in _document(LIVE_PROTOCOL_DOC)
+
+
+def test_admission_controls_are_owned_once_by_the_eager_document():
+    """Two canonical documents, no copies. A duplicated control is invisible in
+    both files and only half-corrected by the next edit to either one."""
+    misowned = {}
+    for control in SKILL_OWNED_CONTROLS:
+        owners = _owners(control)
+        if owners != {SKILL_DOC.name}:
+            misowned[control] = sorted(owners) or ["nowhere"]
+    assert not misowned, f"admission controls not owned once by SKILL.md: {misowned}"
+
+
+def test_full_council_mechanics_are_owned_once_by_the_on_demand_protocol():
+    """The relocation is the whole point: these are the paragraphs an erroneously
+    invoked skill used to read before it could decide it needed no council."""
+    misowned = {}
+    for mechanic in LIVE_PROTOCOL_OWNED_MECHANICS:
+        owners = _owners(mechanic)
+        if owners != {LIVE_PROTOCOL_DOC.name}:
+            misowned[mechanic] = sorted(owners) or ["nowhere"]
+    assert not misowned, f"mechanics missing from or restated outside the protocol: {misowned}"
+
+
+def test_a_bounded_case_stops_before_the_live_protocol():
+    """The regression the split prevents: paying for roster, record, freeze,
+    dispatch, and ledger mechanics in order to conclude no council was needed."""
+    skill = _document(SKILL_DOC)
+    assert LIVE_PROTOCOL_DOC.is_file(), "there is no protocol to stop before"
+    assert LIVE_PROTOCOL_POINTER in skill, "the pointer does not condition the read on admission"
+
+    admission = skill.split(LIVE_PROTOCOL_POINTER, 1)[0]
+    for control in (
+        "bounded experiment",
+        "stop before review ceremony",
+        "use exactly one focused reviewer",
+        "`review-claude-opus` under cvp",
+        "no_cloud",
+    ):
+        assert control in admission, f"{control!r} is only reachable after the protocol pointer"
+    eager = [mechanic for mechanic in LIVE_PROTOCOL_OWNED_MECHANICS if mechanic in admission]
+    assert not eager, f"the bounded path already pays for council mechanics: {eager}"
+
+
+def test_the_protocol_is_read_on_demand_and_never_expanded_into_a_session():
+    """A link is a decision; an include is a cost every session pays."""
+    skill = _document(SKILL_DOC)
+    named = skill.count("live-protocol.md")
+    assert named == 1, f"SKILL.md names the protocol {named} times, not once"
+    assert LIVE_PROTOCOL_POINTER in skill, "the read is not conditioned on full-council admission"
+    for mechanism in ("@import", "{{", "!include", "<!-- include"):
+        assert mechanism not in skill, f"SKILL.md expands the protocol through {mechanism!r}"
+
+
+def test_the_admission_document_carries_no_dispatch_command_or_code():
+    raw = _raw(SKILL_DOC)
+    fences = [(match.group("language"), match.group("body")) for match in _FENCE.finditer(raw)]
+    assert fences, "the common reviewer assignment is a fenced block"
+    languages = {language for language, _ in fences}
+    assert languages <= {"text"}, f"SKILL.md carries executable fences: {sorted(languages)}"
+    assert not _INVOKED_TOOL.findall(raw), f"SKILL.md invokes {_INVOKED_TOOL.findall(raw)}"
+    assert not _LEGACY_INVOCATION.search(raw), "SKILL.md still spells a python3 invocation"
+
+
+def test_every_documented_command_resolves_from_the_skill_root():
+    """Both documents are read from the skill root, so `./lrhe/<tool>.py` is the
+    only spelling that names a real executable from either of them."""
+    for path in CRITICAL_REVIEW_DOCS:
+        raw = _raw(path)
+        assert not _LEGACY_INVOCATION.search(raw), f"{path.name} still spells a python3 invocation"
+        for relative in sorted(set(_INVOKED_TOOL.findall(raw))):
+            tool = HERE.parent / relative
+            assert tool.is_file(), f"{path.name} documents ./{relative}, which does not exist"
+            assert tool.stat().st_mode & 0o111, f"./{relative} is documented but is not executable"
+
+    protocol = _document(LIVE_PROTOCOL_DOC)
+    missing = [command for command in MOVED_COMMANDS if command not in protocol]
+    assert not missing, f"moved commands absent from the protocol: {missing}"
+
+
+def test_the_moved_packet_context_still_matches_the_resolver_field_set():
+    """The block is prose; `qualification.PACKET_FIELDS` is what refuses a packet.
+    Relocating the block must not let the closed set drift in either direction."""
+    body = _raw(LIVE_PROTOCOL_DOC).split("The packet context is:", 1)[1]
+    fence = _FENCE.search(body)
+    assert fence is not None, "the packet context is no longer a fenced block"
+    assert fence.group("language") in {"yaml", "yml"}
+    documented = yaml.safe_load(fence.group("body")) or {}
+    assert set(documented) == set(qualification.PACKET_FIELDS), (
+        f"documented packet context {sorted(documented)} is not the resolver's "
+        f"closed set {sorted(qualification.PACKET_FIELDS)}"
+    )
+
+
+def test_state_fidelity_is_owned_once_by_the_trusted_assignment():
+    """One canonical owner: the assignment the dispatcher transmits. Copying it
+    into reviewer definitions is how a shared floor becomes several floors."""
+    assert _owners("# state fidelity") == {SKILL_DOC.name}
+    assert _owners(STATE_FIDELITY_REQUIREMENT) == {SKILL_DOC.name}
+
+    definitions = sorted(canary.AGENTS.glob("review-*.md"))
+    if not definitions:
+        pytest.skip("reviewer agent definitions are not present in this checkout")
+    restated = [
+        definition.name
+        for definition in definitions
+        if STATE_FIDELITY_REQUIREMENT in _flat(definition.read_text(encoding="utf-8"))
+    ]
+    assert not restated, f"private reviewer definitions restate the trusted assignment: {restated}"
 
 
 def _routes_in_panels() -> set[str]:
