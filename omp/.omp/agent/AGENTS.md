@@ -12,6 +12,12 @@
 - Prefer an existing narrow executor or bounded extension over bespoke control-plane machinery.
 - Add a persistent control only for a named residual consequence, and remove obsolete assumptions or mechanisms when possible.
 
+## Post-implementation bounded cleanse
+
+- After an implementation work package is complete and committed in a repository exposing a bounded cleanse lane (`bun run cleanse:auto` / `scripts/run_cleanse_lane.sh`), launch that lane once, detached in the background, and report the receipt or `cleanse/auto-*` branch when it lands. This applies to every repository with a lane (omp-monorepo, alpha-founder, and future ones), so adoption is automatic, not manual.
+- The lane is mechanical repair only — lint, typecheck, optionally bounded test fixes. It never substitutes for design, implementation ownership, critical review, or final verification, and merging a `cleanse/auto-*` branch stays a human decision.
+- Do not launch it for research or Q&A turns, mid-implementation, on a dirty tree, under sealed markers, or from within a cleanse run; the lane also enforces these skips itself. One launch per completed package.
+
 ## Goal mode
 
 - Use the native `goal` tool for exactly one open-ended objective likely to require autonomous continuation across turns. Keep known deliverables in `todo` and independent bounded branches in Task.
