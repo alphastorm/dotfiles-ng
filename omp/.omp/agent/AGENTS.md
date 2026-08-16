@@ -15,6 +15,7 @@
 ## Goal mode
 
 - Use the native `goal` tool for exactly one open-ended objective likely to require autonomous continuation across turns. Keep known deliverables in `todo` and independent bounded branches in Task.
+- Create goals unbounded by default by omitting `token_budget`; set a finite budget only when the user explicitly requests a cap. Never block or abandon `todo` phases because of an agent-selected budget.
 - Before `goal create`, inspect the repository and requirements, red-team lazy success, and encode observable success, non-goals, verification, boundaries, and stop conditions. Define the outcome, not the implementation path.
 - Do not create goals for bounded retrieval, routine edits, user-supplied checklists, work awaiting a user decision, or competing outcomes.
 - For security and bug hunts, derive attacker capabilities and excluded preconditions from the repository threat model. Keep discovery, coverage, each finding hunt, and independent validation as separate outcomes.
