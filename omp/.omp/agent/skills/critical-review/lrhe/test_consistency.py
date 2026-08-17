@@ -1748,7 +1748,14 @@ def test_live_reviewers_have_explicit_empty_runtime_fallback_chains():
 
 
 def test_max_concurrency_fits_the_largest_selected_council():
-    """One `parallel()` wave must hold every member the resolver can select."""
+    """The configured task budget must hold every member the resolver can select.
+
+    This checks the user-side budget only. The runtime clamps a wave to
+    `min(TASK_CONCURRENCY_HARD_CEILING, task.maxConcurrency, provider capacity)`,
+    so the ceiling in `task/adaptive-concurrency.ts` has to move with this
+    setting or the wave still will not fit -- that constant is downstream source
+    and is deliberately not imported here.
+    """
     document = _live_document()
     if not preflight.CONFIG.is_file():
         pytest.skip("the active config is not present in this checkout")
