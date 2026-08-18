@@ -32,6 +32,7 @@
 - Evaluate `NO_CLOUD` before every Task, hosted reviewer, Jules, or other cloud-agent dispatch. Agent-side checks are defense in depth, never dispatch authority.
 - Route by context size, synthesis value, and latency. Use `long-context` for read-only bundles around 96K tokens or more, `scout` for smaller bounded investigation, and the normal mutating lane for implementation.
 - Treat provider availability and quota as opportunistic. On failure, use another declared route only when cloud processing remains allowed; otherwise stop without effect.
+- `local-librarian` is an additive read-only RTX 5090 lane (`@local-batch`) for bounded evidence packets — roughly 8K+ tokens, 5+ files, 1K+ log lines, or batch document extraction. Dispatch it explicitly and asynchronously when its source-linked packet can help without delaying the critical path; omit `blocking: true`. Never use it for mutation, security disposition, architecture ownership, external research, or final review, and never let it satisfy evidence where a missed fact or a leaked secret would matter. It has no cloud fallback: if the appliance is down a request hangs until your own timeout, so treat every packet as discardable. Qualification measured it below the automatic-dispatch floor, so it supplements your own reads rather than replacing them.
 
 ## Jules asynchronous repository work
 
