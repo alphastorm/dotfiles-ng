@@ -12,6 +12,11 @@
 - Prefer an existing narrow executor or bounded extension over bespoke control-plane machinery.
 - Add a persistent control only for a named residual consequence, and remove obsolete assumptions or mechanisms when possible.
 
+## Independent review loops
+
+- The review procedure — pre-dispatch self-checklist, class-closure meta-tests, stop-rule, subject freeze, round budget, and disposition-based exit — is owned by `skill://critical-review` ("Lead pre-dispatch obligations"); apply it for every reviewer or council dispatch in any repository.
+- Ambient floor even when the skill is not loaded: reviewers render verdicts, never primary defect discovery — self-execute the scrutiny checklist against your own diff first; if a round confirms the same defect class as the previous round, halt and land an executable invariant (meta-test) before any re-dispatch; never edit the reviewed tree while seats are reading.
+
 ## Post-implementation bounded cleanse
 
 - After an implementation work package is complete and committed in a repository exposing a bounded cleanse lane (`bun run cleanse:auto` / `scripts/run_cleanse_lane.sh`), launch that lane once, detached in the background, and report the receipt or `cleanse/auto-*` branch when it lands. This applies to every repository with a lane (omp-monorepo, alpha-founder, and future ones), so adoption is automatic, not manual.

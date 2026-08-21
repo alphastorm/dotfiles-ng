@@ -56,6 +56,17 @@ Both paths transmit reviewed material to a hosted reviewer, so this floor applie
 
 Reviewer enablement, packet data grants, and access-profile matching for a full council are resolver-owned and live in the on-demand protocol below.
 
+## Lead pre-dispatch obligations
+
+These bind every dispatch, focused or full council. Reviewers render verdicts; they are never the primary defect-discovery loop for defects a checklist, grep, or meta-test could find.
+
+1. Self-execute the review's scrutiny checklist against the diff before any dispatch and close what it finds. Any instruction you would hand a reviewer is one you must already have run against your own change.
+2. Close classes, not instances. When a finding names one instance of a mechanical class — an invocation pattern, a predicate shape, a fixture convention — sweep the whole subject for the class in the same remediation and encode the class as an executable invariant (a meta-test that fails the suite). Policy prose alone never closes a class.
+3. Stop-rule: if a round confirms the same defect class as the previous round, halt remediation and land the executable invariant before any re-dispatch.
+4. Freeze the reviewed subject. Never edit the reviewed tree — including its policy and context files — while any reviewer is reading; queue such edits for the disposition commit. A verdict rendered over a moving target is discarded and the round is wasted.
+5. Remediation-scoped verification defaults to the focused-reviewer lane; the full council renders only the sequence's budgeted general passes and the final verdict. Target at most two council rounds per subject.
+6. Exit is by disposition, not zero findings: no in-scope residual P0/P1 and clean credential paths close the sequence, and remaining P2/P3 items receive explicit owner-accepted residual dispositions. A supplemental seat's credential-path claim blocks only after lead verification against the committed bytes.
+
 ## Full council at a glance
 
 Every change admitted to the full council has one `review_sequence_id`. Every frozen epoch has one machine-readable `review-record.json`. `lrhe/review_sequence.py` is the sole dispatch-action selector; packet prose cannot override its result. Its modes are `design`, an optional pre-implementation council on the frozen design artifact; `initial`, the first general council for the sequence; `remediation`, a correction scoped to named findings, changed paths, and adjacent invariants; and `material-redesign`, a second general council only after the initial council's named P0/P1 findings are directly verified as resolved and the correction changes architecture, a trust boundary, public compatibility, persistent state, migration/rollback, or production effects.
