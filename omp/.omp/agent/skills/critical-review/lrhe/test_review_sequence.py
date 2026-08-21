@@ -1484,6 +1484,20 @@ def test_qualification_rejects_an_incomplete_evidence_contract() -> None:
         validate_qualification(current)
 
 
+def test_qualification_rejects_an_unbound_or_disabled_charter_amendment() -> None:
+    current = _live_qualification()
+    current["reviewers"]["grok"]["charterAmendment"] = "../outside.json"
+    with pytest.raises(QualificationError, match="must stay under the skill directory"):
+        validate_qualification(current)
+
+    current = _live_qualification()
+    current["reviewers"]["minimax"]["charterAmendment"] = (
+        "lrhe-data/standing-amendment-v1/minimax.amendment.json"
+    )
+    with pytest.raises(QualificationError, match="cannot qualify a disabled lane"):
+        validate_qualification(current)
+
+
 def test_qualification_rejects_repository_delivery_without_repository_tools() -> None:
     current = _live_qualification()
     current["reviewers"]["grok"]["tools"] = []
@@ -1509,9 +1523,7 @@ def test_qualification_rejects_two_critics_from_one_model_family() -> None:
         model_family="claude",
         correlation_group="claude-opus-5",
     )
-    document["liveDispatch"]["byLeadFamily"]["gpt"]["initialCritics"].append(
-        "claude-opus-twin"
-    )
+    document["liveDispatch"]["byLeadFamily"]["gpt"]["initialCritics"].append("claude-opus-twin")
     with pytest.raises(QualificationError, match="two samples of one lineage"):
         validate_qualification(document)
 
@@ -1727,9 +1739,9 @@ def test_targeted_refuter_resolution_never_contains_a_conditional_critic() -> No
     assert [item.reviewer.reviewer_id for item in conditional_critics(document, "gpt")] == [
         "claude"
     ]
-    assert [
-        item.reviewer_id for item in live_reviewers(document, "targeted-refuter", "gpt")
-    ] == ["glm"]
+    assert [item.reviewer_id for item in live_reviewers(document, "targeted-refuter", "gpt")] == [
+        "glm"
+    ]
     assert [item.reviewer_id for item in live_reviewers(document, "initial", "gpt")] == [
         "claude-opus",
         "gemini",
@@ -1854,9 +1866,7 @@ def test_lead_family_matrix_derives_roster_and_standing(
     conditional = manifest["selected"][-1]
     assert conditional["reviewer_id"] == "claude"
     assert conditional["selectionClass"] == "conditional"
-    assert (conditional["independence_class"], conditional["authority"]) == (
-        conditional_standing
-    )
+    assert (conditional["independence_class"], conditional["authority"]) == (conditional_standing)
 
 
 def test_every_selected_member_uses_native_task_dispatch(tmp_path: Path) -> None:

@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lrhe/frozen-subject.schema.json",
+  "title": "Critical Review Frozen Subject",
+  "description": "One immutable statement of what is under review, written once before any standing is resolved. Scope, packet, and optional record are bound by content digest in both kinds, because a path is a promise about a file's future contents that nothing can keep. A `repository` subject additionally binds the full commit and the exact repository-relative file list; a `packet-only` subject is its bytes and identifies no repository epoch. There is deliberately no third kind: a working tree is mutable, so freezing one would record an identity that stops being true the moment anybody types.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "scopePath",
+    "scopeSha256",
+    "packetPath",
+    "packetSha256",
+    "subjectDigest"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "Pins this subject contract; a consumer that accepts an unknown version is guessing at what was frozen."
+    },
+    "kind": {
+      "enum": [
+        "packet-only",
+        "repository"
+      ],
+      "description": "Closed in both directions. `repository` review reads named files at one commit; `packet-only` review reads nothing but the verified bytes carried to it. `working-tree` is absent on purpose rather than unsupported by accident."
+    },
+    "scopePath": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Absolute path the assurance scope was read from. Provenance for a later audit, never the reviewer's source of truth: the scope bytes travel in the reviewer assignment itself."
+    },
+    "scopeSha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "Digest of the exact assurance-scope bytes. The scope fixes the class, assets, adversary, caps, and result-validity conditions a reviewer is bound by, so an edit after freezing changes what the review was for."
+    },
+    "packetPath": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Absolute path the immutable packet was read from, for the same provenance-only reason."
+    },
+    "packetSha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "Digest of the exact packet bytes, including the two authorization grants that decide which reviewers may receive the material at all."
+    },
+    "recordPath": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Absolute path of the frozen review record, when the subject binds one. Required for any class whose roster the protocol owns."
+    },
+    "recordSha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "Digest of the exact record bytes. The record is dispatch control state rather than reviewed material, so it is bound by digest and not reproduced to reviewers."
+    },
+    "repositoryPath": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Absolute path of the repository root. The root and not a subdirectory, because a file list resolved from a subdirectory names other files."
+    },
+    "subjectCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "The full lowercase commit the subject was frozen at, which must equal HEAD over a clean tree at freeze and at every later verification. Abbreviated revisions are refused: they identify a prefix, not an object."
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[^/][^\\\\\\n\\u0000]*$",
+        "description": "One exact repository-relative POSIX path, bound in `subjectCommit` as a regular blob. Directories, symlinks, and submodule gitlinks are refused: none of them fixes the bytes a reviewer would read."
+      },
+      "description": "Every reviewed path, sorted and unique. An empty list is not a narrow subject but an unbounded one, so it is invalid."
+    },
+    "subjectDigest": {
+      "$ref": "#/$defs/sha256",
+      "description": "Digest over this subject's whole identity -- kind, every bound component digest, commit, and file list -- so two subjects differing in any one of them are different subjects. Every receipt, envelope, and reviewer assignment carries it as the join key."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "repository"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "repositoryPath",
+          "subjectCommit",
+          "files"
+        ],
+        "description": "A repository subject is exactly a commit plus a file list. Missing either leaves a subject that can only mean the current working tree."
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "repositoryPath"
+              ]
+            },
+            {
+              "required": [
+                "subjectCommit"
+              ]
+            },
+            {
+              "required": [
+                "files"
+              ]
+            }
+          ]
+        },
+        "description": "A packet-only subject has no repository, so carrying a commit or a file list would claim a repository epoch nothing verified."
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "required": [
+              "recordPath"
+            ]
+          },
+          {
+            "required": [
+              "recordSha256"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "required": [
+          "recordPath",
+          "recordSha256"
+        ],
+        "description": "A record is bound by path and digest together. A path without a digest binds nothing, and a digest without a path names nothing."
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

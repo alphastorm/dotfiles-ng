@@ -257,6 +257,17 @@ the resolver fails closed when it is omitted or unsupported and records the sele
 value as manifest `leadFamily`. Resolve the current full-council or targeted-refuter
 roster with `qualification.py`; this public package never grants live membership.
 
+Live dispatch itself has one entry point, `review_dispatch.py`, and one order:
+`freeze` a clean full-commit repository subject or a content-hashed packet,
+`resolve` standing against the fixed live authority, `dispatch` the envelope, then
+submit the emitted Task payload verbatim. The model chooses the frozen scope, the
+reviewer ids, and the review class (`focused`, `initial`, or `targeted-refuter`);
+executable resolution owns standing; the Task gate injects the trusted
+`CRITICAL_REVIEW_RESOLVER_RECEIPT_V1` block. There is no hand-written reviewer
+assignment and no direct reviewer launch. A protected `review-*` Task is blocked
+unless its flat or batch shape exactly matches the verifier-approved canonical
+input regenerated from the dispatch envelope.
+
 A reviewer is not a model lineage. The `reviewers` mapping key is the `reviewer_id`,
 and that is the only join key a manifest, dispatcher, or finding ledger uses.
 `model_family` and `correlation_group` say which model answers for that lane. Two
@@ -284,8 +295,9 @@ Reviewer entries carry identity, transport, qualification, and capability eviden
 they do not declare `dispatchRole`, `independence_class`, or `authority`. The resolver
 derives those fields from `(lead_family, reviewer_family, selected_role)` and writes
 them into every manifest row, while the manifest schema permits only coherent
-independent or supplemental pairs. Reviewer prompts receive those resolved values and
-cannot self-promote.
+independent or supplemental pairs. Those resolved values reach a reviewer only inside
+the generated receipt block, so a reviewer neither recomputes the matrix nor
+self-promotes.
 
 How a member is executed is resolved rather than inferred from its id. Every live
 row carries `execution_mode: task_agent` together with the exact named agent and
@@ -381,11 +393,12 @@ testable on its own.
 
 Daybreak Blue is an entitlement alias, not another generic Sol invocation. Its
 thin named agent requests `openai-codex/gpt-daybreak-blue-latest:max` and fixes
-the read-only tools and structured finding schema. Its evidentiary standing comes
-from the selected lead profile: for a GPT lead it is a same-lineage supplemental
-specialist; for Claude, Gemini, or Grok leads it is a cross-family independent
-primary critic. The agent receives that resolved standing and stops on a malformed
-combination rather than declaring its own authority.
+the read-only tools and structured finding schema. Its evidentiary standing is
+resolved from the selected lead profile, never from the lane: under one profile it
+resolves as a same-lineage supplemental specialist and under another as a
+cross-family independent primary critic. The agent reads that standing out of the
+generated receipt block and stops on a malformed or absent one rather than
+recomputing the combination or declaring its own authority.
 
 OMP 17.2.15 preserves the Responses Lite `reasoning.context=all_turns`
 requirement for the opaque alias. On 2026-08-12 the lane passed all three
@@ -440,9 +453,13 @@ each one through the existing `canary.validate_trace_receipt` — unchanged and 
 so served model, declared and executed tools, schema validity, and fallback are still
 judged by the one implementation that already judges them. A non-completed attempt may
 carry no receipt at all, which is why refusals cannot be hidden as passes. The cohort
-also pins `agent_definition_sha256`: an agent edited after its cohort ran is a lane
-qualified against a charter that no longer exists, so the receipt goes stale and the gate
-fails. Re-qualification is a fresh cohort, never a prose edit.
+also pins `agent_definition_sha256`: an arbitrary edit after the cohort ran
+makes it stale and requires fresh qualification. The sole narrow exception is
+a `resolver-receipt-standing-source-v1` amendment. It preserves the parent
+charter and cohort bytes under their original hashes, pins the exact unified
+diff, and requires one fresh `lrhe-live-review-trace-v2` receipt against the
+current charter. Old attempts are still validated against the parent snapshot;
+they are never relabeled as current runs.
 
 `independent` is a real fourth lens, not a relabelling of the other three:
 reconstruct the system and its invariants from primary evidence instead of

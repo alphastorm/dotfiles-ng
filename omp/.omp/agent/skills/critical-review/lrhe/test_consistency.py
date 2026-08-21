@@ -107,8 +107,10 @@ LIVE_PROTOCOL_OWNED_MECHANICS = (
     "the packet context is:",
     "the manifest binds the absolute record path",
     "until every member has settled",
-    "`parallel()` wave",
-    'schema_mode="strict"',
+    "one gated task wave",
+    "submit that object verbatim as the task call",
+    "critical_review_dispatch_v1",
+    "the sole live dispatch entry point",
     "do not disclose round-one responses between reviewers",
     "one total retry per member per epoch",
     "exactly one byte-identical retry",
@@ -139,6 +141,9 @@ MOVED_COMMANDS = (
     "./lrhe/make_receipt.py",
     "./lrhe/qualification.py initial",
     "./lrhe/qualification.py targeted-refuter",
+    "./lrhe/review_dispatch.py freeze",
+    "./lrhe/review_dispatch.py resolve",
+    "./lrhe/review_dispatch.py dispatch",
     "./lrhe/shadow_ledger.py",
     "./lrhe/review_checks.py quick",
     "./lrhe/review_checks.py full",
@@ -183,8 +188,13 @@ def test_proportional_assurance_policy_contract():
 
     assert all(name in skill for name in classes)
     for document in (system_append, skill):
-        assert all(marker in document for marker in ("p0", "credential", "provider call", "security"))
-    assert "credible residual consequence after caps, containment, rollback, and recovery" in system_append
+        assert all(
+            marker in document for marker in ("p0", "credential", "provider call", "security")
+        )
+    assert (
+        "credible residual consequence after caps, containment, rollback, and recovery"
+        in system_append
+    )
     assert "not from p0 labels, security vocabulary, credentials, provider calls" in system_append
     assert "do not independently raise it" in skill
 
@@ -204,8 +214,12 @@ def test_proportional_assurance_policy_contract():
     assert "standing is lead-relative, not reviewer-intrinsic" in focused_routing
     assert "full-council membership remains resolver-owned" in focused_routing
 
-    assignment = skill.split("use this complete assignment shape:", 1)[1].split("```text", 1)[1]
+    assignment = skill.split("this is the shape the generated assignment takes:", 1)[1]
+    assignment = assignment.split("```text", 1)[1]
     assignment = assignment.split("```", 1)[0]
+    assert "critical_review_resolver_receipt_v1" in assignment, (
+        "the generated assignment no longer opens with the trusted receipt marker"
+    )
     for marker in (
         "class",
         "assets and invariants",
@@ -230,7 +244,9 @@ def test_proportional_assurance_policy_contract():
     assert "in-scope residual" in decisions
     assert "assign severity after declared caps" in decisions
     assert "findings are proposals, not implementation orders" in decisions
-    assert all(f"`{disposition}`" in decisions for disposition in ("accept", "defer", "reject", "mitigate"))
+    assert all(
+        f"`{disposition}`" in decisions for disposition in ("accept", "defer", "reject", "mitigate")
+    )
 
     for forbidden_machine_extension in (
         "assurance_class:",
@@ -555,8 +571,7 @@ def test_evaluation_lane_gate_does_not_call_live_specialists_held(monkeypatch):
 
     assert result.state == preflight.PASS
     assert result.detail == (
-        "evaluation-enabled ['grok'] all canaried; "
-        "evaluation-disabled ['daybreak-blue']"
+        "evaluation-enabled ['grok'] all canaried; evaluation-disabled ['daybreak-blue']"
     )
     assert "held" not in result.detail
 
@@ -921,9 +936,9 @@ def test_preflight_applies_effective_model_effort_overrides(tmp_path, monkeypatc
     assert resolved.state == preflight.PASS, resolved.detail
 
     configured = yaml.safe_load(models_config.read_text(encoding="utf-8"))
-    configured["providers"]["openai-codex"]["modelOverrides"][
-        "gpt-daybreak-blue-latest"
-    ]["thinking"]["efforts"] = []
+    configured["providers"]["openai-codex"]["modelOverrides"]["gpt-daybreak-blue-latest"][
+        "thinking"
+    ]["efforts"] = []
     models_config.write_text(yaml.safe_dump(configured), encoding="utf-8")
     empty_ladder = preflight.check_model_selectors()
     assert empty_ladder.state == preflight.FAIL
@@ -985,9 +1000,7 @@ def test_probe_pins_bind_version_fixture_and_role(tmp_path):
         "repositoryFixtureSha256": freeze_lock._sha256_file(fixture),
     }
 
-    assert preflight._probe_pin_problems(
-        "claude", measured, ("primary_critic",), tmp_path
-    ) == []
+    assert preflight._probe_pin_problems("claude", measured, ("primary_critic",), tmp_path) == []
 
     unversioned = {**measured, "repositoryPromptVersion": "live-repository-v2"}
     assert any(
@@ -1390,16 +1403,12 @@ def test_manifest_reason_codes_match_the_resolver_vocabulary():
     assert set(schema["required"]) == set(schema["properties"])
 
 
-
-
 def test_manifest_role_standing_matches_the_resolver_role_table():
     """The schema admits exactly the resolver's fixed and conditional standings."""
     schema = json.loads((HERE / "panel-selection.schema.json").read_text(encoding="utf-8"))
     row = schema["$defs"]["selectedReviewer"]
     assert set(row["properties"]["role"]["enum"]) == set(qualification.SELECTABLE_ROLES)
-    assert set(row["properties"]["selectionClass"]["enum"]) == set(
-        qualification.SELECTION_CLASSES
-    )
+    assert set(row["properties"]["selectionClass"]["enum"]) == set(qualification.SELECTION_CLASSES)
     assert row["properties"]["execution_mode"]["const"] == "task_agent"
     assert qualification.EXECUTION_MODES == ("task_agent",)
     role_branches = {
@@ -1418,8 +1427,7 @@ def test_manifest_role_standing_matches_the_resolver_role_table():
     assert fixed == {
         role: standing
         for role, standing in qualification.LIVE_ROLES.items()
-        if role in qualification.SELECTABLE_ROLES
-        and role != qualification.CONDITIONAL_ROLE
+        if role in qualification.SELECTABLE_ROLES and role != qualification.CONDITIONAL_ROLE
     }
     conditional = {
         (
@@ -1597,9 +1605,9 @@ def test_conditional_standing_is_cross_family_or_same_lineage_as_a_pair():
             "authority": qualification.INDEPENDENT_EVIDENCE,
         },
     ):
-        assert list(
-            validator.iter_errors(_manifest("initial", [_OPUS_ENTRY, forged]))
-        ), "a conditional row mixed independent and supplemental standing"
+        assert list(validator.iter_errors(_manifest("initial", [_OPUS_ENTRY, forged]))), (
+            "a conditional row mixed independent and supplemental standing"
+        )
 
 
 def test_the_fixed_rosters_admit_no_additive_lane_and_no_retired_mode():
@@ -1732,9 +1740,7 @@ def test_the_private_qualification_activates_the_lead_family_matrix():
         assert "independence_class" not in entry
         assert "authority" not in entry
         assert "blockers" not in entry
-    assert document["reviewers"]["claude-opus"]["access_profile"] == (
-        "anthropic-cvp-approved-org"
-    )
+    assert document["reviewers"]["claude-opus"]["access_profile"] == ("anthropic-cvp-approved-org")
     qualification.validate_qualification(document)
 
 
@@ -1780,9 +1786,7 @@ def test_lead_relative_reviewer_charters_cannot_self_promote():
     config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))
     task = config["task"]
     models = yaml.safe_load(preflight.MODELS_CONFIG.read_text(encoding="utf-8"))
-    model_overrides = (
-        models.get("providers", {}).get("openai-codex", {}).get("modelOverrides", {})
-    )
+    model_overrides = models.get("providers", {}).get("openai-codex", {}).get("modelOverrides", {})
 
     assert front["name"] == "review-daybreak-blue"
     assert front["model"] == [entry["model"]]
@@ -1792,17 +1796,32 @@ def test_lead_relative_reviewer_charters_cannot_self_promote():
     assert task["agentModelOverrides"][entry["agent"]] == entry["model"]
     assert (entry["agent"] in task["disabledAgents"]) is (not entry["dispatchEnabled"])
 
-    daybreak = agent_path.read_text(encoding="utf-8")
-    opus = (preflight.AGENTS / "review-claude-opus.md").read_text(encoding="utf-8")
-    fable = (preflight.AGENTS / "review-claude-fable.md").read_text(encoding="utf-8")
-    assert "`lead_family: gpt`" in daybreak
-    assert "`lead_family: claude`" in opus
-    assert "`selectionClass: conditional`" in fable
-    for charter in (daybreak, opus, fable):
-        assert "`independence_class: same_lineage_blind_sample`" in charter
-        assert "`authority: supplemental_evidence`" in charter
-        assert "`independence_class: cross_family`" in charter
-        assert "`authority: independent_evidence`" in charter
+    live_charters = {
+        reviewer_id: (preflight.AGENTS / f"{reviewer['agent']}.md").read_text(encoding="utf-8")
+        for reviewer_id, reviewer in document["reviewers"].items()
+        if reviewer["dispatchEnabled"]
+    }
+    assert len(live_charters) >= 3, "no live charters to check"
+
+    receiptless = [
+        reviewer_id
+        for reviewer_id, charter in live_charters.items()
+        if "CRITICAL_REVIEW_RESOLVER_RECEIPT_V1" not in charter
+    ]
+    assert not receiptless, (
+        f"live charters take standing from something other than the resolver receipt: {receiptless}"
+    )
+
+    # The resolver owns the lead-relative matrix, so a charter that restates any
+    # of it is a second copy that drifts the moment a profile changes -- and a
+    # reviewer that can recompute its own standing can promote it.
+    matrix = re.compile(r"`(?:lead_family|independence_class): [a-z_]+`")
+    recomputed = {
+        reviewer_id: sorted(set(matrix.findall(charter)))
+        for reviewer_id, charter in live_charters.items()
+        if matrix.search(charter)
+    }
+    assert not recomputed, f"live charters carry a reviewer-side tuple matrix: {recomputed}"
 
 
 @needs_agents
@@ -1980,10 +1999,7 @@ def test_canary_prompts_carry_exact_lane_authorization(tmp_path):
     assert len(prompts) == len(canary.PROBES)
     for prompt in prompts:
         assert 'provider_data_allowlist: ["openai"]' in prompt["prompt"]
-        assert (
-            'reviewer_access_profile_allowlist: ["daybreak-blue"]'
-            in prompt["prompt"]
-        )
+        assert 'reviewer_access_profile_allowlist: ["daybreak-blue"]' in prompt["prompt"]
 
 
 def test_canary_ledger_appends_or_refuses_without_truncating(tmp_path):
@@ -2630,6 +2646,116 @@ def test_trace_receipt_proves_repository_read_and_read_only_surface(tmp_path):
     assert "read" in validated["tool_executions"]
 
 
+def test_standing_amendment_preserves_parent_evidence_and_requires_current_trace(
+    tmp_path, monkeypatch
+):
+    selector = "xai-oauth/grok-4.5:xhigh"
+    skill = tmp_path / "skill"
+    data = skill / "lrhe-data" / "standing-amendment-v1"
+    agents = tmp_path / "agents"
+    data.mkdir(parents=True)
+    agents.mkdir()
+    parent = data / "review-grok-parent.md"
+    current = agents / "review-grok.md"
+    _write_trace_agent(parent, selector, "repository")
+    parent_text = parent.read_text(encoding="utf-8")
+    current_text = parent_text + "\nStanding now comes from the resolver receipt.\n"
+    current.write_text(current_text, encoding="utf-8")
+
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    parent_trace = tmp_path / "parent.session.jsonl"
+    current_trace = tmp_path / "current.session.jsonl"
+    for trace in (parent_trace, current_trace):
+        _write_trace(
+            trace,
+            evidence_delivery="repository",
+            attempted=("read", "yield"),
+            executed=("read", "yield"),
+        )
+    parent_receipt_path = data / "parent.trace-receipt.json"
+    current_receipt_path = data / "current.trace-receipt.json"
+    parent_receipt = canary.capture_trace_receipt(
+        parent_trace, parent, "review-grok", selector, "repository"
+    )
+    current_receipt = canary.capture_trace_receipt(
+        current_trace, current, "review-grok", selector, "repository"
+    )
+    parent_receipt_path.write_text(
+        json.dumps(parent_receipt, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    current_receipt_path.write_text(
+        json.dumps(current_receipt, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    amendment_path = data / "grok.amendment.json"
+    amendment = {
+        "schema": preflight.CHARTER_AMENDMENT_SCHEMA,
+        "result": "passed",
+        "amendment_id": "grok-standing-source-test",
+        "change_class": preflight.CHARTER_AMENDMENT_CHANGE_CLASS,
+        "agent": "review-grok",
+        "parent_definition_path": str(parent.relative_to(skill)),
+        "parent_definition_sha256": digest(parent),
+        "parent_evidence_path": str(parent_receipt_path.relative_to(skill)),
+        "parent_evidence_sha256": digest(parent_receipt_path),
+        "current_definition_sha256": digest(current),
+        "current_trace_path": str(current_receipt_path.relative_to(skill)),
+        "current_trace_sha256": digest(current_receipt_path),
+        "unified_diff_sha256": preflight._unified_diff_sha256(parent_text, current_text),
+        "observed_at": current_receipt["observed_at"],
+    }
+    amendment_path.write_text(
+        json.dumps(amendment, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(preflight, "SKILL", skill)
+
+    problems, bound_parent = preflight._charter_amendment(
+        "grok",
+        amendment_path,
+        current,
+        parent_receipt_path,
+        agent="review-grok",
+        selector=selector,
+        delivery="repository",
+    )
+    assert problems == []
+    assert bound_parent == parent
+
+    current.write_text(current_text + "Unapproved charter change.\n", encoding="utf-8")
+    problems, _ = preflight._charter_amendment(
+        "grok",
+        amendment_path,
+        current,
+        parent_receipt_path,
+        agent="review-grok",
+        selector=selector,
+        delivery="repository",
+    )
+    assert any("current definition digest" in problem for problem in problems)
+
+    current.write_text(current_text, encoding="utf-8")
+    amendment["current_trace_path"] = str(parent_receipt_path.relative_to(skill))
+    amendment["current_trace_sha256"] = digest(parent_receipt_path)
+    amendment_path.write_text(
+        json.dumps(amendment, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    problems, _ = preflight._charter_amendment(
+        "grok",
+        amendment_path,
+        current,
+        parent_receipt_path,
+        agent="review-grok",
+        selector=selector,
+        delivery="repository",
+    )
+    assert any("current-charter trace" in problem for problem in problems)
+
+
 def test_repository_trace_completes_three_response_probe_gate(tmp_path, monkeypatch):
     selector = "xai-oauth/grok-4.5:xhigh"
     agent = tmp_path / "review-grok.md"
@@ -2656,16 +2782,11 @@ def test_repository_trace_completes_three_response_probe_gate(tmp_path, monkeypa
     )
     receipt_path.write_text(
         json.dumps(
-            canary.capture_trace_receipt(
-                trace, agent, "review-grok", selector, "repository"
-            )
+            canary.capture_trace_receipt(trace, agent, "review-grok", selector, "repository")
         ),
         encoding="utf-8",
     )
-    assert (
-        canary.main(["prompts", "--family", "grok", "--out", str(prompts)])
-        == canary.EXIT_OK
-    )
+    assert canary.main(["prompts", "--family", "grok", "--out", str(prompts)]) == canary.EXIT_OK
     replies = [
         _canary_reply(
             "grok|structured_output",

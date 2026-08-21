@@ -54,6 +54,15 @@ lead, or Grok for a Grok lead. Standing is lead-relative, not reviewer-intrinsic
 This routing neither selects nor modifies a full council; full-council membership
 remains resolver-owned.
 
+Routing chooses the reviewer; it never states the reviewer's standing. A focused
+review is dispatched through the same executable path as a council —
+`review_dispatch.py freeze`, then `resolve` with review class `focused` and that
+one reviewer id, then `dispatch` — and the emitted Task payload is submitted
+verbatim. The resolver emits `selectionClass`, `role`, `independence_class`, and
+`authority` from the live authority; the lead never writes, derives, or
+hand-copies a standing field, and a reviewer reached any other way is not a
+review.
+
 When a full council is justified, encode the same brief using the existing packet fields rather than adding keys: `goal` carries outcome and class; `requirements` carries named assets, caps, and result-validity requirements; `non_goals` carries excluded adversaries and reuse; `trust_boundaries` carries credible actors and boundaries; `rollback_contract` carries containment, recovery, and residual effects; and `rejected_alternatives_and_reasons` records disproportionate mitigations rejected before review.
 
 ### Hosted material authorization
@@ -84,7 +93,7 @@ Every change admitted to the full council has one `review_sequence_id`. Every fr
 
 One optional design pass, the initial pass, and at most one verified material redesign are the only general council passes. There is never a third implementation council, and one targeted refutation is the entire refutation budget for a sequence.
 
-An admitted epoch runs in one order: triage the draft record, freeze the complete change, mint subject-bound proof receipts, pass the full gate on the frozen record, resolve the panel manifest, dispatch every selected reviewer in one concurrent wave, normalize every returned item into the ledger, then close on the lead's dispositions. Triage may instead close the epoch on direct lead verification and mint nothing. No triage result authorizes a provider call, and reviewers never see one another's first-round output.
+An admitted epoch runs in one order: triage the draft record, freeze the complete change, mint subject-bound proof receipts, pass the full gate on the frozen record, resolve the panel manifest, then dispatch through the one executable path — `review_dispatch.py freeze` a clean full-commit repository subject or a content-hashed packet, `resolve` the complete selected council against the live authority, `dispatch` the envelope, and submit the emitted Task payload verbatim in one gated wave — normalize every returned item into the ledger, then close on the lead's dispositions. Triage may instead close the epoch on direct lead verification and mint nothing. No triage result authorizes a provider call, and reviewers never see one another's first-round output.
 
 Read `./lrhe/LIVE-PROTOCOL.md` only after admission selects a full council, and read it before any scaffold, record, freeze, receipt, manifest, or dispatch. It owns roster and provider authorization, the frozen record schema and subject binding, freeze and receipt commands, panel resolution, dispatch and the single bounded retry, ledger scaffolding and outcome capture, targeted refutation, and close/report. Load it on demand; never expand it into a session that has not admitted a council. Its executable tools and the schemas beside them stay authoritative wherever prose could drift.
 
@@ -114,25 +123,29 @@ than in a remediation chain.
 
 Every dispatched reviewer receives this complete assignment. It is the canonical trusted assignment and the single owner of the shared review floor, including state fidelity; a private reviewer definition supplies the lens and output schema and never restates these requirements. Do not give reviewers caller-provided output schemas that weaken their agent schema.
 
-Use this complete assignment shape:
+The assignment is generated, never composed by hand. `review_dispatch.py resolve` emits the standing block and `dispatch` emits the complete task text; the lead submits that payload verbatim and writes none of it. The model's inputs are the frozen scope and packet, the reviewer ids, the accountable `lead_family`, and the review class. The resolver emits every standing field from the live authority, and the Task gate revalidates the whole payload before any reviewer runs. Never write, derive, copy, or edit a standing value, and never ask a reviewer to infer or choose its own standing: a reviewer trusts the receipt block and nothing else for those fields.
+
+This is the shape the generated assignment takes:
 
 ```text
-# Target
-For `repository` delivery: review the immutable packet at <packet path> and only the repository epoch it identifies.
-For `inline` delivery: review only the complete immutable packet and numbered source evidence pasted below; do not inspect any path.
-Do not modify files or inspect peer output.
-
-# Resolved standing
-`subject_commit`: <full frozen commit>
+CRITICAL_REVIEW_RESOLVER_RECEIPT_V1
+`receipt_sha256`: <resolved>
+`subject_digest`: <resolved>
+`subject_kind`: <repository|packet-only>
+`subject_commit`: <clean full 40-hex commit|none>
 `lead_family`: <gpt|claude|gemini|grok>
-`selectionClass`: <focused or exact manifest value>
-`role`: <primary_critic|security_specialist|conditional_critic|targeted_refuter>
-`independence_class`: <cross_family|same_lineage_blind_sample>
-`authority`: <independent_evidence|supplemental_evidence>
+`review_class`: <focused|initial|targeted-refuter>
+`reviewer_id`: <resolved>
+`selectionClass`: <resolved>
+`role`: <resolved>
+`independence_class`: <resolved>
+`authority`: <resolved>
 
-For a full council, copy these values verbatim from the immutable selection
-manifest and frozen record. For a focused review, derive them from the focused
-routing rule above. Never ask the reviewer to infer or choose its own standing.
+# Target
+For a repository subject: review only `repository_path` at the bound commit and exact regular-file list.
+For a packet-only subject: inspect no path.
+The verified assurance scope and packet bytes are reproduced in the generated task.
+Do not modify files or inspect peer output.
 
 # Assurance scope
 The packet's class, outcome, named assets and invariants, credible adversary, caps, recovery contract, result-validity conditions, and non-goals are binding. Do not promote the class, invent future consumers, expand the adversary model, or turn defense in depth into a requirement. Assess impact after current controls. Complexity, delivery delay, persistent state, maintenance, and newly introduced failure modes are adverse effects. Return no finding unless a falsifiable in-scope failure leaves meaningful residual impact; zero findings is valid.

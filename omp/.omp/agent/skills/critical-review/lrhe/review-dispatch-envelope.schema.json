@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lrhe/review-dispatch-envelope.schema.json",
+  "title": "Critical Review Dispatch Envelope",
+  "description": "The exact Task payload one verified receipt authorizes, written once after every bound byte has been re-read and the council re-resolved. `tasks` is the transmission itself, not a description of one: each item carries the reviewer's whole assignment with the verified scope and packet bytes reproduced inline, so nothing a reviewer reads depends on a path still holding what it held at freeze. The envelope cannot carry its own digest or the dispatch marker built from it, which is why `dispatch` prints that marker instead of storing it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "panelId",
+    "leadFamily",
+    "reviewClass",
+    "subjectDigest",
+    "receiptPath",
+    "receiptSha256",
+    "taskIntent",
+    "tasks",
+    "tasksSha256"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "description": "Pins this envelope contract; a consumer that accepts an unknown version is guessing at what would be transmitted."
+    },
+    "panelId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The live panel definition the receipt resolved under, so an envelope built under a superseded panel is visible rather than silent."
+    },
+    "leadFamily": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The accountable main-session model family whose profile granted every assignment its standing."
+    },
+    "reviewClass": {
+      "enum": [
+        "focused",
+        "initial",
+        "targeted-refuter"
+      ],
+      "description": "Which resolution this envelope transmits: one configured critic outside a council, the complete selected council, or the complete fixed refutation pool."
+    },
+    "subjectDigest": {
+      "$ref": "#/$defs/sha256",
+      "description": "The frozen subject's whole-identity digest, joining this transmission to the same subject the receipt and every reviewer assignment bind."
+    },
+    "receiptPath": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Absolute path of the resolver receipt this envelope was built from. The verifier re-reads it and repeats the whole resolution rather than believing this envelope's summary of it."
+    },
+    "receiptSha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "Digest of the exact receipt bytes, so a receipt edited between resolution and transmission is detectable rather than assumed unchanged."
+    },
+    "taskIntent": {
+      "const": "Dispatching resolved reviewers",
+      "description": "The generated intent line of the authorized Task call. Fixed rather than caller-supplied: the verifier approves an exact payload, so an intent chosen at the call site would leave one field of the compared object outside the comparison."
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/task"
+      },
+      "description": "One canonical Task item per resolved reviewer, in resolver order. The dispatcher transmits this array exactly and never adds, removes, reorders, retypes, or supplements a member."
+    },
+    "tasksSha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "Digest over the canonical form of `tasks` alone, so a ledger row can cite the transmitted evidence by one stable value that survives any reformatting of the envelope around it."
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "task"
+      ],
+      "properties": {
+        "agent": {
+          "type": "string",
+          "pattern": "^review-",
+          "description": "The native Task agent for this reviewer, resolved from the qualification authority. The `review-` prefix is what makes the item protected, so the policy extension can recognize a reviewer dispatch without knowing any reviewer's name."
+        },
+        "task": {
+          "type": "string",
+          "pattern": "^CRITICAL_REVIEW_RESOLVER_RECEIPT_V1\\n",
+          "description": "The reviewer's complete assignment, beginning with the resolver-receipt marker and its machine header. It carries the resolved standing and the verified scope and packet bytes; a reviewer never infers, chooses, or renegotiates its own standing, and never depends on a path to still hold the reviewed material."
+        }
+      },
+      "description": "Exactly two keys. Every optional Task field is omitted so that nothing in the compared payload has a default that could drift between the verifier and the call site."
+    }
+  }
+}

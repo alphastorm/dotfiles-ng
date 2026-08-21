@@ -301,8 +301,6 @@ class QualificationError(ValueError):
     """The qualification record cannot safely drive dispatch or evaluation."""
 
 
-
-
 @dataclass(frozen=True)
 class LiveReviewer:
     """One resolved reviewer: its identity, its lineage, and what it dispatches."""
@@ -375,9 +373,7 @@ def _relative_data_path(field: str, value: object) -> str:
     return value
 
 
-def _scope_receipt(
-    reviewer_id: str, entry: Mapping[str, object], policy: ConditionalPolicy
-) -> str:
+def _scope_receipt(reviewer_id: str, entry: Mapping[str, object], policy: ConditionalPolicy) -> str:
     """Validate one conditional critic's nested scoped qualification.
 
     The scoped shape is the point: a lane can be `passed` for the scope it was
@@ -518,10 +514,6 @@ def _eligibility(reviewer_id: str, entry: Mapping[str, object]) -> ConditionalPo
             f"for {policy_id}: a conditional critic is additive, never a fallback"
         )
     return policy
-
-
-
-
 
 
 def _identity(
@@ -801,11 +793,17 @@ def validate_qualification(document: object) -> Mapping[str, object]:
                 f"reviewers.{reviewer_id}.dispatchEnabled disagrees with liveDispatch membership"
             )
         if not isinstance(entry.get("evaluationEnabled"), bool):
-            raise QualificationError(
-                f"reviewers.{reviewer_id}.evaluationEnabled must be boolean"
-            )
+            raise QualificationError(f"reviewers.{reviewer_id}.evaluationEnabled must be boolean")
 
         earned = expected_dispatch or entry.get("evaluationEnabled") is True
+        charter_amendment = entry.get("charterAmendment")
+        if charter_amendment is not None:
+            if not earned:
+                raise QualificationError(
+                    f"reviewers.{reviewer_id}.charterAmendment cannot qualify a disabled lane"
+                )
+            _relative_data_path(f"reviewers.{reviewer_id}.charterAmendment", charter_amendment)
+
         if earned:
             required = (
                 ()
@@ -900,9 +898,7 @@ def reviewers(document: Mapping[str, object]) -> Mapping[str, object]:
     return _mapping(document.get("reviewers"), "reviewers")
 
 
-def reviewer_roles(
-    document: Mapping[str, object], reviewer_id: str
-) -> tuple[str, ...]:
+def reviewer_roles(document: Mapping[str, object], reviewer_id: str) -> tuple[str, ...]:
     """Return every resolver-derived role this lane can hold across profiles."""
 
     live = _mapping(document.get("liveDispatch"), "liveDispatch")
@@ -971,9 +967,7 @@ def live_reviewers(
     )
 
 
-def live_specialists(
-    document: Mapping[str, object], lead_family: str
-) -> tuple[LiveReviewer, ...]:
+def live_specialists(document: Mapping[str, object], lead_family: str) -> tuple[LiveReviewer, ...]:
     """Return the same-lineage specialists configured for one lead family."""
 
     group = "initialSpecialists"
@@ -1519,9 +1513,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.mode == "targeted-refuter":
             roster = [
                 _selected(reviewer, "unconditional", (TARGETED_REFUTER_REASON_CODE,))
-                for reviewer in live_reviewers(
-                    document, "targeted-refuter", args.lead_family
-                )
+                for reviewer in live_reviewers(document, "targeted-refuter", args.lead_family)
             ]
             print(json.dumps(roster, sort_keys=True))
             return 0

@@ -20,7 +20,14 @@ reviewer prose:
 - `lrhe/qualification.py` is the sole executable resolver for that definition.
   The caller must supply the accountable main session's exact `model_family`;
   the resolver selects that `byLeadFamily` profile and emits the selection
-  manifest the dispatcher consumes verbatim;
+  manifest that records the roster and the ledger's provenance;
+- `lrhe/review_dispatch.py` is the sole live dispatch entry point, and its
+  `freeze` → `resolve` → `dispatch` order is the only path to a reviewer. It
+  reads the fixed live authority at
+  `~/.omp/agent/skills/critical-review/qualification.yml` — never a
+  caller-supplied authority path — and emits every standing field itself. There
+  is no hand-assembled assignment, no hand-copied standing, and no direct
+  reviewer launch;
 - a reviewer's identity is its `reviewers` key, its `reviewer_id`. That is the
   only join key for manifests, dispatch, results, receipts, and ledger rows.
   `model_family` and `correlation_group` describe which model answers for a lane,
@@ -41,7 +48,8 @@ reviewer prose:
   `supplemental_evidence`. Its absence never shrinks the unconditional council;
 - role, `independence_class`, and `authority` are derived from lead family,
   reviewer family, and the selected profile group. Reviewer entries and prompts
-  cannot declare or promote their own standing;
+  cannot declare or promote their own standing, and these fields reach a reviewer
+  only inside the generated `CRITICAL_REVIEW_RESOLVER_RECEIPT_V1` block;
 - `initialCritics`, `initialSpecialists`, `conditionalCritics`, and
   `targetedRefuters` are distinct dispatch roles;
 - `evaluationOnly` and `disabled` lanes, and every experiment in
@@ -326,11 +334,28 @@ Anything omitted from that inline evidence must be reported as unresolved, never
 reconstructed from naming conventions. Compute any displayed summary from the
 record; never maintain a second evidence count.
 
-## Round one: lead-relative concurrent reviewers
+## Round one: freeze, resolve, dispatch
 
-Resolve the panel immediately before dispatch. The resolver reads the frozen
-record and the immutable packet, verifies that the packet names exactly that
-record path and digest, and writes one durable selection manifest:
+Live dispatch has exactly one entry point, `./lrhe/review_dispatch.py`, and one
+order: freeze the subject, resolve standing, dispatch the payload. The lead never
+assembles a reviewer assignment by hand, never writes a standing field into
+prose, and never launches a reviewer through the eval kernel, an `agent()` call,
+or a Task call it composed itself.
+
+The division of labor is fixed. The model chooses what is reviewed and by whom:
+the frozen scope and packet, the repository commit and the exact file list, the
+accountable `lead_family`, the reviewer ids, and the review class — `focused`,
+`initial`, or `targeted-refuter`. Executable resolution owns standing: it reads
+the fixed live authority and emits `selectionClass`, `role`,
+`independence_class`, and `authority` itself, so a caller-supplied standing field
+is refused rather than trusted. The Task gate injects the trusted receipt:
+reviewer task text is generated, opens with
+`CRITICAL_REVIEW_RESOLVER_RECEIPT_V1`, and is submitted verbatim.
+
+Resolve the roster of record before freezing the dispatch subject. The panel
+resolver reads the frozen record and the immutable packet, verifies that the
+packet names exactly that record path and digest, and writes one durable
+selection manifest:
 
 ```bash
 ./lrhe/qualification.py initial \
@@ -351,113 +376,152 @@ binds `leadFamily`, the profile input that derived every row's standing. A
 changed lead family, record, packet, authority, or resolver no longer matches
 the roster it produced.
 The manifest is file- and directory-synced, appears atomically, and lands
-read-only; the dispatcher never needs to `chmod` it or accept partial bytes.
+read-only; nothing downstream needs to `chmod` it or accept partial bytes.
 
-Use the eval kernel as the dispatcher, never as a review authority. Load the
-manifest's `selected` array and the already-complete immutable assignments into
-eval state; do not retype, filter, reorder, or supplement the roster, and never
-re-derive membership from prose or from `qualification.yml` by hand. Join every
-row by `reviewer_id`; `model_family` is descriptive and two rows may share it.
-Each entry's `selectionClass` says whether the member is `unconditional`,
-`specialist`, or `conditional`, and its `authority` says what its result is worth
-— `supplemental_evidence` never counts toward the independent critic floor.
-Conditional selection does not imply independent standing.
-Copy each row's `leadFamily`, `selectionClass`, `role`, `independence_class`, and
-`authority` into that reviewer's trusted assignment; never let the reviewer
-infer or choose them. No class changes how a result is weighed in debate,
-because there is no vote. Every
-`skipped` entry carries its sorted `reasonCodes` and is reported as
-`not_selected/ineligible` in the close report. Do not add a live
+The manifest is the epoch's roster of record and the ledger's provenance, not a
+dispatch authority. Read its complete `selected` array and hand those
+`reviewer_id` values to `resolve`; do not retype, filter, reorder, or supplement
+the roster, and never re-derive membership from prose or from `qualification.yml`
+by hand. Join every row by `reviewer_id`; `model_family` is descriptive and two
+rows may share it. Every `skipped` entry carries its sorted `reasonCodes` and is
+reported as `not_selected/ineligible` in the close report. Do not add a live
 `lrhe/dispatch.py` or another workflow framework. `workflowz` is generic guidance
 and does not replace this protocol.
 
-Dispatch every returned member in one Python `parallel()` wave. Its bounded pool
-follows the harness's `task.maxConcurrency`, and its return is the round-one
-barrier: no reviewer payload may enter the lead's context or a peer-visible file
-until every member has settled. Catch inside each branch so one failure cannot discard
-the successful handles:
+### Freeze the dispatch subject
 
-```python
-def dispatch_member(member):
-    reviewer_id = member["reviewer_id"]
-    try:
-        if member["execution_mode"] != "task_agent":
-            raise ValueError(f"unsupported execution_mode {member['execution_mode']!r}")
-        node = agent(
-            assignments[reviewer_id],
-            agent=member["agent"],
-            label=f"{review_id}:{reviewer_id}",
-            schema_mode="strict",
-            handle=True,
-        )
-        return {
-            "reviewer_id": reviewer_id,
-            "execution_mode": member["execution_mode"],
-            "state": "completed",
-            "node": node,
-        }
-    except Exception as exc:
-        return {
-            "reviewer_id": reviewer_id,
-            "execution_mode": member["execution_mode"],
-            "state": "failed",
-            "error": f"{type(exc).__name__}: {exc}",
-        }
-
-
-round_one = parallel(
-    [lambda member=member: dispatch_member(member) for member in members]
-)
-receipts = [
-    {
-        "reviewer_id": result["reviewer_id"],
-        "execution_mode": result["execution_mode"],
-        "state": result["state"],
-        "handle": result.get("node", {}).get("handle"),
-    }
-    for result in round_one
-]
-display(receipts)
+```bash
+./lrhe/review_dispatch.py freeze \
+  --scope scope.md --packet packet.md --record review-record.json \
+  --repo <repository root> --commit <40-hex commit equal to HEAD> \
+  --file <repository-relative path> [--file <repository-relative path> ...] \
+  --out ~/.omp/agent/critical-review/<review-id>/frozen-subject.json
 ```
 
-Every selected member runs through the same native Task path. The resolved agent
+A repository subject requires a clean HEAD, a caller-supplied lowercase 40-hex
+commit that equals that HEAD, and a nonempty list of exact repository-relative
+files. Every bound path must be a regular blob at that commit — git mode `100644`
+or `100755`. A directory, a symlink (`120000`), or a submodule gitlink (`160000`)
+is refused, because none of them fixes the bytes a reviewer would read: a
+committed symlink is immutable as a tree entry while its target is not. `--repo`
+without `--commit` and at least one `--file` is a working-tree subject and is
+refused by name: there is no freeze of a mutable tree, and no reviewer ever reads
+one. Omit `--repo` for a packet-only subject — `--commit` and `--file` are then
+refused, and the subject binds the scope and packet content hashes instead.
+`--scope` and `--packet` are required in both shapes and are hash-bound;
+`--record` is optional. The frozen subject validates against
+`lrhe/frozen-subject.schema.json`.
+
+### Resolve standing
+
+```bash
+./lrhe/review_dispatch.py resolve \
+  --subject frozen-subject.json \
+  --lead-family <gpt|claude|gemini|grok> \
+  --review-class <focused|initial|targeted-refuter> \
+  --reviewer <reviewer_id> [--reviewer <reviewer_id> ...] \
+  --out ~/.omp/agent/critical-review/<review-id>/resolver-receipt.json
+```
+
+The review class is a completeness contract, not a label. `initial` must name the
+complete selected council; `focused` names exactly one configured initial critic;
+`targeted-refuter` names the complete fixed refutation pool. A short, padded,
+substituted, or reordered set fails closed rather than quietly dispatching a
+smaller council than the authority selected. `resolve` writes exactly one
+artifact, the resolver receipt, validated against the generated
+`resolver-receipt.schema.json` whose `const` branches admit only the valid
+lead-family × review-class × reviewer tuples. It does not replace the selection
+manifest, and `epoch.py ledger --manifest` still takes that manifest.
+
+Each resolved row's `selectionClass` says whether the member is `unconditional`,
+`specialist`, or `conditional`, and its `authority` says what its result is worth
+— `supplemental_evidence` never counts toward the independent critic floor.
+Conditional selection does not imply independent standing, and no class changes
+how a result is weighed in debate, because there is no vote.
+
+### Dispatch
+
+```bash
+./lrhe/review_dispatch.py dispatch \
+  --receipt resolver-receipt.json \
+  --out ~/.omp/agent/critical-review/<review-id>/review-dispatch-envelope.json
+```
+
+`dispatch` writes the envelope, hashes the bytes it wrote, and prints one strict
+JSON object whose only key is `task_input`. Submit that object verbatim as the
+Task call; `verify-task` independently regenerates the same object immediately
+before execution.
+
+OMP requires two canonical Task shapes. A single `focused` reviewer or the
+single targeted refuter uses the flat shape with exactly `i`, `agent`, and
+`task`; the generated task begins with the receipt marker followed by the
+envelope path and SHA-256. A council with multiple reviewers uses the batch
+shape with exactly `i`, `context`, and `tasks`; `context` is:
+
+```text
+CRITICAL_REVIEW_DISPATCH_V1
+envelope_path=<absolute path>
+envelope_sha256=<64 lowercase hex>
+```
+
+The generated `i` is pinned as the envelope's `taskIntent` schema `const`.
+Every batch item carries exactly `agent` and `task`. Never retype, reorder,
+trim, merge, summarize, or reword one character of either canonical shape, and
+never append an instruction of your own. A multi-reviewer council runs in one
+gated Task wave; that call is the round-one barrier, and no reviewer payload may
+enter the lead's context or a peer-visible file until every member has settled.
+
+The extension treats every Task item or flat Task whose agent name starts with
+`review-` as protected. A protected or mixed call without the exact
+verifier-approved canonical input is blocked; a Task call with no protected
+agent is unaffected. The gate invokes `review_dispatch.py verify-task
+--envelope <path> --sha256 <hex>` at a path fixed relative to the extension and
+never caller-selectable. It rehashes the envelope and revalidates the envelope
+schema, current resolver and qualification authority, subject state, receipt,
+assignments, and exact canonical Task input. An edited envelope binding, intent,
+task, or batch is blocked, not warned; hand-writing a reviewer Task call is the
+bypass the gate exists to refuse.
+
+Every generated artifact — frozen subject, resolver receipt, dispatch envelope —
+is strict, hash-bound, atomic, non-overwriting, and read-only. Exit `0` is
+success; exit `1` is a domain refusal carrying one plain reason line on stderr
+and nothing on stdout; exit `2` is an argv usage error. A refusal is a stop, not
+an invitation to retry with different flags.
+
+Every selected member runs through the same native Task path. Evidence delivery,
+agent, model, and execution mode come from the resolved row; never maintain a
+second live panel list. Every live row uses `task_agent`. The resolved agent
 definition supplies its exact model, thinking level, tool surface, charter, and
-output schema. OMP owns credential selection inside the provider route, including
-sibling-account rotation on account-scoped TAC denials; the dispatcher neither
-pins an OAuth account nor implements a second retry policy. A served model that
-differs from the manifest's exact selector is still invalid.
+output schema, and the generated payload carries no schema of its own, so the
+agent's configured schema stays authoritative. OMP owns credential selection
+inside the provider route, including sibling-account rotation on account-scoped
+TAC denials; dispatch neither pins an OAuth account nor implements a second retry
+policy. A served model that differs from the manifest's exact selector is still
+invalid.
 Every live reviewer selector, plus a held lane being qualified, must also have an
 exact empty entry in OMP's `retry.fallbackChains`. Native credential rotation may
 preserve the selector; model fallback may not change it.
 
-`handle=True` retains the `agent://` identity but also returns text and structured
-data. Keep `round_one` in kernel state; display only the receipt projection above.
-Immediately run `epoch.py recheck` outside the cell. Only after it passes may a
-second eval cell write each completed member's `node["data"]` to
+Immediately after the Task call returns, run `epoch.py recheck`. Only after it
+passes may each completed member's structured output be written to
 `<reviewer_id>.json`, after which the lead reads the files separately. A failed
-recheck makes every node stale.
+recheck makes every result stale.
 
-`parallel()` owns the critic barrier. `pipeline()` may make already-authorized
-mechanical stages readable, but it never substitutes for triage, provider
-authorization, freeze, receipts, the full gate, digest rechecks, or the ledger
-scaffold. An explicit turn budget is defense in depth, not an exact cost or
-cardinality bound; the resolver-owned roster remains the hard dispatch bound.
-`completion()` must never decide Result or Disposition. The standard path uses the
-deterministic `epoch.py ledger` scaffold rather than an LLM normalizer.
+An explicit turn budget is defense in depth, not an exact cost or cardinality
+bound; the resolver-owned roster remains the hard dispatch bound. `completion()`
+must never decide Result or Disposition, and no eval helper substitutes for
+triage, provider authorization, freeze, receipts, the full gate, digest rechecks,
+or the ledger scaffold. The standard path uses the deterministic `epoch.py
+ledger` scaffold rather than an LLM normalizer.
 
-Use each resolver result's `agent`, `model`, `evidence_delivery`, and
-`execution_mode`; do not maintain a second live panel list and never override the
-agent's model or schema at dispatch. Every live row uses `task_agent`. Each
-`agent()` call must pass `schema_mode="strict"` and omit `schema` so the agent's
-configured schema remains authoritative. Dispatch the common reviewer assignment
-that `SKILL.md` defines — unchanged, complete, and identical for every member. It
-is the single owner of the shared review floor, including state fidelity; this
-protocol never restates, narrows, or supplements it.
+The generated task text is the common reviewer assignment that `SKILL.md`
+defines — unchanged, complete, and identical for every member. `SKILL.md` is the
+single owner of the shared review floor, including state fidelity; this protocol
+never restates, narrows, or supplements it.
 
-Do not disclose round-one responses between reviewers through messages,
-prompts, local files, follow-up calls, or eval display. After every selected branch
-settles and the epoch digest recheck passes, persist and read each complete result
-separately.
+Do not disclose round-one responses between reviewers through messages, prompts,
+local files, or follow-up calls. After every selected item settles and the epoch
+digest recheck passes, persist and read each complete result separately.
 
 Distinguish these outcomes when a member returns nothing usable. Only a
 dispatch-level failure may be retried:
@@ -465,7 +529,7 @@ dispatch-level failure may be retried:
 | Outcome | Retry | Final state |
 |---|---|---|
 | Resolver did not select a conditional critic | no dispatch | `not_selected/ineligible` |
-| Eval bridge rejected the invocation, or the child died or was interrupted before any terminal output | exactly one byte-identical retry, after `epoch.py recheck` and the full frozen-record gate both pass again | `completed`, or `missing/transport_failure` |
+| The Task gate refused the canonical call, or a child died or was interrupted before any terminal output | exactly one byte-identical retry, after `epoch.py recheck` and the full frozen-record gate both pass again | `completed`, or `missing/transport_failure` |
 | Explicit provider-policy refusal | none | `missing/provider_policy_refusal` |
 | Terminal output violates the strict schema | none | `invalid/schema_invalid` |
 | Served model differs from the exact requested selector | none, and never accepted | `invalid/model_mismatch` |
@@ -479,10 +543,12 @@ with the council that is already running.
 
 The transport allowance is exactly one total retry per member per epoch. Re-run
 `epoch.py recheck` and the full frozen-record gate
-(`./lrhe/review_sequence.py review-record.json`), then redispatch the same
-immutable assignment to the same resolved agent and model. Never reword or
-reframe the assignment, change the frozen subject or evidence, reduce scope,
-change evidence delivery, lower thinking level, or substitute a model or family.
+(`./lrhe/review_sequence.py review-record.json`), then resubmit the exact
+`task_input` that `verify-task` regenerates from the same envelope. A retry
+reuses the existing envelope: `dispatch` never overwrites one, and re-freezing
+or re-resolving to obtain a fresh envelope is a new epoch, not a retry. Never reword
+or reframe a task, change the frozen subject or evidence, reduce scope, change
+evidence delivery, lower thinking level, or substitute a model or family.
 If that identical retry also fails, the member is `missing` for the epoch. Never
 redispatch to shop for a different answer, and never let one member's refusal
 cause another family to run twice.
@@ -565,9 +631,14 @@ for a readiness-complete `remediation` epoch. Resolve eligible reviewers with
 `./lrhe/qualification.py targeted-refuter --lead-family
 <gpt|claude|gemini|grok>`. That roster is fixed and separate: it never contains a
 conditional critic and takes no record or packet. There is at most
-one targeted refutation for the entire review sequence. Select one returned
-reviewer that did not originate the claim when possible, then launch one reviewer
-task with `schemaMode: strict`. Give it only:
+one targeted refutation for the entire review sequence. Dispatch it through the
+same three commands as round one — `freeze`, then `resolve --review-class
+targeted-refuter` naming the complete fixed pool, then `dispatch` — and submit
+the emitted payload verbatim. The refuter's standing arrives the same way every
+reviewer's does, inside the generated
+`CRITICAL_REVIEW_RESOLVER_RECEIPT_V1` block; there is no separate hand-written
+refutation launch. The refutation scope carried in the frozen scope document is
+only:
 
 ```text
 Claim and finding ID:
@@ -579,11 +650,13 @@ Question that must be answered:
 Permitted read-only verification methods:
 ```
 
-For `repository` delivery, pass anchors and the packet path, not copied source.
-Require the refuter to inspect the linked implementation with its read-only
-repository tools; do not inline the diff, surrounding code, or a substitute source
-excerpt. If a future resolver returns `inline` delivery, follow the general inline
-packet rules above instead.
+For `repository` delivery, the scope names anchors and the packet path, not copied
+source. Require the refuter to inspect the linked implementation with its
+read-only repository tools; do not inline the diff, surrounding code, or a
+substitute source excerpt. If a future resolver returns `inline` delivery, follow
+the general inline packet rules above instead. Selecting a refuter that did not
+originate the claim is a lead judgment expressed in the frozen scope, never a
+reason to trim the resolved pool.
 
 Do not provide the original reviews, reviewer identities, vote counts, or
 rhetoric. Ask the refuter to falsify the single normalized claim, not to conduct
@@ -598,7 +671,7 @@ Recheck epoch digests once more before final disposition. Mark the review stale 
 - review ID and packet path;
 - exact epoch and digest status;
 - each selected reviewer's `reviewer_id`, `model_family`, `authority`, and `completed`, `missing`, or `invalid` state;
-- the selection manifest path and digest, plus every `not_selected/ineligible` lane with its reason codes;
+- the selection manifest path and digest, the resolver receipt and dispatch envelope paths and digests, plus every `not_selected/ineligible` lane with its reason codes;
 - ledger path;
 - every blocking or unresolved P0/P1;
 - accepted implementation/design changes and verification evidence;

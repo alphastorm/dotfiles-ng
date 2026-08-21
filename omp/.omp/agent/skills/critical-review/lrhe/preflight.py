@@ -29,6 +29,7 @@ manual steps, not executed -- a preflight that can spend is not a preflight.
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import os
@@ -246,8 +247,6 @@ def check_lanes_held() -> Result:
     )
     off = sorted(set(qualified) - set(on))
     return Result(PASS, f"evaluation-enabled {on} all canaried; evaluation-disabled {off}")
-
-
 
 
 def _catalogue() -> dict[str, dict[str, set[str]]] | None:
@@ -540,10 +539,26 @@ def check_reviewer_evidence_contracts() -> Result:
         if not isinstance(receipt_name, str):
             problems.append(f"{family}: canaryReceipt absent")
             continue
+        receipt_path = SKILL / receipt_name
+        receipt_definition = definition
+        amendment_value = value.get("charterAmendment")
+        if isinstance(amendment_value, str):
+            amendment_problems, parent_definition = _charter_amendment(
+                family,
+                SKILL / amendment_value,
+                definition,
+                receipt_path,
+                agent=agent,
+                selector=selector,
+                delivery=evidence_delivery,
+            )
+            problems.extend(amendment_problems)
+            if parent_definition is not None:
+                receipt_definition = parent_definition
         try:
             receipt = canary.validate_trace_receipt(
-                SKILL / receipt_name,
-                definition,
+                receipt_path,
+                receipt_definition,
                 agent,
                 selector,
                 evidence_delivery,
@@ -573,9 +588,7 @@ def check_reviewer_evidence_contracts() -> Result:
                 )
             if evidence_delivery == "repository":
                 problems.extend(
-                    _probe_pin_problems(
-                        family, measured, reviewer_roles(document, family), SKILL
-                    )
+                    _probe_pin_problems(family, measured, reviewer_roles(document, family), SKILL)
                 )
     if problems:
         return Result(FAIL, "; ".join(problems))
@@ -648,8 +661,164 @@ def _required_read_only_marker(entry: dict) -> str:
     return policy.read_only_marker
 
 
-def _cohort_problems(family: str, path: Path, definition: Path, critic) -> list[str]:
-    """Verify one scoped cohort receipt against its policy's promotion gates."""
+CHARTER_AMENDMENT_SCHEMA = "lrhe-charter-standing-amendment-v1"
+CHARTER_AMENDMENT_CHANGE_CLASS = "resolver-receipt-standing-source-v1"
+CHARTER_AMENDMENT_KEYS = frozenset(
+    {
+        "schema",
+        "result",
+        "amendment_id",
+        "change_class",
+        "agent",
+        "parent_definition_path",
+        "parent_definition_sha256",
+        "parent_evidence_path",
+        "parent_evidence_sha256",
+        "current_definition_sha256",
+        "current_trace_path",
+        "current_trace_sha256",
+        "unified_diff_sha256",
+        "observed_at",
+    }
+)
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _amendment_path(value: object, field: str, suffix: str) -> Path:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be a non-empty relative path")
+    relative = Path(value)
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or not relative.parts
+        or relative.parts[0] != "lrhe-data"
+        or relative.suffix != suffix
+    ):
+        raise ValueError(f"{field} must be a {suffix} path under lrhe-data")
+    return SKILL / relative
+
+
+def _unified_diff_sha256(parent: str, current: str) -> str:
+    diff = "\n".join(
+        difflib.unified_diff(
+            parent.splitlines(),
+            current.splitlines(),
+            fromfile="parent-charter",
+            tofile="current-charter",
+            lineterm="",
+        )
+    )
+    return hashlib.sha256((diff + "\n").encode("utf-8")).hexdigest()
+
+
+def _charter_amendment(
+    family: str,
+    path: Path,
+    definition: Path,
+    parent_evidence_path: Path,
+    *,
+    agent: str,
+    selector: str,
+    delivery: str,
+) -> tuple[list[str], Path | None]:
+    """Validate one exact standing-source amendment without relabeling old evidence."""
+
+    try:
+        amendment = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"{family}: charter amendment is unreadable: {exc}"], None
+    if not isinstance(amendment, dict):
+        return [f"{family}: charter amendment must be an object"], None
+    missing = CHARTER_AMENDMENT_KEYS - set(amendment)
+    extra = set(amendment) - CHARTER_AMENDMENT_KEYS
+    if missing or extra:
+        return [
+            f"{family}: charter amendment shape mismatch: "
+            f"missing={sorted(missing)}, extra={sorted(extra)}"
+        ], None
+
+    problems: list[str] = []
+    for key, expected in (
+        ("schema", CHARTER_AMENDMENT_SCHEMA),
+        ("result", "passed"),
+        ("change_class", CHARTER_AMENDMENT_CHANGE_CLASS),
+        ("agent", agent),
+    ):
+        if amendment.get(key) != expected:
+            problems.append(
+                f"{family}: charter amendment {key}={amendment.get(key)!r}, expected {expected!r}"
+            )
+    for key in ("amendment_id", "observed_at"):
+        if not isinstance(amendment.get(key), str) or not amendment[key].strip():
+            problems.append(f"{family}: charter amendment {key} must be a non-empty string")
+    try:
+        parent_definition = _amendment_path(
+            amendment.get("parent_definition_path"), "parent_definition_path", ".md"
+        )
+        parent_evidence = _amendment_path(
+            amendment.get("parent_evidence_path"), "parent_evidence_path", ".json"
+        )
+        current_trace = _amendment_path(
+            amendment.get("current_trace_path"), "current_trace_path", ".json"
+        )
+    except ValueError as exc:
+        problems.append(f"{family}: charter amendment {exc}")
+        return problems, None
+    if parent_evidence.resolve() != parent_evidence_path.resolve():
+        problems.append(
+            f"{family}: charter amendment parent evidence {parent_evidence} is not "
+            f"{parent_evidence_path}"
+        )
+    for label, file_path, declared in (
+        ("parent definition", parent_definition, amendment.get("parent_definition_sha256")),
+        ("parent evidence", parent_evidence, amendment.get("parent_evidence_sha256")),
+        ("current definition", definition, amendment.get("current_definition_sha256")),
+        ("current trace", current_trace, amendment.get("current_trace_sha256")),
+    ):
+        if not file_path.is_file():
+            problems.append(f"{family}: charter amendment {label} is missing: {file_path}")
+            continue
+        measured = _sha256(file_path)
+        if declared != measured:
+            problems.append(
+                f"{family}: charter amendment {label} digest is {declared!r}, expected {measured}"
+            )
+    if problems:
+        return problems, None
+
+    parent_text = parent_definition.read_text(encoding="utf-8")
+    current_text = definition.read_text(encoding="utf-8")
+    expected_diff = _unified_diff_sha256(parent_text, current_text)
+    if amendment.get("unified_diff_sha256") != expected_diff:
+        problems.append(
+            f"{family}: charter amendment unified_diff_sha256="
+            f"{amendment.get('unified_diff_sha256')!r}, expected {expected_diff}"
+        )
+    try:
+        canary.validate_trace_receipt(
+            current_trace,
+            definition,
+            agent,
+            selector,
+            delivery,
+        )
+    except canary.TraceCanaryError as exc:
+        problems.append(f"{family}: current-charter trace is not passed: {exc}")
+    return problems, parent_definition if not problems else None
+
+
+def _cohort_problems(
+    family: str,
+    path: Path,
+    definition: Path,
+    critic,
+    amendment_path: Path | None = None,
+) -> list[str]:
+    """Verify one scoped cohort and any exact standing-source amendment."""
     policy = critic.policy
     try:
         cohort = json.loads(path.read_text(encoding="utf-8"))
@@ -667,9 +836,23 @@ def _cohort_problems(family: str, path: Path, definition: Path, critic) -> list[
 
     selector = critic.reviewer.model
     delivery = critic.reviewer.evidence_delivery
-    # Staleness is the whole point of re-hashing the definition here: an agent
-    # edited after its cohort ran is a lane qualified on a charter that no longer
-    # exists, and re-qualification is a fresh cohort rather than a prose edit.
+    problems: list[str] = []
+    cohort_definition = definition
+    if amendment_path is not None:
+        amendment_problems, parent_definition = _charter_amendment(
+            family,
+            amendment_path,
+            definition,
+            path,
+            agent=critic.reviewer.agent,
+            selector=selector,
+            delivery=delivery,
+        )
+        problems.extend(amendment_problems)
+        if parent_definition is not None:
+            cohort_definition = parent_definition
+    # The cohort remains evidence about the exact parent charter. A standing-only
+    # amendment separately binds current bytes and one current execution trace.
     expected = {
         "schema": policy.cohort_schema,
         "result": "passed",
@@ -681,15 +864,15 @@ def _cohort_problems(family: str, path: Path, definition: Path, critic) -> list[
         "thinking_level": policy.thinking_level,
         "evidence_delivery": delivery,
         "read_only_marker": policy.read_only_marker,
-        "agent_definition_sha256": hashlib.sha256(definition.read_bytes()).hexdigest(),
+        "agent_definition_sha256": _sha256(cohort_definition),
         "risk_domain_scope": list(policy.allowed_risk_domains),
         "fallback_used": False,
     }
-    problems = [
+    problems.extend(
         f"{family}: cohort {key}={cohort.get(key)!r}, expected {value!r}"
         for key, value in expected.items()
         if cohort.get(key) != value
-    ]
+    )
     counters: dict[str, int] = {}
     for key in (
         "security_misroutes",
@@ -755,7 +938,11 @@ def _cohort_problems(family: str, path: Path, definition: Path, critic) -> list[
             # served model, declared and executed tools, schema validity, fallback,
             # and the agent definition each attempt actually ran against.
             canary.validate_trace_receipt(
-                receipt_path, definition, critic.reviewer.agent, selector, delivery
+                receipt_path,
+                cohort_definition,
+                critic.reviewer.agent,
+                selector,
+                delivery,
             )
         except canary.TraceCanaryError as exc:
             problems.append(f"{prefix} receipt is not a passed trace: {exc}")
@@ -832,6 +1019,7 @@ def check_conditional_critic_scope() -> Result:
         return Result(FAIL, "active config has no task.agentModelOverrides mapping")
 
     problems: list[str] = []
+    reviewer_entries = qualification_reviewers(document)
     for critic in critics:
         reviewer_id = critic.reviewer.reviewer_id
         selector = critic.reviewer.model
@@ -845,8 +1033,7 @@ def check_conditional_critic_scope() -> Result:
         text = definition.read_text(encoding="utf-8")
         if front.get("model") != [selector]:
             problems.append(
-                f"{reviewer_id}: agent model {front.get('model')!r} != "
-                f"qualification [{selector!r}]"
+                f"{reviewer_id}: agent model {front.get('model')!r} != qualification [{selector!r}]"
             )
         if front.get("thinkingLevel") != critic.policy.thinking_level:
             problems.append(
@@ -870,8 +1057,17 @@ def check_conditional_critic_scope() -> Result:
             )
         if critic.policy.read_only_marker not in text:
             problems.append(f"{reviewer_id}: agent is missing {critic.policy.read_only_marker}")
+        entry = reviewer_entries[reviewer_id]
+        amendment_value = entry.get("charterAmendment")
+        amendment_path = SKILL / amendment_value if isinstance(amendment_value, str) else None
         problems.extend(
-            _cohort_problems(reviewer_id, SKILL / critic.scope_receipt, definition, critic)
+            _cohort_problems(
+                reviewer_id,
+                SKILL / critic.scope_receipt,
+                definition,
+                critic,
+                amendment_path,
+            )
         )
     if problems:
         return Result(FAIL, "; ".join(problems))
