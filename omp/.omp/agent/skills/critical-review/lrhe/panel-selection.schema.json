@@ -9,6 +9,7 @@
     "schemaVersion",
     "panelId",
     "mode",
+    "leadFamily",
     "reviewRecordPath",
     "reviewRecordSha256",
     "subjectDigest",
@@ -23,8 +24,8 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": 6,
-      "description": "Pins this manifest contract; a consumer that accepts an unknown version is guessing at what was dispatched. v2 replaced the `family` join key with `reviewer_id` and added lineage, transport, role, independence, and authority metadata. v3 added the authoritative resolver binding and the per-row vendor-rights token. v4 retired the qualification-canary roster. v5 removed isolated-profile anchors and requires every selected reviewer to use native Task dispatch. v6 binds the exact qualification-authority bytes that selected the roster."
+      "const": 7,
+      "description": "Pins this manifest contract; a consumer that accepts an unknown version is guessing at what was dispatched. v2 replaced the `family` join key with `reviewer_id` and added lineage, transport, role, independence, and authority metadata. v3 added the authoritative resolver binding and the per-row vendor-rights token. v4 retired the qualification-canary roster. v5 removed isolated-profile anchors and requires every selected reviewer to use native Task dispatch. v6 binds the exact qualification-authority bytes that selected the roster. v7 binds the accountable main-session model family whose profile derived every selected row's standing."
     },
     "panelId": {
       "type": "string",
@@ -37,6 +38,11 @@
         "targeted-refuter"
       ],
       "description": "Which resolution produced this manifest, not the record's review mode: `initial` is the full council for any record the gate answers `full-council` for (design, initial, or material-redesign), and `targeted-refuter` is the separate single-claim falsification roster."
+    },
+    "leadFamily": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The accountable main-session model family supplied to the resolver. It selects one `byLeadFamily` profile and makes every row's cross-family or same-lineage standing auditable from this immutable manifest."
     },
     "reviewRecordPath": {
       "type": "string",
@@ -266,7 +272,7 @@
             "supplemental_evidence",
             "no_live_authority"
           ],
-          "description": "What this member's result is worth. `supplemental_evidence` never counts toward the independent critic floor, so a council of specialists is not a council. Pinned per role by the resolver rather than declared per lane, so private configuration cannot promote a blind sample into an independent voice."
+          "description": "What this member's result is worth. `supplemental_evidence` never counts toward the independent critic floor. Derived by the resolver from lead family, reviewer family, and selected role rather than declared per lane, so same-family conditional evidence cannot self-promote."
         },
         "agent": {
           "type": "string",
@@ -342,14 +348,28 @@
             ]
           },
           "then": {
-            "properties": {
-              "independence_class": {
-                "const": "cross_family"
+            "oneOf": [
+              {
+                "properties": {
+                  "independence_class": {
+                    "const": "cross_family"
+                  },
+                  "authority": {
+                    "const": "independent_evidence"
+                  }
+                }
               },
-              "authority": {
-                "const": "independent_evidence"
+              {
+                "properties": {
+                  "independence_class": {
+                    "const": "same_lineage_blind_sample"
+                  },
+                  "authority": {
+                    "const": "supplemental_evidence"
+                  }
+                }
               }
-            }
+            ]
           }
         },
         {

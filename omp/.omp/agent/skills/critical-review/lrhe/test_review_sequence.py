@@ -1068,7 +1068,6 @@ def _unconditional_entry(
 ) -> dict:
     route = model.split("/", 1)[0]
     return {
-        "dispatchRole": "primary_critic",
         "dispatchEnabled": True,
         "evaluationEnabled": True,
         "model_family": model_family,
@@ -1077,8 +1076,6 @@ def _unconditional_entry(
         "access_profile": f"{route}-default",
         "data_allowlist_key": _VENDOR_TOKENS[route],
         "execution_mode": "task_agent",
-        "independence_class": qualification.CROSS_FAMILY,
-        "authority": qualification.INDEPENDENT_EVIDENCE,
         "lens": lens,
         "agent": agent,
         "model": model,
@@ -1093,7 +1090,6 @@ def _unconditional_entry(
 
 def _conditional_entry() -> dict:
     return {
-        "dispatchRole": "conditional_critic",
         "dispatchEnabled": True,
         "evaluationEnabled": True,
         "model_family": "claude",
@@ -1102,10 +1098,8 @@ def _conditional_entry() -> dict:
         "access_profile": "anthropic-subscription",
         "data_allowlist_key": "anthropic",
         "execution_mode": "task_agent",
-        "independence_class": qualification.CROSS_FAMILY,
-        "authority": qualification.INDEPENDENT_EVIDENCE,
         "lens": "architecture",
-        "agent": "review-claude",
+        "agent": "review-claude-fable",
         "model": "anthropic/claude-fable-5:max",
         "fallbackAllowed": False,
         "qualification": {
@@ -1139,11 +1133,10 @@ def _conditional_entry() -> dict:
 _DAYBREAK_SELECTOR = "openai-codex/gpt-daybreak-blue-latest:max"
 
 
-def _specialist_entry(*, enabled: bool) -> dict:
-    """One native Task security specialist on the accountable lead's lineage."""
+def _daybreak_entry(*, enabled: bool) -> dict:
+    """One standing-neutral native Task security reviewer."""
 
     return {
-        "dispatchRole": qualification.SPECIALIST_ROLE,
         "dispatchEnabled": enabled,
         "evaluationEnabled": False,
         "model_family": "gpt",
@@ -1152,8 +1145,6 @@ def _specialist_entry(*, enabled: bool) -> dict:
         "access_profile": "daybreak-blue",
         "data_allowlist_key": "openai",
         "execution_mode": "task_agent",
-        "independence_class": qualification.SAME_LINEAGE_BLIND_SAMPLE,
-        "authority": qualification.SUPPLEMENTAL_EVIDENCE,
         "lens": "security",
         "agent": "review-daybreak-blue",
         "model": _DAYBREAK_SELECTOR,
@@ -1167,12 +1158,7 @@ def _specialist_entry(*, enabled: bool) -> dict:
 
 
 def _panel(with_conditional: bool = True, specialist_group: str = "") -> dict:
-    """One synthetic v7 panel with optional conditional and specialist lanes.
-
-    `specialist_group` names where the Daybreak-shaped lane is listed:
-    `initialSpecialists` for a qualified always-on specialist, `disabled` for one
-    that is prewired and held. Empty declares no specialist at all.
-    """
+    """One synthetic v8 GPT profile with optional conditional and Daybreak lanes."""
 
     reviewers = {
         "claude-opus": _unconditional_entry(
@@ -1196,33 +1182,35 @@ def _panel(with_conditional: bool = True, specialist_group: str = "") -> dict:
             model_family="grok",
             correlation_group="grok-4.5",
         ),
-        "glm": {
-            **_unconditional_entry(
-                "review-glm-floor",
-                "opencode-go/glm-5.2:max",
-                "refuter",
-                model_family="glm",
-                correlation_group="glm-5.2",
-            ),
-            "dispatchRole": "targeted_refuter",
-        },
+        "glm": _unconditional_entry(
+            "review-glm-floor",
+            "opencode-go/glm-5.2:max",
+            "refuter",
+            model_family="glm",
+            correlation_group="glm-5.2",
+        ),
     }
     if with_conditional:
         reviewers["claude"] = _conditional_entry()
-    live = {
-        "panelId": LIVE_PANEL_ID,
-        "leadFamily": "gpt",
+    profile = {
         "initialCritics": ["claude-opus", "gemini", "grok"],
         "initialSpecialists": [],
         "conditionalCritics": ["claude"] if with_conditional else [],
+    }
+    live = {
+        "panelId": LIVE_PANEL_ID,
+        "byLeadFamily": {"gpt": profile},
         "targetedRefuters": ["glm"],
         "evaluationOnly": [],
         "disabled": [],
     }
     if specialist_group:
         enabled = specialist_group == "initialSpecialists"
-        reviewers["daybreak-blue"] = _specialist_entry(enabled=enabled)
-        live[specialist_group] = ["daybreak-blue"]
+        reviewers["daybreak-blue"] = _daybreak_entry(enabled=enabled)
+        if enabled:
+            profile["initialSpecialists"] = ["daybreak-blue"]
+        else:
+            live[specialist_group] = ["daybreak-blue"]
     return {
         "schemaVersion": SCHEMA_VERSION,
         "canaryLedgers": {
@@ -1237,6 +1225,32 @@ def _panel(with_conditional: bool = True, specialist_group: str = "") -> dict:
         "liveDispatch": live,
         "reviewers": reviewers,
     }
+
+
+def _matrix_panel() -> dict:
+    """The four-family live routing matrix with lead-relative standing."""
+
+    document = _panel(specialist_group="initialSpecialists")
+    document["liveDispatch"]["byLeadFamily"].update(
+        {
+            "claude": {
+                "initialCritics": ["daybreak-blue", "gemini", "grok"],
+                "initialSpecialists": ["claude-opus"],
+                "conditionalCritics": ["claude"],
+            },
+            "gemini": {
+                "initialCritics": ["claude-opus", "daybreak-blue", "grok"],
+                "initialSpecialists": [],
+                "conditionalCritics": ["claude"],
+            },
+            "grok": {
+                "initialCritics": ["claude-opus", "daybreak-blue", "gemini"],
+                "initialSpecialists": [],
+                "conditionalCritics": ["claude"],
+            },
+        }
+    )
+    return document
 
 
 def _remint_receipt(record: dict) -> None:
@@ -1334,6 +1348,7 @@ def _resolve(
     document: dict | None = None,
     design_or_diff: str = "controller.py",
     *,
+    lead_family: str = "gpt",
     vendors: list[str] | None = None,
     access_profiles: list[str] | None = None,
 ) -> dict:
@@ -1359,6 +1374,7 @@ def _resolve(
         authority,
         payload,
         packet,
+        lead_family=lead_family,
         record_path=bound_record,
         record_sha256=record_digest,
         packet_path=bound_packet,
@@ -1375,40 +1391,77 @@ def _reviewer_ids(manifest: dict, key: str = "selected") -> list[str]:
 def test_live_panel_roles_are_derived_from_private_authority() -> None:
     root = _live_qualification()
     document = load_qualification(QUALIFICATION)
-    reviewers = root["reviewers"]
+    reviewer_entries = root["reviewers"]
     live = root["liveDispatch"]
-    memberships = [
-        reviewer_id for group in live.values() if isinstance(group, list) for reviewer_id in group
+    profiles = live["byLeadFamily"]
+
+    assert profiles == {
+        "gpt": {
+            "initialCritics": ["claude-opus", "gemini", "grok"],
+            "initialSpecialists": ["daybreak-blue"],
+            "conditionalCritics": ["claude"],
+        },
+        "claude": {
+            "initialCritics": ["daybreak-blue", "gemini", "grok"],
+            "initialSpecialists": ["claude-opus"],
+            "conditionalCritics": ["claude"],
+        },
+        "gemini": {
+            "initialCritics": ["claude-opus", "daybreak-blue", "grok"],
+            "initialSpecialists": [],
+            "conditionalCritics": ["claude"],
+        },
+        "grok": {
+            "initialCritics": ["claude-opus", "daybreak-blue", "gemini"],
+            "initialSpecialists": [],
+            "conditionalCritics": ["claude"],
+        },
+    }
+
+    assigned = {*live["targetedRefuters"], *live["evaluationOnly"], *live["disabled"]}
+    for lead_family, profile in profiles.items():
+        critics = profile["initialCritics"]
+        critic_families = [reviewer_entries[item]["model_family"] for item in critics]
+        assert lead_family not in critic_families
+        assert len(critic_families) == len(set(critic_families)) == 3
+        assigned.update(critics)
+        assigned.update(profile["initialSpecialists"])
+        assigned.update(profile["conditionalCritics"])
+        assert all(
+            reviewer_entries[item.reviewer_id]["dispatchEnabled"] is True
+            for item in live_reviewers(document, "initial", lead_family)
+        )
+        assert all(
+            reviewer_entries[item.reviewer_id]["dispatchEnabled"] is True
+            for item in live_reviewers(document, "targeted-refuter", lead_family)
+        )
+    assert assigned == set(reviewer_entries)
+
+    canaries = [
+        str(entry["lastCanary"]) for entry in reviewer_entries.values() if "lastCanary" in entry
     ]
-    assert len(memberships) == len(set(memberships)) == len(reviewers)
-    for group in ("initialCritics", "conditionalCritics", "targetedRefuters"):
-        for reviewer_id in live[group]:
-            assert reviewers[reviewer_id]["model_family"] != live["leadFamily"]
-    assert all(
-        reviewers[item.reviewer_id]["dispatchEnabled"] is True
-        for item in live_reviewers(document, "initial")
-    )
-    assert all(
-        reviewers[item.reviewer_id]["dispatchEnabled"] is True
-        for item in live_reviewers(document, "targeted-refuter")
-    )
-    canaries = [str(entry["lastCanary"]) for entry in reviewers.values() if "lastCanary" in entry]
     assert canaries, "no lane records lastCanary"
     assert str(root["lastUpdated"]) >= max(canaries), (
         "qualification lastUpdated predates its newest lastCanary"
     )
 
 
-@pytest.mark.parametrize("group", ("initialCritics", "conditionalCritics", "targetedRefuters"))
-def test_qualification_rejects_the_lead_lineage_as_a_live_reviewer(group: str) -> None:
-    """Independence is checked against the lineage, never against the reviewer id."""
-    current = _live_qualification()
-    members = current["liveDispatch"][group]
-    if not members:
-        pytest.skip(f"liveDispatch.{group} is empty in this checkout")
-    current["reviewers"][members[0]]["model_family"] = current["liveDispatch"]["leadFamily"]
-    with pytest.raises(QualificationError, match="accountable lead's own lineage"):
-        validate_qualification(current)
+@pytest.mark.parametrize("group", ("initialCritics", "targetedRefuters"))
+def test_qualification_rejects_the_lead_lineage_as_an_independent_reviewer(
+    group: str,
+) -> None:
+    """Independent standing is checked against lineage, never reviewer id."""
+
+    document = _panel()
+    lead_family = "gpt"
+    members = (
+        document["liveDispatch"]["byLeadFamily"][lead_family][group]
+        if group == "initialCritics"
+        else document["liveDispatch"][group]
+    )
+    document["reviewers"][members[0]]["model_family"] = lead_family
+    with pytest.raises(QualificationError, match="accountable lead"):
+        validate_qualification(document)
 
 
 def test_qualification_schema_version_fails_closed() -> None:
@@ -1418,7 +1471,7 @@ def test_qualification_schema_version_fails_closed() -> None:
 
 def test_private_qualification_live_gate_fails_closed() -> None:
     current = _live_qualification()
-    reviewer_id = current["liveDispatch"]["initialCritics"][0]
+    reviewer_id = current["liveDispatch"]["byLeadFamily"]["gpt"]["initialCritics"][0]
     current["reviewers"][reviewer_id]["readOnlyBoundary"] = "unknown"
     with pytest.raises(QualificationError, match="readOnlyBoundary"):
         validate_qualification(current)
@@ -1456,23 +1509,23 @@ def test_qualification_rejects_two_critics_from_one_model_family() -> None:
         model_family="claude",
         correlation_group="claude-opus-5",
     )
-    document["liveDispatch"]["initialCritics"].append("claude-opus-twin")
+    document["liveDispatch"]["byLeadFamily"]["gpt"]["initialCritics"].append(
+        "claude-opus-twin"
+    )
     with pytest.raises(QualificationError, match="two samples of one lineage"):
         validate_qualification(document)
 
 
 def test_a_specialist_may_share_the_lead_lineage_but_a_critic_may_not() -> None:
-    """The exemption is the role: a specialist is a blind sample, not a peer."""
+    """The profile group derives supplemental rather than independent standing."""
     document = _panel(specialist_group="initialSpecialists")
+    profile = document["liveDispatch"]["byLeadFamily"]["gpt"]
     specialist = document["reviewers"]["daybreak-blue"]
-    assert specialist["model_family"] == document["liveDispatch"]["leadFamily"]
+    assert specialist["model_family"] == "gpt"
     validate_qualification(document)
 
-    document["liveDispatch"]["initialSpecialists"] = []
-    document["liveDispatch"]["initialCritics"].append("daybreak-blue")
-    specialist["dispatchRole"] = "primary_critic"
-    specialist["independence_class"] = qualification.CROSS_FAMILY
-    specialist["authority"] = qualification.INDEPENDENT_EVIDENCE
+    profile["initialSpecialists"] = []
+    profile["initialCritics"].append("daybreak-blue")
     with pytest.raises(QualificationError, match="accountable lead's own lineage"):
         validate_qualification(document)
 
@@ -1480,18 +1533,19 @@ def test_a_specialist_may_share_the_lead_lineage_but_a_critic_may_not() -> None:
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     (
-        ("independence_class", qualification.CROSS_FAMILY, "independence_class must be"),
-        ("authority", qualification.INDEPENDENT_EVIDENCE, "authority must be"),
+        ("dispatchRole", qualification.SPECIALIST_ROLE, "no longer supported"),
+        ("independence_class", qualification.CROSS_FAMILY, "no longer supported"),
+        ("authority", qualification.INDEPENDENT_EVIDENCE, "no longer supported"),
         ("model_family", "", "model_family must be a non-empty string"),
         ("correlation_group", "", "correlation_group must be a non-empty string"),
         ("access_profile", "", "access_profile must be a non-empty string"),
         ("execution_mode", "task_agent_but_isolated", "execution_mode must be one of"),
     ),
 )
-def test_qualification_rejects_malformed_specialist_semantics(
+def test_qualification_rejects_declared_or_malformed_reviewer_standing(
     field: str, value: str, message: str
 ) -> None:
-    """A specialist cannot promote itself to independent, nor hide how it is run."""
+    """Standing is resolver-derived; reviewer entries carry identity only."""
     document = _panel(specialist_group="initialSpecialists")
     document["reviewers"]["daybreak-blue"][field] = value
     with pytest.raises(QualificationError, match=message):
@@ -1518,11 +1572,12 @@ def test_no_reviewer_can_declare_a_model_fallback(reviewer_id: str) -> None:
         validate_qualification(document)
 
 
-def test_a_specialist_is_only_listed_as_a_specialist_or_held() -> None:
+def test_a_targeted_refuter_must_be_cross_family_for_every_profile() -> None:
     document = _panel(specialist_group="initialSpecialists")
-    document["liveDispatch"]["initialSpecialists"] = []
+    profile = document["liveDispatch"]["byLeadFamily"]["gpt"]
+    profile["initialSpecialists"] = []
     document["liveDispatch"]["targetedRefuters"].append("daybreak-blue")
-    with pytest.raises(QualificationError, match="dispatchRole must be one of"):
+    with pytest.raises(QualificationError, match="targetedRefuters must be cross-family"):
         validate_qualification(document)
 
 
@@ -1669,14 +1724,18 @@ def test_the_eligibility_policy_alone_still_names_an_empty_domain_list(tmp_path:
 
 def test_targeted_refuter_resolution_never_contains_a_conditional_critic() -> None:
     document = _panel()
-    assert [item.reviewer.reviewer_id for item in conditional_critics(document)] == ["claude"]
-    assert [item.reviewer_id for item in live_reviewers(document, "targeted-refuter")] == ["glm"]
-    assert [item.reviewer_id for item in live_reviewers(document, "initial")] == [
+    assert [item.reviewer.reviewer_id for item in conditional_critics(document, "gpt")] == [
+        "claude"
+    ]
+    assert [
+        item.reviewer_id for item in live_reviewers(document, "targeted-refuter", "gpt")
+    ] == ["glm"]
+    assert [item.reviewer_id for item in live_reviewers(document, "initial", "gpt")] == [
         "claude-opus",
         "gemini",
         "grok",
     ]
-    assert qualification.live_specialists(document) == ()
+    assert qualification.live_specialists(document, "gpt") == ()
 
 
 def test_a_qualified_specialist_resolves_after_every_critic(tmp_path: Path) -> None:
@@ -1706,6 +1765,100 @@ def test_a_qualified_specialist_resolves_after_every_critic(tmp_path: Path) -> N
     assert tuple(configured["tools"]) == READ_ONLY_REPOSITORY_TOOLS
 
 
+@pytest.mark.parametrize(
+    ("lead_family", "critics", "specialists", "conditional_standing"),
+    (
+        (
+            "gpt",
+            ["claude-opus", "gemini", "grok"],
+            ["daybreak-blue"],
+            (qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE),
+        ),
+        (
+            "claude",
+            ["daybreak-blue", "gemini", "grok"],
+            ["claude-opus"],
+            (
+                qualification.SAME_LINEAGE_BLIND_SAMPLE,
+                qualification.SUPPLEMENTAL_EVIDENCE,
+            ),
+        ),
+        (
+            "gemini",
+            ["claude-opus", "daybreak-blue", "grok"],
+            [],
+            (qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE),
+        ),
+        (
+            "grok",
+            ["claude-opus", "daybreak-blue", "gemini"],
+            [],
+            (qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE),
+        ),
+    ),
+)
+def test_lead_family_matrix_derives_roster_and_standing(
+    tmp_path: Path,
+    lead_family: str,
+    critics: list[str],
+    specialists: list[str],
+    conditional_standing: tuple[str, str],
+) -> None:
+    document = _matrix_panel()
+    manifest = _resolve(
+        tmp_path,
+        _ready_record(tmp_path / lead_family),
+        document,
+        lead_family=lead_family,
+    )
+
+    assert manifest["leadFamily"] == lead_family
+    assert _reviewer_ids(manifest) == [*critics, *specialists, "claude"]
+    primary_rows = manifest["selected"][:3]
+    assert [entry["reviewer_id"] for entry in primary_rows] == critics
+    assert {entry["model_family"] for entry in primary_rows}.isdisjoint({lead_family})
+    assert all(
+        (
+            entry["selectionClass"],
+            entry["role"],
+            entry["independence_class"],
+            entry["authority"],
+        )
+        == (
+            "unconditional",
+            "primary_critic",
+            qualification.CROSS_FAMILY,
+            qualification.INDEPENDENT_EVIDENCE,
+        )
+        for entry in primary_rows
+    )
+
+    specialist_rows = manifest["selected"][3 : 3 + len(specialists)]
+    assert [entry["reviewer_id"] for entry in specialist_rows] == specialists
+    assert all(
+        (
+            entry["selectionClass"],
+            entry["role"],
+            entry["independence_class"],
+            entry["authority"],
+        )
+        == (
+            "specialist",
+            qualification.SPECIALIST_ROLE,
+            qualification.SAME_LINEAGE_BLIND_SAMPLE,
+            qualification.SUPPLEMENTAL_EVIDENCE,
+        )
+        for entry in specialist_rows
+    )
+
+    conditional = manifest["selected"][-1]
+    assert conditional["reviewer_id"] == "claude"
+    assert conditional["selectionClass"] == "conditional"
+    assert (conditional["independence_class"], conditional["authority"]) == (
+        conditional_standing
+    )
+
+
 def test_every_selected_member_uses_native_task_dispatch(tmp_path: Path) -> None:
     """Critics and same-lineage specialists share one resolved transport."""
 
@@ -1726,7 +1879,7 @@ def test_a_held_specialist_validates_and_never_enters_live_selection(tmp_path: P
     """Prewiring is not activation: readable, resolvable against, and absent."""
     document = _panel(specialist_group="disabled")
     validate_qualification(document)
-    assert qualification.live_specialists(document) == ()
+    assert qualification.live_specialists(document, "gpt") == ()
     manifest = _resolve(tmp_path, _ready_record(tmp_path / "held"), document)
     assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "claude"]
 
@@ -1739,13 +1892,13 @@ def test_a_held_specialist_needs_no_earned_gate_keys() -> None:
     for key in ("providerCanary", "schemaValid", "readOnlyBoundary"):
         held.pop(key)
     validate_qualification(document)
-    assert qualification.live_specialists(document) == ()
+    assert qualification.live_specialists(document, "gpt") == ()
 
 
 def test_specialists_cannot_stand_in_for_the_independent_critic_floor(tmp_path: Path) -> None:
     """A council of blind samples of the lead's own lineage is not a council."""
     document = _panel(False, specialist_group="initialSpecialists")
-    document["liveDispatch"]["initialCritics"] = []
+    document["liveDispatch"]["byLeadFamily"]["gpt"]["initialCritics"] = []
     for reviewer_id in ("claude-opus", "gemini", "grok"):
         document["reviewers"].pop(reviewer_id)
     with pytest.raises(QualificationError, match="selects no independent critic"):
@@ -1798,6 +1951,7 @@ def test_manifest_binds_the_record_packet_and_subject_digests(tmp_path: Path) ->
     packet_path = (tmp_path / "packet.md").resolve()
     assert manifest["schemaVersion"] == qualification.MANIFEST_SCHEMA_VERSION
     assert manifest["panelId"] == LIVE_PANEL_ID
+    assert manifest["leadFamily"] == "gpt"
     assert manifest["reviewRecordPath"] == str(record_path)
     assert manifest["reviewRecordSha256"] == _sha256(record_path)
     assert manifest["subjectDigest"] == proof_subject_digest(record)
@@ -1849,6 +2003,8 @@ def test_resolver_cli_persists_exactly_the_manifest_it_prints(tmp_path: Path, ca
     out = tmp_path / "selection" / "panel-selection.json"
     argv = [
         "initial",
+        "--lead-family",
+        "gpt",
         "--record",
         str(record_path),
         "--packet",
@@ -1915,6 +2071,8 @@ def test_resolver_cli_refuses_a_session_local_manifest(tmp_path: Path) -> None:
         qualification.main(
             [
                 "initial",
+                "--lead-family",
+                "gpt",
                 "--record",
                 str(record_path),
                 "--packet",

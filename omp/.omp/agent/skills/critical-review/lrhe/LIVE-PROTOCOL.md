@@ -12,45 +12,49 @@ in this directory and the JSON schemas beside them are authoritative.
 
 ## Live roster and provider authorization
 
-Live reviewer membership and roles are configuration, not prose:
+Live reviewer membership and standing are configuration plus lead lineage, not
+reviewer prose:
 
 - `skill://critical-review/qualification.yml` `liveDispatch` is the sole
   authoritative live panel definition;
-- `lrhe/qualification.py` is the sole executable resolver for that definition,
-  and it owns roster choice: it reads the frozen record and the immutable packet
-  and emits the selection manifest the dispatcher consumes verbatim;
+- `lrhe/qualification.py` is the sole executable resolver for that definition.
+  The caller must supply the accountable main session's exact `model_family`;
+  the resolver selects that `byLeadFamily` profile and emits the selection
+  manifest the dispatcher consumes verbatim;
 - a reviewer's identity is its `reviewers` key, its `reviewer_id`. That is the
   only join key for manifests, dispatch, results, receipts, and ledger rows.
   `model_family` and `correlation_group` describe which model answers for a lane,
   and two reviewer ids may deliberately share one lineage — so never join, dedupe,
   or substitute on the family;
-- `leadFamily` records the accountable GPT lead's lineage. No reviewer in
-  `initialCritics`, `conditionalCritics`, or `targetedRefuters` may share it, and
-  no two `initialCritics` may share a `model_family` with each other;
-- `initialCritics` are unconditional: they run on every full council and they are
-  the only members that satisfy the independent critic floor;
-- `initialSpecialists` are additive and always on once qualified. A specialist is
-  a blind sample of a lineage the panel already carries, so its `authority` is
-  `supplemental_evidence`: it resolves after every critic, it never replaces or
-  falls back to another member, and a council without an independent critic is
-  never rescued by one;
-- `conditionalCritics` are additive and record-selected. A conditional critic
-  dispatches only when the frozen record and packet satisfy its named eligibility
-  policy. It never replaces another member, never falls back to another lane,
-  and its absence never shrinks the unconditional council;
+- manifest `leadFamily` records the supplied accountable lead lineage. Every
+  `initialCritic` and targeted refuter is cross-family, and no two
+  `initialCritics` in one profile may share a `model_family`;
+- `initialCritics` are unconditional for the selected profile and are the three
+  members that satisfy the independent critic floor;
+- `initialSpecialists` are additive blind samples of the lead's own lineage.
+  Their standing is `same_lineage_blind_sample` / `supplemental_evidence`: they
+  resolve after every critic, never replace or fall back to another member, and
+  never satisfy the independent floor;
+- `conditionalCritics` are additive and record-selected. Eligibility and
+  standing are separate: an eligible cross-family conditional carries
+  `independent_evidence`; an eligible same-family conditional carries
+  `supplemental_evidence`. Its absence never shrinks the unconditional council;
+- role, `independence_class`, and `authority` are derived from lead family,
+  reviewer family, and the selected profile group. Reviewer entries and prompts
+  cannot declare or promote their own standing;
 - `initialCritics`, `initialSpecialists`, `conditionalCritics`, and
   `targetedRefuters` are distinct dispatch roles;
 - `evaluationOnly` and `disabled` lanes, and every experiment in
   `lrhe/panels.yaml`, never authorize live review dispatch. A lane in `disabled`
-  may be fully described — role, lineage, transport, lens, agent, model — and is
+  may be fully described by lineage, transport, lens, agent, and model and is
   still not on the council. Being representable is not being selected.
 
 Before dispatch, in addition to the hosted-material floor in `SKILL.md`:
 
-1. Read `skill://critical-review/qualification.yml`. A reviewer is enabled only when its `reviewer_id` is in the required `liveDispatch` role, its reviewer entry says `dispatchEnabled: true`, its canary and read-only gates pass, its exact model selector still resolves, and the packet authorizes its provider. A conditional critic additionally needs a fresh passed receipt for the exact scope being requested; a scope recorded `ineligible` is an explicit supported boundary, not a failure to work around.
+1. Read `skill://critical-review/qualification.yml`. A reviewer is enabled only when its `reviewer_id` is in the selected `byLeadFamily` profile or required global group, its reviewer entry says `dispatchEnabled: true`, its canary and read-only gates pass, its exact model selector still resolves, and the packet authorizes its provider. A conditional critic additionally needs a fresh passed receipt for the exact scope being requested; a scope recorded `ineligible` is an explicit supported boundary, not a failure to work around.
 2. Authorize by `access_profile`, not by `provider_route`. Several lanes with different entitlements share one route, so route-level permission proves nothing about a given lane. A member whose `access_profile` is not authorized is `missing`. The packet carries the two grants separately and the resolver matches both exactly: `provider_data_allowlist` must contain the reviewer's `data_allowlist_key`, the vendor-rights token (`anthropic`, `google`, `xai`, `opencode`, `openai`), and `reviewer_access_profile_allowlist` must contain its exact `access_profile`. A missing grant on an unconditional critic or an always-on specialist fails the whole resolution — neither has a not-selected state, so dropping one would silently shrink a council; a conditional critic is skipped with `provider-data-rights-not-authorized` or `access-profile-not-authorized` recorded. In particular, `daybreak-blue` shares the native `openai-codex` route with ordinary GPT lanes and requires both `openai` vendor authorization and explicit `daybreak-blue` access-profile authorization. OMP may rotate among sibling Codex credentials when one account returns a TAC policy denial; credential selection is transport behavior, not a substitute for either packet grant, and authorization for `daybreak-blue` never implies authorization for another lane.
 
-A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is `missing`, never `approved`. Do not substitute another GPT model for an unavailable external lane. A conditional critic the resolver did not select is `not_selected/ineligible` — it is neither `missing` nor a failed member, and it never becomes a reason to re-run another reviewer. A specialist that fails is `missing` like any member, and because its authority is supplemental it never blocks the council and never earns a retry that an independent critic would not get.
+A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is `missing`, never `approved`. Do not substitute another model for an unavailable lane. A conditional critic the resolver did not select is `not_selected/ineligible` — neither `missing` nor a failed member. Any selected row with `supplemental_evidence` remains additive: it cannot rescue the independent floor, break a disagreement, or earn a retry that an independent critic would not get.
 
 ## Internal resource compatibility
 
@@ -322,7 +326,7 @@ Anything omitted from that inline evidence must be reported as unresolved, never
 reconstructed from naming conventions. Compute any displayed summary from the
 record; never maintain a second evidence count.
 
-## Round one: independent concurrent critics
+## Round one: lead-relative concurrent reviewers
 
 Resolve the panel immediately before dispatch. The resolver reads the frozen
 record and the immutable packet, verifies that the packet names exactly that
@@ -330,6 +334,7 @@ record path and digest, and writes one durable selection manifest:
 
 ```bash
 ./lrhe/qualification.py initial \
+  --lead-family <gpt|claude|gemini|grok> \
   --record review-record.json \
   --packet packet.md \
   --out ~/.omp/agent/critical-review/<review-id>/panel-selection.json
@@ -341,8 +346,10 @@ refuses a session-local output path, and refuses to answer at all unless
 `lrhe/review_sequence.py` returns `full-council` for that record. The manifest
 binds the absolute record path, the record SHA-256, the proof-subject digest,
 the packet path and SHA-256, the exact qualification authority path and digest,
-and the resolver's own `qualificationPath` and `qualificationSha256`. A changed
-record, packet, authority, or resolver no longer matches the roster it produced.
+and the resolver's own `qualificationPath` and `qualificationSha256`. It also
+binds `leadFamily`, the profile input that derived every row's standing. A
+changed lead family, record, packet, authority, or resolver no longer matches
+the roster it produced.
 The manifest is file- and directory-synced, appears atomically, and lands
 read-only; the dispatcher never needs to `chmod` it or accept partial bytes.
 
@@ -353,8 +360,12 @@ re-derive membership from prose or from `qualification.yml` by hand. Join every
 row by `reviewer_id`; `model_family` is descriptive and two rows may share it.
 Each entry's `selectionClass` says whether the member is `unconditional`,
 `specialist`, or `conditional`, and its `authority` says what its result is worth
-— `supplemental_evidence` never counts toward the independent critic floor. No
-class changes how a result is weighed in debate, because there is no vote. Every
+— `supplemental_evidence` never counts toward the independent critic floor.
+Conditional selection does not imply independent standing.
+Copy each row's `leadFamily`, `selectionClass`, `role`, `independence_class`, and
+`authority` into that reviewer's trusted assignment; never let the reviewer
+infer or choose them. No class changes how a result is weighed in debate,
+because there is no vote. Every
 `skipped` entry carries its sorted `reasonCodes` and is reported as
 `not_selected/ineligible` in the close report. Do not add a live
 `lrhe/dispatch.py` or another workflow framework. `workflowz` is generic guidance
@@ -550,10 +561,10 @@ adds another correlated draw. Its corpus and answer key are private
 ## One targeted refutation round
 
 Run a refutation only when the machine gate returns `action: targeted-refuter`
-for a readiness-complete `remediation` epoch. Resolve eligible
-reviewers with `./lrhe/qualification.py targeted-refuter`. That roster is
-fixed and separate: it never contains a conditional critic and takes no record or
-packet. There is at most
+for a readiness-complete `remediation` epoch. Resolve eligible reviewers with
+`./lrhe/qualification.py targeted-refuter --lead-family
+<gpt|claude|gemini|grok>`. That roster is fixed and separate: it never contains a
+conditional critic and takes no record or packet. There is at most
 one targeted refutation for the entire review sequence. Select one returned
 reviewer that did not originate the claim when possible, then launch one reviewer
 task with `schemaMode: strict`. Give it only:

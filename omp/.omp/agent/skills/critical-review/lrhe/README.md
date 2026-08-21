@@ -251,39 +251,41 @@ bookkeeping that is a retrieval hint and never evidence.
 ## Live dispatch and evaluation are separate
 
 `qualification.yml` `liveDispatch` is the sole authoritative live panel. Its
-`leadFamily` records the accountable GPT lead's lineage and is disjoint from every live
-critic, conditional critic, and refuter. Resolve the current full-council or
-targeted-refuter roster with `qualification.py`; do not duplicate reviewer ids, family
-names, or counts in public tests, packets, or policy prose. This public package never
-grants live membership.
+`byLeadFamily` map defines one profile for each supported accountable main-session
+lineage. The caller supplies that lineage through `qualification.py --lead-family`;
+the resolver fails closed when it is omitted or unsupported and records the selected
+value as manifest `leadFamily`. Resolve the current full-council or targeted-refuter
+roster with `qualification.py`; this public package never grants live membership.
 
-A reviewer is not a model lineage. The `reviewers` mapping key is the `reviewer_id`, and
-that is the only join key a manifest, a dispatcher, or a finding ledger uses;
-`model_family` and `correlation_group` say which model answers for that lane. The two
-are separate because two reviewer ids may deliberately share one lineage, and a manifest
-that joined on the family would silently merge them into one opinion. `initialCritics`
-are therefore checked for mutually distinct `model_family` values as well as for
-disjointness from `leadFamily`: two samples of one lineage are one opinion however the
-lanes are named.
+A reviewer is not a model lineage. The `reviewers` mapping key is the `reviewer_id`,
+and that is the only join key a manifest, dispatcher, or finding ledger uses.
+`model_family` and `correlation_group` say which model answers for that lane. Two
+reviewer ids may deliberately share one lineage, so joining on family would silently
+merge distinct configured lanes.
 
-Membership is private; scope, independence, and authority are public. `initialCritics`
-are unconditional and run on every full council, and they alone satisfy the independent
-critic floor. `initialSpecialists` are additive and always on once qualified, but a
-specialist is a `same_lineage_blind_sample` — it duplicates a lineage the panel already
-carries — so its authority is `supplemental_evidence`, it resolves after every critic in
-the same `selected` array, and a council with no independent critic is never rescued by
-one. It is exempt from the cross-family rule precisely because sharing a lineage is what
-it is for. `conditionalCritics` are additive and record-selected: the resolver admits one
-only when the frozen record and its packet satisfy the eligibility its policy pins in
-`qualification.py`. That split is the point of the design. A private edit can retire a
-conditional critic or move it back to `disabled`, but it cannot widen one into security
-review, because the allowed modes, the allowed risk domains, the required
-`proof_classes.authorization` status, the deny-path rule, and the cohort promotion gates
-all live in public code and are checked against the private file rather than read from
-it. Nor can a private edit promote a blind sample into independent evidence:
-`independence_class` and `authority` are pinned per role in public code and the private
-file must agree with them. Neither additive role ever replaces a member, falls back to
-another lane, or shrinks the council when it is absent.
+Standing is lead-relative rather than reviewer-intrinsic. Each selected profile keeps
+three `initialCritics` whose `model_family` values are mutually distinct and disjoint
+from `leadFamily`; those unconditional rows satisfy the independent critic floor.
+`initialSpecialists` are additive blind samples of the lead's own lineage and resolve
+as `same_lineage_blind_sample` / `supplemental_evidence`. They never rescue the floor,
+replace another member, or break a disagreement.
+
+`conditionalCritics` are additive and record-selected. Eligibility and evidentiary
+standing are separate: the resolver admits one only when the frozen record and packet
+satisfy the policy pinned in `qualification.py`, then derives its standing from the
+lead/reviewer family relationship. A cross-family conditional carries
+`independent_evidence`; a same-family conditional remains
+`same_lineage_blind_sample` / `supplemental_evidence`. Thus a Claude-led Fable result
+can preserve its packet-eligible architecture lens without being misrepresented as an
+independent family. The allowed modes, risk domains, authorization proof status,
+deny-path rule, and cohort promotion gates remain public and executable.
+
+Reviewer entries carry identity, transport, qualification, and capability evidence;
+they do not declare `dispatchRole`, `independence_class`, or `authority`. The resolver
+derives those fields from `(lead_family, reviewer_family, selected_role)` and writes
+them into every manifest row, while the manifest schema permits only coherent
+independent or supplemental pairs. Reviewer prompts receive those resolved values and
+cannot self-promote.
 
 How a member is executed is resolved rather than inferred from its id. Every live
 row carries `execution_mode: task_agent` together with the exact named agent and
@@ -292,6 +294,13 @@ specialists, and refuters. The agent definition owns thinking level, read-only
 tools, output schema, and reviewer charter. OMP owns provider credential
 selection and sibling-account rotation; the council does not implement a second
 OAuth router.
+
+Agent names are stable lane identifiers, not model-version aliases. Multiple
+qualified lanes in one family use durable variant names such as
+`review-claude-opus` and `review-claude-fable`; a transient release such as
+Grok 4.6 remains in the exact `model` selector, active override, qualification
+receipt, and emitted manifest. This avoids identity churn on routine model
+upgrades while keeping the served version auditable at every dispatch.
 
 `access_profile` remains separate from `provider_route`: several entitlement
 lanes can share one native route, so authorization for one profile never implies
@@ -309,20 +318,22 @@ Conflating experiment membership with live dispatch turns evaluation lanes into
 unapproved reviewers and makes independent roles look like votes. `panels.yaml`
 therefore owns experiments only; `qualification.yml` owns live dispatch.
 
-`qualification.py` fails closed unless schema version 7, the pinned panel id, role
-membership, dispatch/evaluation flags, canary results, read-only proof, agents, and
-selectors are internally consistent. A conditional critic proves the common
-schema/read-only gates and one `passed` scope with a fresh receipt, per scope rather
-than once globally; a scope recorded `ineligible` must keep its boundary evidence, so
-turning a refusal into a pass means deleting the evidence rather than editing a status.
-`targeted-refuter` returns only the separately configured refutation pool and never a
-conditional critic.
+`qualification.py` fails closed unless schema version 8, the pinned panel id,
+lead-family profiles, dispatch/evaluation flags, canary results, read-only proof,
+agents, and selectors are internally consistent. Each profile rejects a same-family
+primary critic, a cross-family specialist, duplicate primary lineages, duplicate
+memberships, and an unavailable independent floor. A conditional critic proves the
+common schema/read-only gates and one `passed` scope with a fresh receipt, per scope
+rather than once globally; a scope recorded `ineligible` must keep its boundary
+evidence. `targeted-refuter` returns only the separately configured refutation pool and
+never a conditional critic.
 
 `initial` is the full-council resolution, not a record mode: it resolves any record the
 gate answers `full-council` for, which is `design`, `initial`, or `material-redesign`.
-It requires `--record`, `--packet`, and a durable `--out`, reuses `review_sequence.py`
-for readiness rather than reimplementing a weaker parser, verifies that the packet names
-exactly that record path and digest, and writes one manifest validated by
+It requires `--lead-family`, `--record`, `--packet`, and a durable `--out`, reuses
+`review_sequence.py` for readiness rather than reimplementing a weaker parser, verifies
+that the packet names exactly that record path and digest, and writes one manifest
+validated by
 `panel-selection.schema.json`. It refuses to overwrite an existing manifest and refuses
 a session-local output path, for the same reason the epoch tool does: a roster that
 lives only in a session directory cannot be re-read after the session ends, and one that
@@ -331,19 +342,17 @@ file-synced, hard-linked into place at mode `0444`, and directory-synced before
 publication returns. The roster therefore appears whole or not at all, lands
 read-only, and survives an acknowledged publication.
 
-Three parts of that manifest go beyond the implementation packet's recommended
-shape, deliberately. `packetPath`/`packetSha256` bind the packet bytes as well as
-the record bytes, which closes the window in which a resolved packet is edited
-between resolution and dispatch; the packet's own §4.4 makes a record/packet
-digest mismatch fail closed, and binding only the record would leave that check
-with nothing to compare against later.
-`qualificationPath`/`qualificationSha256` record the fixed resolver path and the
-digest of the module that produced the roster. `authorityPath`/`authoritySha256`
-separately bind the exact private qualification bytes that were parsed to choose
-the roster. The former is deterministic resolver provenance; the latter is the
-load-bearing roster input. The `reasonCodes` vocabulary is a closed enum, so a
-new selection or skip reason costs a schema change — the same argument
-`item.schema.json` makes above.
+Four manifest bindings go beyond the implementation packet's recommended shape,
+deliberately. `leadFamily` binds the accountable main-session lineage that selected
+the profile and derived every row's standing. `packetPath`/`packetSha256` bind the
+packet bytes as well as the record bytes, closing the window in which a resolved
+packet is edited between resolution and dispatch. `qualificationPath` and
+`qualificationSha256` record the fixed resolver path and digest of the module that
+produced the roster. `authorityPath`/`authoritySha256` separately bind the exact
+private qualification bytes parsed to choose it. The resolver provenance and roster
+authority are distinct, and changing any bound input invalidates the manifest. The
+`reasonCodes` vocabulary is closed, so a new selection or skip reason costs a schema
+change.
 
 Authorization is two grants and never one. A reviewer's `data_allowlist_key` is
 the vendor-rights token its material may reach (`anthropic`, `google`, `xai`,
@@ -371,18 +380,18 @@ testable on its own.
 ### Daybreak native Task lane
 
 Daybreak Blue is an entitlement alias, not another generic Sol invocation. Its
-thin named agent requests
-`openai-codex/gpt-daybreak-blue-latest:max` and fixes the read-only tools,
-structured finding schema, and supplemental security charter. The accountable
-lead remains the GPT lineage, so this second blind sample is supplemental
-evidence and never an independent critic, vote, floor member, tie-breaker, or
-refuter.
+thin named agent requests `openai-codex/gpt-daybreak-blue-latest:max` and fixes
+the read-only tools and structured finding schema. Its evidentiary standing comes
+from the selected lead profile: for a GPT lead it is a same-lineage supplemental
+specialist; for Claude, Gemini, or Grok leads it is a cross-family independent
+primary critic. The agent receives that resolved standing and stops on a malformed
+combination rather than declaring its own authority.
 
-OMP 17.2.15 preserves the Responses Lite
-`reasoning.context=all_turns` requirement for the opaque alias. On 2026-08-12
-the lane passed all three authorized response probes and one exact repository
-trace at Max with no model fallback or forbidden tool use. It is live under
-`initialSpecialists`; that changes availability, not its supplemental authority.
+OMP 17.2.15 preserves the Responses Lite `reasoning.context=all_turns`
+requirement for the opaque alias. On 2026-08-12 the lane passed all three
+authorized response probes and one exact repository trace at Max with no model
+fallback or forbidden tool use. Qualification establishes lane capability;
+profile selection establishes standing.
 
 The Codex catalog advertises distinct `xhigh` and `max` tiers for this alias.
 Current OMP Codex discovery reduces that metadata to a reasoning boolean, then
@@ -576,7 +585,7 @@ is a `KeyError` at build time rather than a green field.
 
 ### The lens was recorded on every run and transmitted on none
 
-It lived as one hardcoded `Primary lens:` line inside `review-claude`,
+It lived as one hardcoded `Primary lens:` line inside `review-claude-fable`,
 `review-gemini` and `review-grok`, and not at all in the four floor agents. Family
 determined agent determined lens, one to one — while `lens_sets()` counterbalances
 families over lenses, arm D is documented as the only arm where lens varies, and

@@ -68,7 +68,7 @@ floorArm: C
 # The lens assignment, as text the runner transmits.
 #
 # It used to live in the agent definitions -- one hardcoded `Primary lens:` line
-# each in review-claude, review-gemini and review-grok, and none at all in the four
+# each in review-claude-fable, review-gemini and review-grok, and none at all in the four
 # floor agents. Family therefore determined agent determined lens, one to one,
 # while `lens_sets()` counterbalanced families over lenses, arm D was documented as
 # the only arm where lens varies, and `power_lrhe.py` tested a family x lens

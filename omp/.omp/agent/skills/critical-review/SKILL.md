@@ -5,7 +5,7 @@ description: Run independent cross-family review for production-grade, materiall
 
 # Critical Review Council
 
-Run an opt-in, evidence-driven council. GPT remains the accountable lead and integrator. Critics inspect independently; they do not vote, rewrite the solution, edit the repository, or see one another's first-round output.
+Run an opt-in, evidence-driven council. The active main-session model remains the accountable lead and integrator; the resolver selects a lead-family profile before assigning reviewer standing. Critics inspect independently; they do not vote, rewrite the solution, edit the repository, or see one another's first-round output.
 
 This document is the whole admission decision. Most invocations end inside it: choose the assurance depth, take direct lead verification or one focused reviewer, and stop. Full-council mechanics are not here and are not needed to decide against a council.
 
@@ -35,13 +35,24 @@ If the full-council criteria are not met, stop before review ceremony. Complete 
 
 #### Focused review routing
 
-For the single focused reviewer outside this council:
+For the single focused reviewer outside this council, first identify the active
+main-session `model_family`:
 
-- security, credentials, authorization, money or assets, and trust boundaries default to `review-claude-opus` under CVP;
-- non-security architecture or operational correctness defaults to `review-claude`;
-- migration, production, compatibility, or cross-system behavior uses `review-gemini` or `review-grok` when its lens better matches the concrete question or the default lane is unavailable or unauthorized.
+- security, credentials, authorization, money or assets, and trust boundaries use
+  `review-daybreak-blue` for a Claude lead and `review-claude-opus` under CVP for
+  GPT, Gemini, or Grok leads;
+- non-security architecture, operational correctness, migration, production,
+  compatibility, or cross-system behavior uses `review-gemini` or `review-grok`
+  when its lens matches and its family differs from the lead;
+- `review-claude-fable` remains resolver-qualified conditional council evidence, not an
+  unqualified focused-review shortcut.
 
-Use exactly one focused reviewer; do not escalate to multiple reviewers by fallback shopping. `review-daybreak-blue` remains supplemental only. This routing neither selects nor modifies a full council; full-council membership remains resolver-owned.
+Use exactly one focused reviewer; do not escalate to multiple reviewers by
+fallback shopping. The focused reviewer must be cross-family: do not use
+Daybreak for a GPT lead, Opus or Fable for a Claude lead, Gemini for a Gemini
+lead, or Grok for a Grok lead. Standing is lead-relative, not reviewer-intrinsic.
+This routing neither selects nor modifies a full council; full-council membership
+remains resolver-owned.
 
 When a full council is justified, encode the same brief using the existing packet fields rather than adding keys: `goal` carries outcome and class; `requirements` carries named assets, caps, and result-validity requirements; `non_goals` carries excluded adversaries and reuse; `trust_boundaries` carries credible actors and boundaries; `rollback_contract` carries containment, recovery, and residual effects; and `rejected_alternatives_and_reasons` records disproportionate mitigations rejected before review.
 
@@ -111,6 +122,18 @@ For `repository` delivery: review the immutable packet at <packet path> and only
 For `inline` delivery: review only the complete immutable packet and numbered source evidence pasted below; do not inspect any path.
 Do not modify files or inspect peer output.
 
+# Resolved standing
+`subject_commit`: <full frozen commit>
+`lead_family`: <gpt|claude|gemini|grok>
+`selectionClass`: <focused or exact manifest value>
+`role`: <primary_critic|security_specialist|conditional_critic|targeted_refuter>
+`independence_class`: <cross_family|same_lineage_blind_sample>
+`authority`: <independent_evidence|supplemental_evidence>
+
+For a full council, copy these values verbatim from the immutable selection
+manifest and frozen record. For a focused review, derive them from the focused
+routing rule above. Never ask the reviewer to infer or choose its own standing.
+
 # Assurance scope
 The packet's class, outcome, named assets and invariants, credible adversary, caps, recovery contract, result-validity conditions, and non-goals are binding. Do not promote the class, invent future consumers, expand the adversary model, or turn defense in depth into a requirement. Assess impact after current controls. Complexity, delivery delay, persistent state, maintenance, and newly introduced failure modes are adverse effects. Return no finding unless a falsifiable in-scope failure leaves meaningful residual impact; zero findings is valid.
 
@@ -131,7 +154,7 @@ Every evidence item must identify the protected asset or invariant and the resid
 
 After an initial council, the lead directly verifies and dispositions every finding. Implement only confirmed, in-scope P0/P1 rows whose final disposition is `mitigate`, plus any lower-severity item explicitly selected by the human owner. `accept`, `defer`, and `reject` rows create no remediation implementation. Batch the complete selected mitigation set into one remediation epoch; never create one epoch per comment or fix iteration. One still-disputed P0/P1 may reach one targeted refuter; otherwise the lead records ledger dispositions and closes the sequence.
 
-There is no majority verdict. The GPT lead owns the final evidence-based decision and coherent revision.
+There is no majority verdict. The accountable main-session lead owns the final evidence-based decision and coherent revision.
 
 Merge duplicates only when they share a root cause. Preserve every source ID on the merged row. Verify each cited source location before promoting a claim. Resolve important claims with the narrowest decisive evidence: a reproducer, failing test, call graph, interface implementation inventory, policy counterexample, migration rehearsal, rollback simulation, demonstrated authorization path, or concrete race schedule.
 

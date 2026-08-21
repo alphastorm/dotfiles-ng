@@ -1,51 +1,39 @@
 #!/usr/bin/env python3
-"""Fail-closed reader for critical-review qualification and live panel roles.
+"""Fail-closed reader for lead-relative critical-review qualification.
 
-Schema v7 carries two additive dispatch roles beside the unconditional critics.
-A conditional critic dispatches only when the frozen record and its immutable
-packet fall inside the eligibility its policy pins here. A security specialist is
-always on once qualified, but it is a blind sample of a lineage already on the
-panel rather than a fresh one, so its evidence is supplemental and it can never
-stand in for an independent critic. Neither role ever replaces, substitutes for,
-or falls back to another reviewer, and a conditional critic that is skipped is
-recorded as skipped while the council proceeds without it.
+Schema v8 selects one live panel profile from the accountable main session's
+explicit `model_family`. `initialCritics` are three mutually distinct lineages,
+all cross-family to that lead. `initialSpecialists` are same-family blind samples
+with supplemental authority. A conditional critic dispatches only when the frozen
+record and immutable packet satisfy its pinned eligibility; its selection remains
+conditional while its standing is independent when cross-family and supplemental
+when same-family. Selection mechanism and evidentiary authority are separate.
 
 Reviewer identity is not model lineage. The `reviewers` mapping key is the
-`reviewer_id`, and that is the only join key a manifest, a dispatcher, or a
-finding ledger uses. `model_family` and `correlation_group` describe which model
-produced an opinion, and two reviewer ids may share one lineage on purpose --
-which is exactly the fact `same_lineage_blind_sample` records. Joining on the
-family instead would silently merge two reviewers whenever that happens.
+`reviewer_id`, the only join key for manifests, dispatch, and findings.
+`model_family` and `correlation_group` describe which model produced an opinion.
+Reviewer entries carry no role or standing: this resolver derives `role`,
+`independence_class`, and `authority` from lead family, reviewer family, and the
+selected profile group.
 
-Roster choice belongs to this resolver, not to its caller. `initial` refuses to
-answer without a frozen record, its packet, and a durable manifest path. It
-reuses the existing strict record validator and full readiness gate, binds the
-absolute record path, record digest, proof-subject digest, packet path, packet
-digest, exact qualification-authority bytes, and this resolver's own path and
-digest into one selection manifest, writes that manifest atomically and
-read-only exactly once, and prints the same bytes it wrote. A caller that
-filters, reorders, retypes, or supplements that roster is dispatching a panel
-nobody resolved. `initial` is the full-council command, not a record mode: it
-resolves any record the gate answers `full-council` for, which is `design`,
-`initial`, or `material-redesign`.
+Roster choice belongs to this resolver, not its caller. `initial` requires
+`--lead-family`, a frozen record, its packet, and a durable manifest path. It
+reuses the strict record validator and readiness gate, binds the lead family,
+record, packet, qualification authority, and resolver bytes into one immutable
+selection manifest, writes it atomically and read-only exactly once, and prints
+the same bytes. A caller that filters, reorders, retypes, or supplements that
+roster is dispatching a panel nobody resolved.
 
 Authorization is two grants, never one. `provider_data_allowlist` carries the
 vendor data-rights grant a reviewer's `data_allowlist_key` must appear in, and
 `reviewer_access_profile_allowlist` carries the entitlement-lane grant its
-`access_profile` must appear in. A lane that cannot be skipped -- an unconditional
-critic or an always-on specialist -- fails the whole resolution when either grant
-is missing. A conditional critic is skipped with the reason
-recorded, because it already has a not-selected state and its absence never
-shrinks the council.
+`access_profile` must appear in. A lane without a not-selected state fails the
+whole resolution when either grant is missing. A conditional critic is skipped
+with the reason recorded.
 
-`targeted-refuter` stays a separate fixed roster: one cold falsification of one
-disputed claim, never a conditional critic and never a specialist.
-
-`initialSpecialists` shares the `initial` roster and the same readiness barrier
-as `initialCritics`, and resolves after them in one selected array. It is a
-separate group rather than a flag so the independent critic floor is counted on
-critics alone: a council whose only members were specialists would be a panel
-with no independent evidence in it.
+`targeted-refuter` remains a separate global roster, but it still requires the
+accountable lead family so the operation is bound to a configured profile and
+can never silently use a same-family refuter.
 """
 
 from __future__ import annotations
@@ -80,11 +68,11 @@ from review_sequence import (
     select_review_action,
 )
 
-SCHEMA_VERSION = 7
-# Pinned beside the schema version so activation is atomic: a v7 resolver and
-# v4 panel definition cannot half-agree about who is on the council.
-LIVE_PANEL_ID = "critical-review-primary-v4"
-MANIFEST_SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
+# Pinned beside the schema version so activation is atomic: a v8 resolver and
+# v5 panel definition cannot half-agree about which lead-family profile is live.
+LIVE_PANEL_ID = "critical-review-primary-v5"
+MANIFEST_SCHEMA_VERSION = 7
 DEFAULT_QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
 # The manifest records which resolver bytes produced its roster. This is
 # provenance for later audit and re-resolution, not a caller-selectable authority:
@@ -120,10 +108,10 @@ REVIEWER_IDENTITY_FIELDS = (
 # leaves no reviewer-id-specific branch for callers to invent.
 EXECUTION_MODES = ("task_agent",)
 
-# What a role is worth as evidence, pinned in public code beside the roster.
-# Membership stays private configuration; independence and authority do not. A
-# private edit can retire a lane or move one between groups, but it cannot
-# promote a same-lineage blind sample into independent cross-family evidence.
+# A reviewer has no intrinsic standing. The active lead-family profile assigns a
+# group; the selected role fixes standing except for conditional evidence, whose
+# lead/reviewer family relationship decides between independent and supplemental.
+# One qualified lane can therefore change standing without duplicating identity.
 CROSS_FAMILY = "cross_family"
 SAME_LINEAGE_BLIND_SAMPLE = "same_lineage_blind_sample"
 NO_LINEAGE_CLAIM = "not_applicable"
@@ -138,25 +126,24 @@ LIVE_ROLES: Mapping[str, tuple[str, str]] = {
     "evaluation_only": (NO_LINEAGE_CLAIM, NO_LIVE_AUTHORITY),
     DISABLED_ROLE: (NO_LINEAGE_CLAIM, NO_LIVE_AUTHORITY),
 }
+CONDITIONAL_STANDINGS = (
+    (CROSS_FAMILY, INDEPENDENT_EVIDENCE),
+    (SAME_LINEAGE_BLIND_SAMPLE, SUPPLEMENTAL_EVIDENCE),
+)
 
-# group -> (the roles that group accepts, the dispatchEnabled every member of it
-# must declare). `disabled` accepts two roles because a specialist candidate is
-# prewired with the role it will hold and is held out of live selection by its
-# group, not by a weaker declared role: qualifying it changes its group, never
-# its semantics.
-LIVE_GROUPS: Mapping[str, tuple[tuple[str, ...], bool]] = {
-    "initialCritics": (("primary_critic",), True),
-    "initialSpecialists": ((SPECIALIST_ROLE,), True),
-    "conditionalCritics": ((CONDITIONAL_ROLE,), True),
-    "targetedRefuters": (("targeted_refuter",), True),
-    "evaluationOnly": (("evaluation_only",), False),
-    "disabled": ((DISABLED_ROLE, SPECIALIST_ROLE), False),
+# group -> (derived role, required dispatchEnabled). The three profile groups are
+# selected under `byLeadFamily`; the global groups do not vary with the lead.
+LIVE_GROUPS: Mapping[str, tuple[str, bool]] = {
+    "initialCritics": ("primary_critic", True),
+    "initialSpecialists": (SPECIALIST_ROLE, True),
+    "conditionalCritics": (CONDITIONAL_ROLE, True),
+    "targetedRefuters": ("targeted_refuter", True),
+    "evaluationOnly": ("evaluation_only", False),
+    "disabled": (DISABLED_ROLE, False),
 }
-# The lanes that exist to be independent of the accountable lead. A specialist is
-# deliberately absent: it is a blind sample of a lineage already on the panel, so
-# sharing the lead's family is not a defect in that lane -- it is why its evidence
-# is supplemental and why it never satisfies the independent critic floor.
-CROSS_FAMILY_GROUPS = ("initialCritics", "conditionalCritics", "targetedRefuters")
+PROFILE_GROUPS = ("initialCritics", "initialSpecialists", "conditionalCritics")
+GLOBAL_GROUPS = ("targetedRefuters", "evaluationOnly", "disabled")
+CROSS_FAMILY_GROUPS = ("initialCritics", "targetedRefuters")
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 QUALIFICATION_FIELDS = frozenset({"common", "scopes"})
@@ -541,29 +528,21 @@ def _identity(
     reviewer_id: str,
     entry: Mapping[str, object],
 ) -> dict[str, object]:
-    """Read one reviewer's identity, lineage, and pinned evidence standing.
+    """Read one reviewer's standing-neutral identity and execution contract."""
 
-    The mapping key is the identity. Lineage metadata is required on every entry,
-    live or held, because a lane that cannot say which model answers for it cannot
-    be audited after the fact. `independence_class` and `authority` are pinned per
-    role here rather than trusted from private configuration: a private edit can
-    move a lane between groups, but it cannot upgrade what its evidence is worth.
-    Every selected lane uses native Task dispatch.
-    """
     if "profileBinding" in entry:
         raise QualificationError(
             f"reviewers.{reviewer_id}.profileBinding is no longer supported; "
             "all reviewers use native task_agent dispatch"
         )
+    for field in ("dispatchRole", "independence_class", "authority"):
+        if field in entry:
+            raise QualificationError(
+                f"reviewers.{reviewer_id}.{field} is no longer supported; "
+                "standing is derived from the selected lead-family profile group"
+            )
 
-    role = entry.get("dispatchRole")
-    if not isinstance(role, str) or role not in LIVE_ROLES:
-        raise QualificationError(
-            f"reviewers.{reviewer_id}.dispatchRole must be one of {sorted(LIVE_ROLES)}, "
-            f"got {role!r}"
-        )
-    independence_class, authority = LIVE_ROLES[role]
-    identity: dict[str, object] = {"reviewer_id": reviewer_id, "role": role}
+    identity: dict[str, object] = {"reviewer_id": reviewer_id}
     for field in REVIEWER_IDENTITY_FIELDS:
         value = entry.get(field)
         if not isinstance(value, str) or not value.strip():
@@ -581,18 +560,42 @@ def _identity(
             f"reviewers.{reviewer_id}.fallbackAllowed must not be true; a reviewer "
             "is never a fallback and may never change models"
         )
-    for field, expected in (
-        ("independence_class", independence_class),
-        ("authority", authority),
-    ):
-        declared = entry.get(field)
-        if declared != expected:
-            raise QualificationError(
-                f"reviewers.{reviewer_id}.{field} must be {expected!r} for role {role!r}, "
-                f"got {declared!r}"
-            )
-        identity[field] = expected
     return identity
+
+
+def _profiles(live: Mapping[str, object]) -> Mapping[str, Mapping[str, object]]:
+    raw_profiles = _mapping(live.get("byLeadFamily"), "liveDispatch.byLeadFamily")
+    if not raw_profiles:
+        raise QualificationError("liveDispatch.byLeadFamily must declare at least one profile")
+    profiles: dict[str, Mapping[str, object]] = {}
+    for raw_family, raw_profile in raw_profiles.items():
+        if (
+            not isinstance(raw_family, str)
+            or not raw_family.strip()
+            or raw_family != raw_family.strip()
+        ):
+            raise QualificationError("liveDispatch.byLeadFamily contains an invalid family name")
+        profile = _mapping(raw_profile, f"liveDispatch.byLeadFamily.{raw_family}")
+        if set(profile) != set(PROFILE_GROUPS):
+            raise QualificationError(
+                f"liveDispatch.byLeadFamily.{raw_family} fields must be "
+                f"{list(PROFILE_GROUPS)!r}, got {sorted(profile)}"
+            )
+        profiles[raw_family] = profile
+    return profiles
+
+
+def _profile(document: Mapping[str, object], lead_family: str) -> Mapping[str, object]:
+    if not isinstance(lead_family, str) or not lead_family.strip():
+        raise QualificationError("lead family must be a non-empty string")
+    live = _mapping(document.get("liveDispatch"), "liveDispatch")
+    profiles = _profiles(live)
+    profile = profiles.get(lead_family)
+    if profile is None:
+        raise QualificationError(
+            f"unsupported lead family {lead_family!r}; configured families are {sorted(profiles)}"
+        )
+    return profile
 
 
 def validate_qualification(document: object) -> Mapping[str, object]:
@@ -664,137 +667,118 @@ def validate_qualification(document: object) -> Mapping[str, object]:
                 )
 
     live = _mapping(root.get("liveDispatch"), "liveDispatch")
+    expected_live_fields = {"panelId", "byLeadFamily", *GLOBAL_GROUPS}
+    if set(live) != expected_live_fields:
+        raise QualificationError(
+            f"liveDispatch fields must be {sorted(expected_live_fields)}, got {sorted(live)}"
+        )
     panel_id = live.get("panelId")
     if panel_id != LIVE_PANEL_ID:
         raise QualificationError(
             f"liveDispatch.panelId must be {LIVE_PANEL_ID!r}, got {panel_id!r}"
         )
 
-    lead_family = live.get("leadFamily")
-    if not isinstance(lead_family, str) or not lead_family.strip():
-        raise QualificationError("liveDispatch.leadFamily must be a non-empty string")
-    lead_family = lead_family.strip()
+    profiles = _profiles(live)
+    profile_groups = {
+        lead_family: {
+            group: _names(
+                profile.get(group),
+                f"liveDispatch.byLeadFamily.{lead_family}.{group}",
+            )
+            for group in PROFILE_GROUPS
+        }
+        for lead_family, profile in profiles.items()
+    }
+    global_groups = {
+        group: _names(live.get(group), f"liveDispatch.{group}") for group in GLOBAL_GROUPS
+    }
 
-    reviewers = _mapping(root.get("reviewers"), "reviewers")
-    groups = {group: _names(live.get(group), f"liveDispatch.{group}") for group in LIVE_GROUPS}
+    reviewer_map = _mapping(root.get("reviewers"), "reviewers")
+    entries: dict[str, Mapping[str, object]] = {}
+    identities: dict[str, Mapping[str, object]] = {}
+    for reviewer_id, raw_entry in reviewer_map.items():
+        if (
+            not isinstance(reviewer_id, str)
+            or not reviewer_id.strip()
+            or reviewer_id != reviewer_id.strip()
+        ):
+            raise QualificationError("reviewers contains an invalid reviewer id")
+        entry = _mapping(raw_entry, f"reviewers.{reviewer_id}")
+        entries[reviewer_id] = entry
+        identities[reviewer_id] = _identity(reviewer_id, entry)
 
-    memberships: dict[str, str] = {}
-    critic_lineages: dict[str, str] = {}
-    for group, (allowed_roles, dispatch_enabled) in LIVE_GROUPS.items():
-        for reviewer_id in groups[group]:
-            if reviewer_id in memberships:
+    memberships: dict[str, set[str]] = {}
+    for lead_family, groups in profile_groups.items():
+        seen: dict[str, str] = {}
+        critic_lineages: dict[str, str] = {}
+        for group in PROFILE_GROUPS:
+            for reviewer_id in groups[group]:
+                if reviewer_id in seen:
+                    raise QualificationError(
+                        f"reviewer {reviewer_id!r} appears in both "
+                        f"liveDispatch.byLeadFamily.{lead_family}.{seen[reviewer_id]} and "
+                        f"liveDispatch.byLeadFamily.{lead_family}.{group}"
+                    )
+                seen[reviewer_id] = group
+                identity = identities.get(reviewer_id)
+                if identity is None:
+                    raise QualificationError(
+                        f"liveDispatch.byLeadFamily.{lead_family}.{group} names unknown "
+                        f"reviewer {reviewer_id!r}"
+                    )
+                memberships.setdefault(reviewer_id, set()).add(group)
+                model_family = cast(str, identity["model_family"])
+                if group in CROSS_FAMILY_GROUPS and model_family == lead_family:
+                    raise QualificationError(
+                        f"reviewers.{reviewer_id} has model_family {lead_family!r}, which is "
+                        f"the accountable lead's own lineage; "
+                        f"liveDispatch.byLeadFamily.{lead_family}.{group} must be cross-family"
+                    )
+                if group == "initialSpecialists" and model_family != lead_family:
+                    raise QualificationError(
+                        f"reviewers.{reviewer_id} has model_family {model_family!r}; "
+                        f"liveDispatch.byLeadFamily.{lead_family}.initialSpecialists must "
+                        "sample the accountable lead's own lineage"
+                    )
+                if group == "initialCritics":
+                    twin = critic_lineages.get(model_family)
+                    if twin is not None:
+                        raise QualificationError(
+                            f"reviewers.{reviewer_id} and reviewers.{twin} are both "
+                            f"initialCritics for lead family {lead_family!r} on model_family "
+                            f"{model_family!r}; two samples of one lineage are not two "
+                            "independent critics"
+                        )
+                    critic_lineages[model_family] = reviewer_id
+
+    global_memberships: dict[str, str] = {}
+    for group in GLOBAL_GROUPS:
+        for reviewer_id in global_groups[group]:
+            if reviewer_id in global_memberships:
                 raise QualificationError(
                     f"reviewer {reviewer_id!r} appears in both "
-                    f"{memberships[reviewer_id]} and {group}"
+                    f"liveDispatch.{global_memberships[reviewer_id]} and liveDispatch.{group}"
                 )
-            memberships[reviewer_id] = group
-            entry = _mapping(reviewers.get(reviewer_id), f"reviewers.{reviewer_id}")
-            identity = _identity(reviewer_id, entry)
-            role = identity["role"]
-            if role not in allowed_roles:
+            if reviewer_id in memberships:
                 raise QualificationError(
-                    f"reviewers.{reviewer_id}.dispatchRole must be one of "
-                    f"{list(allowed_roles)!r} for {group}, got {role!r}"
+                    f"reviewer {reviewer_id!r} appears in a lead-family profile and "
+                    f"liveDispatch.{group}"
                 )
-            if entry.get("dispatchEnabled") is not dispatch_enabled:
+            identity = identities.get(reviewer_id)
+            if identity is None:
                 raise QualificationError(
-                    f"reviewers.{reviewer_id}.dispatchEnabled disagrees with {group}"
+                    f"liveDispatch.{group} names unknown reviewer {reviewer_id!r}"
                 )
-            if not isinstance(entry.get("evaluationEnabled"), bool):
+            global_memberships[reviewer_id] = group
+            memberships.setdefault(reviewer_id, set()).add(group)
+            if group == "targetedRefuters" and identity["model_family"] in profiles:
                 raise QualificationError(
-                    f"reviewers.{reviewer_id}.evaluationEnabled must be boolean"
+                    f"reviewers.{reviewer_id} has model_family {identity['model_family']!r}, "
+                    "which matches a configured accountable lead; "
+                    "liveDispatch.targetedRefuters must be cross-family for every profile"
                 )
 
-            # Independence is a property of the lineage, not of the reviewer id: a
-            # lane can be named anything and still be the accountable lead's own
-            # model reviewing its own design.
-            if group in CROSS_FAMILY_GROUPS and identity["model_family"] == lead_family:
-                raise QualificationError(
-                    f"reviewers.{reviewer_id} has model_family {lead_family!r}, which is "
-                    f"the accountable lead's own lineage; liveDispatch.{group} must be "
-                    "cross-family"
-                )
-            if group == "initialCritics":
-                twin = critic_lineages.get(identity["model_family"])
-                if twin is not None:
-                    raise QualificationError(
-                        f"reviewers.{reviewer_id} and reviewers.{twin} are both "
-                        f"initialCritics on model_family {identity['model_family']!r}; two "
-                        "samples of one lineage are not two independent critics"
-                    )
-                critic_lineages[identity["model_family"]] = reviewer_id
-
-            earned = dispatch_enabled or entry.get("evaluationEnabled") is True
-            if earned:
-                # A conditional critic proves the same three things per scope
-                # instead of once globally, so the flat gate is replaced rather
-                # than skipped -- see `_scope_receipt`. A specialist proves them
-                # exactly as an unconditional critic does: same barrier, lesser
-                # authority.
-                required = (
-                    ()
-                    if role == CONDITIONAL_ROLE
-                    else (
-                        ("providerCanary", "passed"),
-                        ("schemaValid", True),
-                        ("readOnlyBoundary", "passed"),
-                    )
-                )
-                missing = [name for name, expected in required if entry.get(name) != expected]
-                if missing:
-                    raise QualificationError(
-                        f"reviewers.{reviewer_id} enabled without proven {', '.join(missing)}"
-                    )
-                for name in ("agent", "model"):
-                    value = entry.get(name)
-                    if not isinstance(value, str) or not value.strip():
-                        raise QualificationError(f"reviewers.{reviewer_id}.{name} is missing")
-
-            contract_fields = ("evidenceDelivery", "tools", "canaryReceipt")
-            present = [name for name in contract_fields if name in entry]
-            if present:
-                missing_contract = [name for name in contract_fields if name not in entry]
-                if missing_contract:
-                    raise QualificationError(
-                        f"reviewers.{reviewer_id} incomplete evidence contract: "
-                        f"missing {', '.join(missing_contract)}"
-                    )
-                evidence_delivery = entry.get("evidenceDelivery")
-                if evidence_delivery not in ("inline", "repository"):
-                    raise QualificationError(
-                        f"reviewers.{reviewer_id}.evidenceDelivery must be 'inline' or "
-                        f"'repository', got {evidence_delivery!r}"
-                    )
-                tools = _names(entry.get("tools"), f"reviewers.{reviewer_id}.tools")
-                expected_tools = () if evidence_delivery == "inline" else READ_ONLY_REPOSITORY_TOOLS
-                if tools != expected_tools:
-                    raise QualificationError(
-                        f"reviewers.{reviewer_id}.tools must be {list(expected_tools)!r} for "
-                        f"{evidence_delivery} delivery, got {list(tools)!r}"
-                    )
-                receipt = entry.get("canaryReceipt")
-                if not isinstance(receipt, str) or not receipt.strip():
-                    raise QualificationError(
-                        f"reviewers.{reviewer_id}.canaryReceipt must be a non-empty "
-                        "relative path"
-                    )
-                if Path(receipt).is_absolute() or ".." in Path(receipt).parts:
-                    raise QualificationError(
-                        f"reviewers.{reviewer_id}.canaryReceipt must stay under the "
-                        "skill directory"
-                    )
-
-            if role == CONDITIONAL_ROLE:
-                _scope_receipt(reviewer_id, entry, _eligibility(reviewer_id, entry))
-            else:
-                for stray in ("eligibility", "qualification"):
-                    if stray in entry:
-                        raise QualificationError(
-                            f"reviewers.{reviewer_id} declares {stray} without the "
-                            f"{CONDITIONAL_ROLE!r} role; scope and role activate together"
-                        )
-
-    reviewer_names = set(reviewers.keys())
+    reviewer_names = set(entries)
     assigned_names = set(memberships)
     if reviewer_names != assigned_names:
         missing = sorted(reviewer_names - assigned_names)
@@ -802,6 +786,87 @@ def validate_qualification(document: object) -> Mapping[str, object]:
         raise QualificationError(
             f"liveDispatch membership mismatch: unassigned={missing}, unknown={unknown}"
         )
+
+    for reviewer_id, entry in entries.items():
+        groups = memberships[reviewer_id]
+        roles = {LIVE_GROUPS[group][0] for group in groups}
+        if CONDITIONAL_ROLE in roles and roles != {CONDITIONAL_ROLE}:
+            raise QualificationError(
+                f"reviewers.{reviewer_id} is conditional in one profile and carries "
+                "another live role; conditional eligibility cannot change by lead family"
+            )
+        expected_dispatch = any(LIVE_GROUPS[group][1] for group in groups)
+        if entry.get("dispatchEnabled") is not expected_dispatch:
+            raise QualificationError(
+                f"reviewers.{reviewer_id}.dispatchEnabled disagrees with liveDispatch membership"
+            )
+        if not isinstance(entry.get("evaluationEnabled"), bool):
+            raise QualificationError(
+                f"reviewers.{reviewer_id}.evaluationEnabled must be boolean"
+            )
+
+        earned = expected_dispatch or entry.get("evaluationEnabled") is True
+        if earned:
+            required = (
+                ()
+                if roles == {CONDITIONAL_ROLE}
+                else (
+                    ("providerCanary", "passed"),
+                    ("schemaValid", True),
+                    ("readOnlyBoundary", "passed"),
+                )
+            )
+            missing = [name for name, expected in required if entry.get(name) != expected]
+            if missing:
+                raise QualificationError(
+                    f"reviewers.{reviewer_id} enabled without proven {', '.join(missing)}"
+                )
+            for name in ("agent", "model"):
+                value = entry.get(name)
+                if not isinstance(value, str) or not value.strip():
+                    raise QualificationError(f"reviewers.{reviewer_id}.{name} is missing")
+
+        contract_fields = ("evidenceDelivery", "tools", "canaryReceipt")
+        present = [name for name in contract_fields if name in entry]
+        if present:
+            missing_contract = [name for name in contract_fields if name not in entry]
+            if missing_contract:
+                raise QualificationError(
+                    f"reviewers.{reviewer_id} incomplete evidence contract: "
+                    f"missing {', '.join(missing_contract)}"
+                )
+            evidence_delivery = entry.get("evidenceDelivery")
+            if evidence_delivery not in ("inline", "repository"):
+                raise QualificationError(
+                    f"reviewers.{reviewer_id}.evidenceDelivery must be 'inline' or "
+                    f"'repository', got {evidence_delivery!r}"
+                )
+            tools = _names(entry.get("tools"), f"reviewers.{reviewer_id}.tools")
+            expected_tools = () if evidence_delivery == "inline" else READ_ONLY_REPOSITORY_TOOLS
+            if tools != expected_tools:
+                raise QualificationError(
+                    f"reviewers.{reviewer_id}.tools must be {list(expected_tools)!r} for "
+                    f"{evidence_delivery} delivery, got {list(tools)!r}"
+                )
+            receipt = entry.get("canaryReceipt")
+            if not isinstance(receipt, str) or not receipt.strip():
+                raise QualificationError(
+                    f"reviewers.{reviewer_id}.canaryReceipt must be a non-empty relative path"
+                )
+            if Path(receipt).is_absolute() or ".." in Path(receipt).parts:
+                raise QualificationError(
+                    f"reviewers.{reviewer_id}.canaryReceipt must stay under the skill directory"
+                )
+
+        if roles == {CONDITIONAL_ROLE}:
+            _scope_receipt(reviewer_id, entry, _eligibility(reviewer_id, entry))
+        else:
+            for stray in ("eligibility", "qualification"):
+                if stray in entry:
+                    raise QualificationError(
+                        f"reviewers.{reviewer_id} declares {stray} without the "
+                        f"{CONDITIONAL_ROLE!r} role; scope and role activate together"
+                    )
     return root
 
 
@@ -835,11 +900,40 @@ def reviewers(document: Mapping[str, object]) -> Mapping[str, object]:
     return _mapping(document.get("reviewers"), "reviewers")
 
 
-def _reviewer(document: Mapping[str, object], reviewer_id: str) -> LiveReviewer:
+def reviewer_roles(
+    document: Mapping[str, object], reviewer_id: str
+) -> tuple[str, ...]:
+    """Return every resolver-derived role this lane can hold across profiles."""
+
+    live = _mapping(document.get("liveDispatch"), "liveDispatch")
+    groups: set[str] = set()
+    for profile in _profiles(live).values():
+        for group in PROFILE_GROUPS:
+            if reviewer_id in _names(profile.get(group), f"liveDispatch profile {group}"):
+                groups.add(group)
+    for group in GLOBAL_GROUPS:
+        if reviewer_id in _names(live.get(group), f"liveDispatch.{group}"):
+            groups.add(group)
+    return tuple(sorted({LIVE_GROUPS[group][0] for group in groups}))
+
+
+def _reviewer(
+    document: Mapping[str, object],
+    reviewer_id: str,
+    group: str,
+    lead_family: str,
+) -> LiveReviewer:
     entry = _mapping(reviewers(document).get(reviewer_id), f"reviewers.{reviewer_id}")
     lens_value = entry.get("lens")
+    role = LIVE_GROUPS[group][0]
+    independence_class, authority = LIVE_ROLES[role]
+    if role == CONDITIONAL_ROLE and entry.get("model_family") == lead_family:
+        independence_class, authority = CONDITIONAL_STANDINGS[1]
     return LiveReviewer(
         **_identity(reviewer_id, entry),
+        role=role,
+        independence_class=independence_class,
+        authority=authority,
         agent=cast(str, entry["agent"]),
         lens=lens_value if isinstance(lens_value, str) else "",
         model=cast(str, entry["model"]),
@@ -851,60 +945,87 @@ def _reviewer(document: Mapping[str, object], reviewer_id: str) -> LiveReviewer:
     )
 
 
-def live_reviewers(document: Mapping[str, object], mode: str) -> tuple[LiveReviewer, ...]:
-    """Return one fixed roster: the unconditional critics or the refutation pool.
+def live_reviewers(
+    document: Mapping[str, object], mode: str, lead_family: str
+) -> tuple[LiveReviewer, ...]:
+    """Return the lead-relative critic roster or the global refutation pool."""
 
-    Neither roster ever contains a conditional critic or a specialist. `initial`
-    here is the independent floor that `select_full_council` starts from and counts,
-    which is why neither a skipped conditional critic nor a supplemental specialist
-    can shrink a council or stand in for one.
-    """
-
-    group = {"initial": "initialCritics", "targeted-refuter": "targetedRefuters"}.get(mode)
-    if group is None:
-        raise QualificationError(f"unsupported live review mode: {mode}")
     live = _mapping(document.get("liveDispatch"), "liveDispatch")
+    if mode == "initial":
+        group = "initialCritics"
+        source = _profile(document, lead_family)
+        field = f"liveDispatch.byLeadFamily.{lead_family}.{group}"
+    elif mode == "targeted-refuter":
+        # A lead family is still required: validation proves that this global pool
+        # is cross-family for every configured profile, and the caller must name
+        # which of those profiles owns the review.
+        _profile(document, lead_family)
+        group = "targetedRefuters"
+        source = live
+        field = f"liveDispatch.{group}"
+    else:
+        raise QualificationError(f"unsupported live review mode: {mode}")
     return tuple(
-        _reviewer(document, reviewer_id)
-        for reviewer_id in _names(live.get(group), f"liveDispatch.{group}")
+        _reviewer(document, reviewer_id, group, lead_family)
+        for reviewer_id in _names(source.get(group), field)
     )
 
 
-def live_specialists(document: Mapping[str, object]) -> tuple[LiveReviewer, ...]:
-    """Return the always-on security specialists that ride the `initial` roster.
+def live_specialists(
+    document: Mapping[str, object], lead_family: str
+) -> tuple[LiveReviewer, ...]:
+    """Return the same-lineage specialists configured for one lead family."""
 
-    A qualified specialist needs no per-record eligibility -- it is on every full
-    council. What it never is, is independent: it samples a lineage the panel
-    already carries, so it resolves after the critics and its authority stays
-    supplemental. A specialist prewired in `liveDispatch.disabled` is absent from
-    this roster, which is the entire purpose of holding it there.
-    """
-
-    live = _mapping(document.get("liveDispatch"), "liveDispatch")
+    group = "initialSpecialists"
+    profile = _profile(document, lead_family)
     return tuple(
-        _reviewer(document, reviewer_id)
+        _reviewer(document, reviewer_id, group, lead_family)
         for reviewer_id in _names(
-            live.get("initialSpecialists"), "liveDispatch.initialSpecialists"
+            profile.get(group),
+            f"liveDispatch.byLeadFamily.{lead_family}.{group}",
         )
     )
 
 
-def conditional_critics(document: Mapping[str, object]) -> tuple[ConditionalCritic, ...]:
-    """Return every declared conditional critic with its policy and scope receipt."""
+def conditional_critics(
+    document: Mapping[str, object], lead_family: str
+) -> tuple[ConditionalCritic, ...]:
+    """Return the conditional critics configured for one lead family."""
 
-    live = _mapping(document.get("liveDispatch"), "liveDispatch")
+    group = "conditionalCritics"
+    profile = _profile(document, lead_family)
     entries = reviewers(document)
     result: list[ConditionalCritic] = []
-    for reviewer_id in _names(live.get("conditionalCritics"), "liveDispatch.conditionalCritics"):
+    for reviewer_id in _names(
+        profile.get(group),
+        f"liveDispatch.byLeadFamily.{lead_family}.{group}",
+    ):
         entry = _mapping(entries.get(reviewer_id), f"reviewers.{reviewer_id}")
         policy = _eligibility(reviewer_id, entry)
         result.append(
             ConditionalCritic(
-                reviewer=_reviewer(document, reviewer_id),
+                reviewer=_reviewer(document, reviewer_id, group, lead_family),
                 policy=policy,
                 scope_receipt=_scope_receipt(reviewer_id, entry, policy),
             )
         )
+    return tuple(result)
+
+
+def all_conditional_critics(
+    document: Mapping[str, object],
+) -> tuple[ConditionalCritic, ...]:
+    """Return each conditional lane once across every lead-family profile."""
+
+    live = _mapping(document.get("liveDispatch"), "liveDispatch")
+    seen: set[str] = set()
+    result: list[ConditionalCritic] = []
+    for lead_family in _profiles(live):
+        for critic in conditional_critics(document, lead_family):
+            reviewer_id = critic.reviewer.reviewer_id
+            if reviewer_id not in seen:
+                seen.add(reviewer_id)
+                result.append(critic)
     return tuple(result)
 
 
@@ -1132,6 +1253,7 @@ def _manifest(
     *,
     mode: str,
     panel_id: str,
+    lead_family: str,
     record: Mapping[str, object],
     record_path: Path,
     record_sha256: str,
@@ -1151,6 +1273,7 @@ def _manifest(
         "schemaVersion": MANIFEST_SCHEMA_VERSION,
         "panelId": panel_id,
         "mode": mode,
+        "leadFamily": lead_family,
         "reviewRecordPath": str(record_path),
         "reviewRecordSha256": record_sha256,
         "subjectDigest": subject_digest,
@@ -1225,6 +1348,7 @@ def select_full_council(
     record: Mapping[str, object],
     packet: Mapping[str, object],
     *,
+    lead_family: str,
     record_path: Path,
     record_sha256: str,
     packet_path: Path,
@@ -1232,7 +1356,7 @@ def select_full_council(
     authority_path: Path,
     authority_sha256: str,
 ) -> dict[str, object]:
-    """Resolve one full council: independent critics, specialists, then conditionals."""
+    """Resolve one lead-relative council: critics, specialists, then conditionals."""
 
     decision = select_review_action(record)
     if decision.action != "full-council":
@@ -1241,15 +1365,16 @@ def select_full_council(
             f"action={decision.action!r}, reasons={list(decision.reason_codes)}"
         )
     live = _mapping(document.get("liveDispatch"), "liveDispatch")
-    critics = live_reviewers(document, "initial")
+    critics = live_reviewers(document, "initial", lead_family)
     if not critics:
         # Checked here rather than in `validate_qualification`: an evaluation-only
         # checkout legitimately declares no live critic. Counted on the critics
         # alone and never on `selected`, so neither an additive conditional critic
         # nor a supplemental specialist can pass for the independent floor.
         raise QualificationError(
-            "liveDispatch.initialCritics selects no independent critic; a full council "
-            "cannot consist of conditional critics or supplemental specialists alone"
+            f"liveDispatch.byLeadFamily.{lead_family}.initialCritics selects no "
+            "independent critic; a full council cannot consist of conditional critics "
+            "or supplemental specialists alone"
         )
     for reviewer in critics:
         _require_packet_authorization(reviewer, packet)
@@ -1257,9 +1382,9 @@ def select_full_council(
         _selected(reviewer, "unconditional", (UNCONDITIONAL_REASON_CODE,)) for reviewer in critics
     ]
     # After the critics, in the same roster. An always-on specialist is additive
-    # evidence about a lineage the panel already carries rather than one of its
-    # independent voices, and this array is the dispatch order.
-    specialists = live_specialists(document)
+    # evidence about the lead's lineage rather than an independent voice, and this
+    # array is the dispatch order.
+    specialists = live_specialists(document, lead_family)
     for reviewer in specialists:
         _require_packet_authorization(reviewer, packet)
     selected += [
@@ -1267,7 +1392,7 @@ def select_full_council(
     ]
     skipped: list[dict[str, object]] = []
     sources = packet_paths(packet)
-    for candidate in conditional_critics(document):
+    for candidate in conditional_critics(document, lead_family):
         reasons = tuple(
             sorted(
                 {
@@ -1298,6 +1423,7 @@ def select_full_council(
     return _manifest(
         mode="initial",
         panel_id=cast(str, live["panelId"]),
+        lead_family=lead_family,
         record=record,
         record_path=record_path,
         record_sha256=record_sha256,
@@ -1380,6 +1506,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="durable manifest path; an existing file is never overwritten",
     )
     for command in (initial, refuter):
+        command.add_argument(
+            "--lead-family",
+            required=True,
+            help="accountable main-session model_family; must name a configured profile",
+        )
         command.add_argument("--qualification", type=Path, default=DEFAULT_QUALIFICATION)
 
     args = parser.parse_args(argv)
@@ -1388,7 +1519,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.mode == "targeted-refuter":
             roster = [
                 _selected(reviewer, "unconditional", (TARGETED_REFUTER_REASON_CODE,))
-                for reviewer in live_reviewers(document, "targeted-refuter")
+                for reviewer in live_reviewers(
+                    document, "targeted-refuter", args.lead_family
+                )
             ]
             print(json.dumps(roster, sort_keys=True))
             return 0
@@ -1398,6 +1531,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             document,
             record,
             packet,
+            lead_family=args.lead_family,
             record_path=record_path,
             record_sha256=record_sha256,
             packet_path=packet_path,

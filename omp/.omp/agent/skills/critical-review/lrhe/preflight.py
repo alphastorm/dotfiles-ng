@@ -46,12 +46,12 @@ import canary  # noqa: E402
 import run_review  # noqa: E402
 from qualification import (  # noqa: E402
     CONDITIONAL_POLICIES,
-    CONDITIONAL_ROLE,
     READ_ONLY_REPOSITORY_TOOLS,
     QualificationError,
-    conditional_critics,
+    all_conditional_critics,
     load_qualification,
     reviewers as qualification_reviewers,
+    reviewer_roles,
     selector_model,
 )
 
@@ -386,7 +386,7 @@ def check_model_selectors() -> Result:
 def _probe_pin_problems(
     family: str,
     measured: dict[str, object],
-    dispatch_role: object,
+    dispatch_roles: tuple[str, ...],
     skill: Path,
 ) -> list[str]:
     """Verify a repository canary's probe-version and fixture pins.
@@ -442,9 +442,10 @@ def _probe_pin_problems(
             f"{family}: probe {version} never names its pinned fixture {Path(fixture).name}"
         )
     role = entry.get("role")
-    if role != dispatch_role:
+    if role not in dispatch_roles:
         problems.append(
-            f"{family}: probe {version} role {role!r} != dispatchRole {dispatch_role!r}"
+            f"{family}: probe {version} role {role!r} is not in selected roles "
+            f"{list(dispatch_roles)!r}"
         )
     return problems
 
@@ -572,7 +573,9 @@ def check_reviewer_evidence_contracts() -> Result:
                 )
             if evidence_delivery == "repository":
                 problems.extend(
-                    _probe_pin_problems(family, measured, value.get("dispatchRole"), SKILL)
+                    _probe_pin_problems(
+                        family, measured, reviewer_roles(document, family), SKILL
+                    )
                 )
     if problems:
         return Result(FAIL, "; ".join(problems))
@@ -635,7 +638,7 @@ def _required_read_only_marker(entry: dict) -> str:
     was removed from its charter, so demanding the old marker would demand the
     prose the lane was created to drop.
     """
-    if entry.get("dispatchRole") != CONDITIONAL_ROLE:
+    if "eligibility" not in entry:
         return "CRITICAL_REVIEWER_READ_ONLY_V1"
     eligibility = entry.get("eligibility")
     declared = eligibility.get("policy") if isinstance(eligibility, dict) else None
@@ -815,7 +818,7 @@ def check_conditional_critic_scope() -> Result:
     """
     try:
         document = load_qualification(SKILL / "qualification.yml")
-        critics = conditional_critics(document)
+        critics = all_conditional_critics(document)
     except QualificationError as exc:
         return Result(FAIL, str(exc))
     if not critics:
