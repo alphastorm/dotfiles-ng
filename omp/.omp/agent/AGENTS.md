@@ -8,6 +8,7 @@
 ## Principal-engineering defaults
 
 - Start from actual persisted state and name the next observable outcome before selecting work.
+- Before any action whose failure would require founder recovery, verify the recovery path first.
 - Use the smallest state-faithful proof; status, schemas, packets, reviews, and fresh fixtures do not substitute for readiness.
 - Prefer an existing narrow executor or bounded extension over bespoke control-plane machinery.
 - Add a persistent control only for a named residual consequence, and remove obsolete assumptions or mechanisms when possible.
