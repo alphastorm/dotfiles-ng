@@ -13,6 +13,7 @@
 # minutes proving the corpus builder still imports.
 
 name: lrhe
+run-name: lrhe / ${{ github.event_name == 'workflow_dispatch' && inputs.execution_pool || 'github-hosted' }} / ${{ github.event_name == 'workflow_dispatch' && inputs.dispatch_id || github.sha }}
 
 on:
   push:
@@ -20,6 +21,36 @@ on:
   pull_request:
     paths: ['omp/.omp/agent/skills/critical-review/lrhe/**', '.github/workflows/lrhe.yml']
   workflow_dispatch:
+    inputs:
+      execution_pool:
+        description: Execution pool; fleet is for trusted controller dispatches only
+        required: true
+        default: github-hosted
+        type: choice
+        options:
+          - github-hosted
+          - fleet
+      dispatch_id:
+        description: Controller correlation identifier
+        required: false
+        default: manual
+        type: string
+      routing_label:
+        description: Controller-supplied one-time runner label; leave blank in the GitHub UI
+        required: false
+        type: string
+      target_sha:
+        description: Exact commit tested by the fleet runner
+        required: false
+        type: string
+      fleet_site:
+        description: Site expected to execute this bounded dispatch
+        required: false
+        default: nyc-pc
+        type: choice
+        options:
+          - nyc-pc
+          - sf-pc
 
 defaults:
   run:
@@ -30,6 +61,7 @@ permissions:
 
 jobs:
   check:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.execution_pool == 'github-hosted' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -65,6 +97,70 @@ jobs:
       # the default transport and raises on any send; assert here that no live
       # transport has appeared, because the day one does is the day this workflow
       # starts mattering more than it does now.
+      - name: No live transport exists
+        run: |
+          python - <<'PY'
+          import sys; sys.path.insert(0, '.')
+          import run_review
+          assert 'live' not in run_review.TRANSPORTS, 'a live transport was added'
+          assert run_review.TRANSPORTS['none'] is run_review.no_egress_transport
+          print('transports:', sorted(run_review.TRANSPORTS))
+          PY
+
+  fleet-shadow:
+    name: LRHE fleet shadow
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' &&
+          inputs.execution_pool == 'fleet' &&
+          startsWith(inputs.routing_label, 'lrhe-linux-x64-') &&
+          inputs.target_sha != '' }}
+    runs-on:
+      - self-hosted
+      - Linux
+      - X64
+      - profile-lrhe
+      - ${{ inputs.fleet_site == 'nyc-pc' && 'site-nyc' || 'site-sf' }}
+      - ${{ inputs.routing_label }}
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_sha }}
+          persist-credentials: false
+
+      - name: Configure disposable Python cache
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/pip-cache"
+          echo "PIP_CACHE_DIR=$RUNNER_TEMP/pip-cache" >> "$GITHUB_ENV"
+
+      - name: Verify exact target
+        working-directory: ${{ github.workspace }}
+        env:
+          EXPECTED_SHA: ${{ inputs.target_sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: omp/.omp/agent/skills/critical-review/lrhe/requirements.txt
+
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint
+        run: ruff check . --exclude .venv
+
+      - name: Cross-file invariants
+        run: python -m pytest test_consistency.py -q
+
+      - name: Test suite
+        run: python -m pytest -q --durations=10
+
       - name: No live transport exists
         run: |
           python - <<'PY'
