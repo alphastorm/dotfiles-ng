@@ -7,16 +7,12 @@
 
 ## Principal-engineering defaults
 
-- Start from actual persisted state and name the next observable outcome before selecting work.
-- Before any action whose failure would require founder recovery, verify the recovery path first.
-- Use the smallest state-faithful proof; status, schemas, packets, reviews, and fresh fixtures do not substitute for readiness.
-- Prefer an existing narrow executor or bounded extension over bespoke control-plane machinery.
-- Add a persistent control only for a named residual consequence, and remove obsolete assumptions or mechanisms when possible.
+- Optimize externally verified completed outcomes, not activity proxies; verify the actual tool and route, and measure failure cost separately.
+- Mechanize recurring steering-correction classes in config, tools, or tests; remove duplicate prompt prose instead of relying on reminders.
 
 ## Independent review loops
 
-- The review procedure — pre-dispatch self-checklist, class-closure meta-tests, stop-rule, subject freeze, round budget, and disposition-based exit — is owned by `skill://critical-review` ("Lead pre-dispatch obligations"); apply it for every reviewer or council dispatch in any repository.
-- Ambient floor even when the skill is not loaded: reviewers render verdicts, never primary defect discovery — self-execute the scrutiny checklist against your own diff first; if a round confirms the same defect class as the previous round, halt and land an executable invariant (meta-test) before any re-dispatch; never edit the reviewed tree while seats are reading.
+- Every reviewer/council dispatch follows `skill://critical-review`: self-check, verdict-only review, executable class closure/stop-rule, round budget, disposition exit, and subject freeze—never edit while reviewers read.
 
 ## Post-implementation bounded cleanse
 
@@ -37,6 +33,7 @@
 - Repository work and research are cloud-permitted by default. Only an explicit user, repository, or customer-policy `NO_CLOUD` marker blocks cloud-backed agents; never infer a separate confidential, private, or local-only class.
 - Evaluate `NO_CLOUD` before every Task, hosted reviewer, Jules, or other cloud-agent dispatch. Agent-side checks are defense in depth, never dispatch authority.
 - Route by context size, synthesis value, and latency. Use `long-context` for read-only bundles around 96K tokens or more, `scout` for smaller bounded investigation, and the normal mutating lane for implementation.
+- Keep the main session on its configured default so native Code Mode applies; use isolated roles or subagents for alternate models unless the user explicitly requests a bounded main-model experiment.
 - Treat provider availability and quota as opportunistic. On failure, use another declared route only when cloud processing remains allowed; otherwise stop without effect.
 - `local-librarian` is an additive read-only RTX 5090 lane (`@local-batch`) for bounded evidence packets — roughly 8K+ tokens, 5+ files, 1K+ log lines, or batch document extraction. Dispatch it explicitly and asynchronously when its source-linked packet can help without delaying the critical path; omit `blocking: true`. Never use it for mutation, security disposition, architecture ownership, external research, or final review, and never let it satisfy evidence where a missed fact or a leaked secret would matter. It has no cloud fallback: if the appliance is down a request hangs until your own timeout, so treat every packet as discardable. Qualification measured it below the automatic-dispatch floor, so it supplements your own reads rather than replacing them.
 
