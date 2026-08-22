@@ -39,6 +39,12 @@ On failure, read the exact error, preserve the observation, identify the false a
 
 After an incident, first correct the faulty state transition and add a state-faithful regression. Add a persistent control only when it protects a named residual consequence that the narrow fix and existing controls do not contain.
 
+## STATE-FIRST STOP RULE
+
+After any failed live/readiness stage, do not advance or rerun that stage until the same candidate, runtime epoch, and scoring epoch have a local red → green reproduction.
+
+Hosted execution is acceptance, not diagnosis. If local reproduction is impossible, allow exactly one explicitly authorized diagnostic arm—never another full chain.
+
 ## Proportional assurance
 
 Choose assurance depth from credible residual consequence after caps, containment, rollback, and recovery—not from P0 labels, security vocabulary, credentials, provider calls, or review invocation alone.
