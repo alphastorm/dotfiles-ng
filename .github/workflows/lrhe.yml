@@ -119,10 +119,37 @@ jobs:
       - Linux
       - X64
       - profile-lrhe
-      - ${{ inputs.fleet_site == 'nyc-pc' && 'site-nyc' || 'site-sf' }}
+      - ${{ inputs.fleet_site == 'nyc-pc' && 'site-nyc' || inputs.fleet_site == 'sf-pc' && 'site-sf' || 'site-invalid' }}
       - ${{ inputs.routing_label }}
     timeout-minutes: 15
     steps:
+      - name: Validate bounded LRHE dispatch
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        env:
+          DISPATCH_ID: ${{ inputs.dispatch_id }}
+          FLEET_SITE: ${{ inputs.fleet_site }}
+          ROUTING_LABEL: ${{ inputs.routing_label }}
+          RUNNER_NAME: ${{ runner.name }}
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          shopt -u nocasematch
+          export LC_ALL=C
+          fail() {
+            printf 'invalid LRHE fleet dispatch: %s\n' "$1" >&2
+            exit 2
+          }
+          [[ "$TARGET_SHA" =~ ^[a-f0-9]{40}$ ]] || fail target_sha
+          [[ "$ROUTING_LABEL" =~ ^lrhe-linux-x64-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]] || fail routing_label
+          case "$FLEET_SITE" in
+            nyc-pc) site_short=nyc ;;
+            sf-pc) site_short=sf ;;
+            *) fail fleet_site ;;
+          esac
+          [[ "$DISPATCH_ID" =~ ^lrhe-${site_short}-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]] || fail dispatch_id
+          [[ "$RUNNER_NAME" == gateway-ci-${site_short}-1 ]] || fail runner_name
+          [[ ! -S /var/run/docker.sock ]] || fail docker_socket
+
       - name: Check out exact target
         uses: actions/checkout@v4
         with:
