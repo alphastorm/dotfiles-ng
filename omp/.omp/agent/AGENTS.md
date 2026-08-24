@@ -8,6 +8,8 @@
 ## Principal-engineering defaults
 
 - Optimize externally verified completed outcomes, not activity proxies; verify the actual tool and route, and measure failure cost separately.
+- Implementation choice order: reuse existing code or patterns → standard library → native platform capability → already-installed dependency → minimum new code; stop at the first option that fully satisfies the contract.
+- On explicit simplification reviews, classify findings as `delete` | `stdlib` | `native` | `yagni` | `shrink`; each finding names the exact location, replacement, preserved behavior, and evidence. Never use net line count as the objective.
 - Mechanize recurring steering-correction classes in config, tools, or tests; remove duplicate prompt prose instead of relying on reminders.
 
 ## Independent review loops
