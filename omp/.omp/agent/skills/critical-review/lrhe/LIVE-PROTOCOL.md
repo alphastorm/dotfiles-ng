@@ -452,11 +452,9 @@ JSON object whose only key is `task_input`. Submit that object verbatim as the
 Task call; `verify-task` independently regenerates the same object immediately
 before execution.
 
-OMP requires two canonical Task shapes. A single `focused` reviewer or the
-single targeted refuter uses the flat shape with exactly `i`, `agent`, and
-`task`; the generated task begins with the receipt marker followed by the
-envelope path and SHA-256. A council with multiple reviewers uses the batch
-shape with exactly `i`, `context`, and `tasks`; `context` is:
+OMP uses one canonical batch Task shape for every review class: exactly `i`,
+`context`, and `tasks`. A single `focused` reviewer or targeted refuter is a
+one-item batch; never add a padding reviewer. `context` is:
 
 ```text
 CRITICAL_REVIEW_DISPATCH_V1
@@ -466,13 +464,18 @@ envelope_sha256=<64 lowercase hex>
 
 The generated `i` is pinned as the envelope's `taskIntent` schema `const`.
 Every batch item carries exactly `agent` and `task`. Never retype, reorder,
-trim, merge, summarize, or reword one character of either canonical shape, and
-never append an instruction of your own. A multi-reviewer council runs in one
-gated Task wave; that call is the round-one barrier, and no reviewer payload may
-enter the lead's context or a peer-visible file until every member has settled.
+trim, merge, summarize, or reword one character of the canonical shape, and
+never append an instruction of your own.
 
-The extension treats every Task item or flat Task whose agent name starts with
-`review-` as protected. A protected or mixed call without the exact
+A multi-reviewer council runs in one gated Task wave.
+Every `review-*` agent declares `blocking: true`. Submit the generated Task
+call once; its inline completion is the review barrier for a focused review or
+the whole concurrent council. Do not detach reviewers, inspect `hub` jobs, or
+poll/sleep for verdicts. No reviewer payload may enter the lead's context or a
+peer-visible file until every member has settled.
+
+The extension treats every Task item whose agent name starts with `review-` as
+protected. A protected or mixed call without the exact
 verifier-approved canonical input is blocked; a Task call with no protected
 agent is unaffected. The gate invokes `review_dispatch.py verify-task
 --envelope <path> --sha256 <hex>` at a path fixed relative to the extension and

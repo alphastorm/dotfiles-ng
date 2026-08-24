@@ -33,7 +33,7 @@ re-resolves the council, requires the fresh resolution to equal the receipt, and
 writes one envelope holding the canonical Task items. Reviewer task text embeds
 the verified scope and packet bytes rather than paths that could be edited
 afterwards, so what a reviewer reads is what was frozen. stdout is the exact
-flat or batch `task_input` object the caller submits verbatim.
+batch `task_input` object the caller submits verbatim.
 
 `verify-task` is internal and is what the policy extension calls immediately
 before transmission. It rehashes the envelope against the caller's digest, then
@@ -1538,32 +1538,10 @@ def envelope_document(
 def task_input(
     envelope_path: Path, envelope_sha256: str, tasks: Sequence[Mapping[str, str]]
 ) -> dict[str, object]:
-    """Render the exact Task call this dispatch authorizes.
+    """Render the one canonical batch Task call for any reviewer count."""
 
-    Batch Task calls carry the envelope binding in `context`. OMP's Task surface
-    requires a single reviewer to use the flat shape instead of a one-item
-    `tasks` array, so the flat task carries the same path and digest immediately
-    after the receipt marker. The envelope stores the undecorated task, avoiding
-    a digest cycle; verification rebuilds it and adds the binding only after the
-    envelope digest is known.
-    """
-
-    if len(tasks) == 1:
-        item = dict(tasks[0])
-        body = item["task"]
-        marker, separator, remainder = body.partition("\n")
-        if marker != RECEIPT_MARKER or not separator:
-            raise DispatchError(
-                "single reviewer task does not begin with the resolver receipt marker"
-            )
-        return {
-            "i": DISPATCH_TASK_INTENT,
-            "agent": item["agent"],
-            "task": (
-                f"{marker}\nenvelope_path={envelope_path}\n"
-                f"envelope_sha256={envelope_sha256}\n{remainder}"
-            ),
-        }
+    if not tasks:
+        raise DispatchError("review dispatch has no reviewer tasks")
     return {
         "i": DISPATCH_TASK_INTENT,
         "context": dispatch_marker(envelope_path, envelope_sha256),

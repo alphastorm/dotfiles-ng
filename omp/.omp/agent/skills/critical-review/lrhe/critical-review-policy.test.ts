@@ -9,7 +9,6 @@ import criticalReviewPolicy, {
 	deepEqual,
 	evaluateTaskDispatch,
 	parseDispatchMarker,
-	parseFlatDispatchMarker,
 	parseVerifierOutput,
 	RESOLVER_RECEIPT_HEADER,
 	VERIFIER_PYTHON,
@@ -49,20 +48,14 @@ const CANONICAL_INPUT = {
 
 const VERIFIER_STDOUT = JSON.stringify({ task_input: CANONICAL_INPUT });
 
-const FLAT_TASK = `${RESOLVER_RECEIPT_HEADER}
-envelope_path=${ENVELOPE_PATH}
-envelope_sha256=${ENVELOPE_SHA256}
-seat=review-glm-floor
-review_class=targeted-refuter
-role=targeted_refuter
-
-Render a verdict.`;
-const FLAT_INPUT = {
-	agent: "review-glm-floor",
+const SINGLE_INPUT = {
+	context: MARKER,
 	i: INTENT,
-	task: FLAT_TASK,
+	tasks: [
+		{ agent: "review-glm-floor", task: receipt("review-glm-floor") },
+	],
 };
-const FLAT_VERIFIER_STDOUT = JSON.stringify({ task_input: FLAT_INPUT });
+const SINGLE_VERIFIER_STDOUT = JSON.stringify({ task_input: SINGLE_INPUT });
 
 /** Records what the gate asked for, so a test can prove the envelope came from the parsed marker. */
 function approvingVerifier(
@@ -267,17 +260,21 @@ describe("protected task calls", () => {
 		expect(verify.calls).toEqual([]);
 	});
 
-	test("blocks a one-item reviewer batch instead of bypassing the flat contract", async () => {
-		const verify = approvingVerifier();
-		const input = structuredClone(CANONICAL_INPUT);
-		input.tasks = [input.tasks[0]];
-		const decision = await evaluateTaskDispatch(input, verify);
-		expect(reasonOf(decision)).toContain("flat Task shape");
-		expect(verify.calls).toEqual([]);
+	test("accepts the verifier-generated one-item reviewer batch", async () => {
+		const verify = approvingVerifier(SINGLE_VERIFIER_STDOUT);
+		const decision = await evaluateTaskDispatch(
+			structuredClone(SINGLE_INPUT),
+			verify,
+		);
+
+		expect(decision).toEqual({ input: SINGLE_INPUT });
+		expect(verify.calls).toEqual([
+			{ envelopePath: ENVELOPE_PATH, envelopeSha256: ENVELOPE_SHA256 },
+		]);
 	});
 
-	test("blocks a flat reviewer spawn without its generated envelope binding", async () => {
-		const verify = approvingVerifier(FLAT_VERIFIER_STDOUT);
+	test("blocks a legacy flat reviewer spawn", async () => {
+		const verify = approvingVerifier(SINGLE_VERIFIER_STDOUT);
 		const decision = await evaluateTaskDispatch(
 			{
 				agent: "review-glm-floor",
@@ -287,24 +284,8 @@ describe("protected task calls", () => {
 			verify,
 		);
 
-		expect(reasonOf(decision)).toContain("flat reviewer task");
+		expect(reasonOf(decision)).toContain("batch Task shape");
 		expect(verify.calls).toEqual([]);
-	});
-
-	test("accepts the verifier-generated flat shape for one reviewer", async () => {
-		const verify = approvingVerifier(FLAT_VERIFIER_STDOUT);
-		expect(parseFlatDispatchMarker(FLAT_TASK)).toEqual({
-			envelopePath: ENVELOPE_PATH,
-			envelopeSha256: ENVELOPE_SHA256,
-		});
-		const decision = await evaluateTaskDispatch(
-			structuredClone(FLAT_INPUT),
-			verify,
-		);
-		expect(decision).toEqual({ input: FLAT_INPUT });
-		expect(verify.calls).toEqual([
-			{ envelopePath: ENVELOPE_PATH, envelopeSha256: ENVELOPE_SHA256 },
-		]);
 	});
 
 	test("blocks when the verifier refuses, times out, or cannot run", async () => {
@@ -347,6 +328,13 @@ describe("protected task calls", () => {
 			"[]",
 			JSON.stringify(CANONICAL_INPUT),
 			JSON.stringify({ task_input: CANONICAL_INPUT, warnings: [] }),
+			JSON.stringify({
+				task_input: {
+					agent: "review-glm-floor",
+					i,
+					task: receipt("review-glm-floor"),
+				},
+			}),
 			JSON.stringify({ task_input: { context, tasks } }),
 			JSON.stringify({ task_input: { context, i, tasks: [] } }),
 			JSON.stringify({ task_input: { context, i: "  ", tasks } }),
@@ -376,7 +364,7 @@ describe("protected task calls", () => {
 			);
 			expect(decision).toMatchObject({ block: true });
 		}
-		expect(parseVerifierOutput(FLAT_VERIFIER_STDOUT)).toEqual(FLAT_INPUT);
+		expect(parseVerifierOutput(SINGLE_VERIFIER_STDOUT)).toEqual(SINGLE_INPUT);
 	});
 
 	test("blocks a call that deviates from the canonical dispatch", async () => {

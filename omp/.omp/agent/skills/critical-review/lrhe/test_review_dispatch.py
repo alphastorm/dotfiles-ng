@@ -641,17 +641,20 @@ def test_incomplete_padded_and_reordered_rosters_are_refused_by_name():
         rd._require_exact_roster("initial", ["gemini", "claude-opus"], ["claude-opus", "gemini"])
 
 
-def test_task_input_uses_batch_shape_only_for_multiple_reviewers(tmp_path):
-    tasks = [
-        {"agent": "review-gemini", "task": f"{rd.RECEIPT_MARKER}\nreviewer_id=gemini\n"},
-        {"agent": "review-grok", "task": f"{rd.RECEIPT_MARKER}\nreviewer_id=grok\n"},
-    ]
+def test_task_input_uses_one_batch_shape_for_every_reviewer_count(tmp_path):
+    first = {"agent": "review-gemini", "task": f"{rd.RECEIPT_MARKER}\nreviewer_id=gemini\n"}
+    second = {"agent": "review-grok", "task": f"{rd.RECEIPT_MARKER}\nreviewer_id=grok\n"}
     envelope = (tmp_path / "dispatch.json").resolve()
     digest = "a" * 64
-    payload = rd.task_input(envelope, digest, tasks)
-    assert set(payload) == {"i", "context", "tasks"}
-    assert payload["context"] == rd.dispatch_marker(envelope, digest)
-    assert payload["tasks"] == tasks
+
+    for tasks in ([first], [first, second]):
+        payload = rd.task_input(envelope, digest, tasks)
+        assert set(payload) == {"i", "context", "tasks"}
+        assert payload["context"] == rd.dispatch_marker(envelope, digest)
+        assert payload["tasks"] == tasks
+
+    with pytest.raises(rd.DispatchError, match="no reviewer tasks"):
+        rd.task_input(envelope, digest, [])
 
 
 # --------------------------------------------------------------------------
@@ -958,15 +961,16 @@ def test_focused_dispatch_end_to_end(tmp_path, material, repository, capsys):
     )
     approved = json.loads(capsys.readouterr().out)["task_input"]
     assert approved == emitted
-    assert set(approved) == {"i", "agent", "task"}
+    assert set(approved) == {"i", "context", "tasks"}
     assert approved["i"] == rd.DISPATCH_TASK_INTENT
-    assert approved["agent"] == agent
-    task = approved["task"]
-    assert task.startswith(
-        f"{rd.RECEIPT_MARKER}\n"
-        f"envelope_path={envelope_out.resolve()}\n"
-        f"envelope_sha256={envelope_sha256}\n"
-    )
+    assert approved["context"] == rd.dispatch_marker(envelope_out.resolve(), envelope_sha256)
+    assert len(approved["tasks"]) == 1
+    item = approved["tasks"][0]
+    assert item["agent"] == agent
+    task = item["task"]
+    assert task.startswith(f"{rd.RECEIPT_MARKER}\n")
+    assert "envelope_path=" not in task
+    assert "envelope_sha256=" not in task
     assert f"subject_commit={repository['commit']}" in task
     assert f"repository_path={repository['path'].resolve()}" in task
     assert f"independence_class={independence_class}" in task

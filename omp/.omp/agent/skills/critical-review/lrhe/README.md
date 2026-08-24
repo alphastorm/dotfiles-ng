@@ -265,8 +265,8 @@ reviewer ids, and the review class (`focused`, `initial`, or `targeted-refuter`)
 executable resolution owns standing; the Task gate injects the trusted
 `CRITICAL_REVIEW_RESOLVER_RECEIPT_V1` block. There is no hand-written reviewer
 assignment and no direct reviewer launch. A protected `review-*` Task is blocked
-unless its flat or batch shape exactly matches the verifier-approved canonical
-input regenerated from the dispatch envelope.
+unless its batch shape exactly matches the verifier-approved canonical input
+regenerated from the dispatch envelope.
 
 A reviewer is not a model lineage. The `reviewers` mapping key is the `reviewer_id`,
 and that is the only join key a manifest, dispatcher, or finding ledger uses.

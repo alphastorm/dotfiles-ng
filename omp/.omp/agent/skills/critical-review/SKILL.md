@@ -63,6 +63,12 @@ verbatim. The resolver emits `selectionClass`, `role`, `independence_class`, and
 hand-copies a standing field, and a reviewer reached any other way is not a
 review.
 
+Review execution is a blocking Task boundary. Every `review-*` agent declares
+`blocking: true`, so submit the resolver-emitted batch once and consume its
+verdicts from that call. A focused review is a legitimate one-item batch, not a
+general delegation wave; never pad it, detach it, poll `hub`/jobs, or run sleep
+loops while the subject is frozen.
+
 When a full council is justified, encode the same brief using the existing packet fields rather than adding keys: `goal` carries outcome and class; `requirements` carries named assets, caps, and result-validity requirements; `non_goals` carries excluded adversaries and reuse; `trust_boundaries` carries credible actors and boundaries; `rollback_contract` carries containment, recovery, and residual effects; and `rejected_alternatives_and_reasons` records disproportionate mitigations rejected before review.
 
 ### Hosted material authorization

@@ -1758,6 +1758,19 @@ def test_every_live_lane_uses_native_task_dispatch():
 
 
 @needs_agents
+def test_every_review_lane_returns_its_verdict_inline():
+    """Critical review is a Task boundary, not a background-job poll loop."""
+
+    document = _live_document()
+    nonblocking = []
+    for reviewer_id, entry in document["reviewers"].items():
+        front = canary._agent_frontmatter(preflight.AGENTS / f"{entry['agent']}.md")
+        if front.get("blocking") is not True:
+            nonblocking.append(reviewer_id)
+    assert not nonblocking, f"review lanes can escape to background jobs: {nonblocking}"
+
+
+@needs_agents
 def test_reviewer_agent_names_are_stable_lanes_with_exact_model_selectors():
     """Versions stay auditable in selectors without churning agent identity."""
 
