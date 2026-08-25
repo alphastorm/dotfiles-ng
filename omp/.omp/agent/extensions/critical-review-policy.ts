@@ -304,7 +304,8 @@ export default function criticalReviewPolicy(
 		if (!decision || "block" in decision) return decision;
 		const marker = parseDispatchMarker(decision.input.context);
 		if (!marker) return blocked("the verified dispatch marker disappeared.");
-		const dispatchKey = marker.envelopePath + "\n" + marker.envelopeSha256;
+		// The digest owns one attempt budget; a path alias must not mint a fresh identity.
+		const dispatchKey = marker.envelopeSha256;
 		const prior = dispatchAttempts.get(dispatchKey);
 		if (prior?.activeCallId) {
 			return blocked(

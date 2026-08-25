@@ -467,6 +467,30 @@ describe("protected task calls", () => {
 		).toContain("already completed");
 	});
 
+	test("blocks a byte-identical envelope copied to another path", async () => {
+		const verify: VerifyTask = async (marker) =>
+			JSON.stringify({
+				task_input: {
+					...structuredClone(CANONICAL_INPUT),
+					context: `${DISPATCH_MARKER_HEADER}\nenvelope_path=${marker.envelopePath}\nenvelope_sha256=${marker.envelopeSha256}`,
+				},
+			});
+		const call = gate(LEAD_PROMPT, verify);
+
+		expect(
+			await call("task", structuredClone(CANONICAL_INPUT), "review-call-1"),
+		).toEqual({ input: CANONICAL_INPUT });
+		await call.result("task", "review-call-1", false);
+
+		const copiedInput = {
+			...structuredClone(CANONICAL_INPUT),
+			context: `${DISPATCH_MARKER_HEADER}\nenvelope_path=/tmp/copied-envelope.json\nenvelope_sha256=${ENVELOPE_SHA256}`,
+		};
+		expect(
+			reasonOf(await call("task", copiedInput, "review-call-2")),
+		).toContain("already completed");
+	});
+
 	test("allows one retry only after a terminal Task error", async () => {
 		const call = gate(LEAD_PROMPT);
 
