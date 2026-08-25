@@ -66,6 +66,12 @@ export type TaskDecision =
 	| { input: CanonicalTaskInput }
 	| undefined;
 
+interface DispatchAttempt {
+	activeCallId: string | undefined;
+	attempts: number;
+	completed: boolean;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -274,6 +280,9 @@ export default function criticalReviewPolicy(
 	pi: ExtensionAPI,
 	verify: VerifyTask = verifyTaskViaSkill,
 ): void {
+	const dispatchAttempts = new Map<string, DispatchAttempt>();
+	const callDispatches = new Map<string, string>();
+
 	pi.on("tool_call", async (event, ctx) => {
 		const prompt = ctx.getSystemPrompt();
 		const isolated = prompt.some((part) =>
@@ -293,6 +302,47 @@ export default function criticalReviewPolicy(
 		if (event.toolName !== TASK_TOOL) return;
 		const decision = await evaluateTaskDispatch(event.input, verify);
 		if (!decision || "block" in decision) return decision;
+		const marker = parseDispatchMarker(decision.input.context);
+		if (!marker) return blocked("the verified dispatch marker disappeared.");
+		const dispatchKey = marker.envelopePath + "\n" + marker.envelopeSha256;
+		const prior = dispatchAttempts.get(dispatchKey);
+		if (prior?.activeCallId) {
+			return blocked(
+				"this envelope already has an unresolved Task call; an outer eval background acknowledgement is not that call's result. Wait for the original call to settle instead of redispatching.",
+			);
+		}
+		if (prior?.completed) {
+			return blocked(
+				"this envelope already completed in this session and cannot be redispatched.",
+			);
+		}
+		if ((prior?.attempts ?? 0) >= 2) {
+			return blocked(
+				"this envelope already consumed its one transport retry in this session.",
+			);
+		}
+		dispatchAttempts.set(dispatchKey, {
+			activeCallId: event.toolCallId,
+			attempts: (prior?.attempts ?? 0) + 1,
+			completed: false,
+		});
+		callDispatches.set(event.toolCallId, dispatchKey);
 		return { input: decision.input };
+	});
+
+	pi.on("tool_result", (event) => {
+		if (event.toolName !== TASK_TOOL) return;
+		const dispatchKey = callDispatches.get(event.toolCallId);
+		if (!dispatchKey) return;
+		callDispatches.delete(event.toolCallId);
+		const attempt = dispatchAttempts.get(dispatchKey);
+		if (!attempt || attempt.activeCallId !== event.toolCallId) return;
+		attempt.activeCallId = undefined;
+		if (event.isError !== true) attempt.completed = true;
+	});
+
+	pi.on("session_shutdown", () => {
+		dispatchAttempts.clear();
+		callDispatches.clear();
 	});
 }

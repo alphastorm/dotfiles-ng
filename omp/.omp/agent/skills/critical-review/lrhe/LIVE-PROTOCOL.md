@@ -21,8 +21,10 @@ reviewer prose:
   The caller must supply the accountable main session's exact `model_family`;
   the resolver selects that `byLeadFamily` profile and emits the selection
   manifest that records the roster and the ledger's provenance;
-- `lrhe/review_dispatch.py` is the sole live dispatch entry point, and its
-  `freeze` → `resolve` → `dispatch` order is the only path to a reviewer. It
+- `lrhe/review_dispatch.py` is the sole live dispatch entry point, and its atomic
+  `prepare` command is the only operator path to a reviewer. It resolves the
+  roster, validates evidence delivery, freezes, resolves standing, builds the
+  envelope, and invokes the Task verifier before returning any payload. It
   reads the fixed live authority at
   `~/.omp/agent/skills/critical-review/qualification.yml` — never a
   caller-supplied authority path — and emits every standing field itself. There
@@ -334,124 +336,114 @@ Anything omitted from that inline evidence must be reported as unresolved, never
 reconstructed from naming conventions. Compute any displayed summary from the
 record; never maintain a second evidence count.
 
-## Round one: freeze, resolve, dispatch
+## Round one: atomic preparation and dispatch
 
 Live dispatch has exactly one entry point, `./lrhe/review_dispatch.py`, and one
-order: freeze the subject, resolve standing, dispatch the payload. The lead never
-assembles a reviewer assignment by hand, never writes a standing field into
-prose, and never launches a reviewer through the eval kernel, an `agent()` call,
-or a Task call it composed itself.
+operator command, `prepare`. The lead never assembles a reviewer assignment,
+retypes a roster, writes a standing field into prose, or manually sequences
+freeze, resolve, and dispatch. The command performs this fail-closed order before
+any provider call is possible:
 
-The division of labor is fixed. The model chooses what is reviewed and by whom:
-the frozen scope and packet, the repository commit and the exact file list, the
-accountable `lead_family`, the reviewer ids, and the review class — `focused`,
-`initial`, or `targeted-refuter`. Executable resolution owns standing: it reads
-the fixed live authority and emits `selectionClass`, `role`,
-`independence_class`, and `authority` itself, so a caller-supplied standing field
-is refused rather than trusted. The Task gate injects the trusted receipt:
-reviewer task text is generated, opens with
-`CRITICAL_REVIEW_RESOLVER_RECEIPT_V1`, and is submitted verbatim.
+1. resolve the complete roster from the frozen record, immutable packet,
+   accountable `lead_family`, review class, and fixed live authority;
+2. validate every selected row's `evidence_delivery` against the proposed
+   subject and packet bytes;
+3. freeze the scope, packet, optional record, panel manifest, and repository
+   identity;
+4. resolve standing into the receipt;
+5. build the canonical envelope; and
+6. run `verify-task`, which repeats the evidence invariant from freshly read
+   bytes before printing the approved Task input.
 
-Resolve the roster of record before freezing the dispatch subject. The panel
-resolver reads the frozen record and the immutable packet, verifies that the
-packet names exactly that record path and digest, and writes one durable
-selection manifest:
+For an initial council, run exactly:
 
 ```bash
-./lrhe/qualification.py initial \
-  --lead-family <gpt|claude|gemini|grok> \
-  --record review-record.json \
-  --packet packet.md \
-  --out ~/.omp/agent/critical-review/<review-id>/panel-selection.json
-```
-
-It prints exactly the bytes it wrote, validates against
-`lrhe/panel-selection.schema.json`, refuses to overwrite an existing manifest,
-refuses a session-local output path, and refuses to answer at all unless
-`lrhe/review_sequence.py` returns `full-council` for that record. The manifest
-binds the absolute record path, the record SHA-256, the proof-subject digest,
-the packet path and SHA-256, the exact qualification authority path and digest,
-and the resolver's own `qualificationPath` and `qualificationSha256`. It also
-binds `leadFamily`, the profile input that derived every row's standing. A
-changed lead family, record, packet, authority, or resolver no longer matches
-the roster it produced.
-The manifest is file- and directory-synced, appears atomically, and lands
-read-only; nothing downstream needs to `chmod` it or accept partial bytes.
-
-The manifest is the epoch's roster of record and the ledger's provenance, not a
-dispatch authority. Read its complete `selected` array and hand those
-`reviewer_id` values to `resolve`; do not retype, filter, reorder, or supplement
-the roster, and never re-derive membership from prose or from `qualification.yml`
-by hand. Join every row by `reviewer_id`; `model_family` is descriptive and two
-rows may share it. Every `skipped` entry carries its sorted `reasonCodes` and is
-reported as `not_selected/ineligible` in the close report. Do not add a live
-`lrhe/dispatch.py` or another workflow framework. `workflowz` is generic guidance
-and does not replace this protocol.
-
-### Freeze the dispatch subject
-
-```bash
-./lrhe/review_dispatch.py freeze \
+./lrhe/review_dispatch.py prepare \
   --scope scope.md --packet packet.md --record review-record.json \
-  --repo <repository root> --commit <40-hex commit equal to HEAD> \
-  --file <repository-relative path> [--file <repository-relative path> ...] \
-  --out ~/.omp/agent/critical-review/<review-id>/frozen-subject.json
-```
-
-A repository subject requires a clean HEAD, a caller-supplied lowercase 40-hex
-commit that equals that HEAD, and a nonempty list of exact repository-relative
-files. Every bound path must be a regular blob at that commit — git mode `100644`
-or `100755`. A directory, a symlink (`120000`), or a submodule gitlink (`160000`)
-is refused, because none of them fixes the bytes a reviewer would read: a
-committed symlink is immutable as a tree entry while its target is not. `--repo`
-without `--commit` and at least one `--file` is a working-tree subject and is
-refused by name: there is no freeze of a mutable tree, and no reviewer ever reads
-one. Omit `--repo` for a packet-only subject — `--commit` and `--file` are then
-refused, and the subject binds the scope and packet content hashes instead.
-`--scope` and `--packet` are required in both shapes and are hash-bound;
-`--record` is optional. The frozen subject validates against
-`lrhe/frozen-subject.schema.json`.
-
-### Resolve standing
-
-```bash
-./lrhe/review_dispatch.py resolve \
-  --subject frozen-subject.json \
-  --lead-family <gpt|claude|gemini|grok> \
-  --review-class <focused|initial|targeted-refuter> \
-  --reviewer <reviewer_id> [--reviewer <reviewer_id> ...] \
-  --out ~/.omp/agent/critical-review/<review-id>/resolver-receipt.json
-```
-
-The review class is a completeness contract, not a label. `initial` must name the
-complete selected council; `focused` names exactly one configured initial critic;
-`targeted-refuter` names the complete fixed refutation pool. A short, padded,
-substituted, or reordered set fails closed rather than quietly dispatching a
-smaller council than the authority selected. `resolve` writes exactly one
-artifact, the resolver receipt, validated against the generated
-`resolver-receipt.schema.json` whose `const` branches admit only the valid
-lead-family × review-class × reviewer tuples. It does not replace the selection
-manifest, and `epoch.py ledger --manifest` still takes that manifest.
-
-Each resolved row's `selectionClass` says whether the member is `unconditional`,
-`specialist`, or `conditional`, and its `authority` says what its result is worth
-— `supplemental_evidence` never counts toward the independent critic floor.
-Conditional selection does not imply independent standing, and no class changes
-how a result is weighed in debate, because there is no vote.
-
-### Dispatch
-
-```bash
-./lrhe/review_dispatch.py dispatch \
-  --receipt resolver-receipt.json \
+  --manifest ~/.omp/agent/critical-review/<review-id>/panel-selection.json \
+  --repo <repository-root> --commit <40-hex-commit-equal-to-HEAD> \
+  --file <repository-relative-path> [--file <repository-relative-path> ...] \
+  --lead-family <gpt|claude|gemini|grok> --review-class initial \
+  --subject ~/.omp/agent/critical-review/<review-id>/frozen-subject.json \
+  --receipt ~/.omp/agent/critical-review/<review-id>/resolver-receipt.json \
   --out ~/.omp/agent/critical-review/<review-id>/review-dispatch-envelope.json
 ```
 
-`dispatch` writes the envelope, hashes the bytes it wrote, and prints one strict
-JSON object whose only key is `task_input`. Submit that object verbatim as the
-Task call; `verify-task` independently regenerates the same object immediately
-before execution.
+`prepare` resolves and writes the panel manifest itself. The manifest binds the
+absolute record path and digest, proof-subject digest, packet path and digest,
+lead family, qualification authority and resolver bytes, and the exact ordered
+`selected` and `skipped` rows. The frozen subject binds the manifest path and
+digest plus the digest of `lrhe/panel-selection.schema.json`. Freeze re-resolves
+the manifest and requires byte-equivalent content; a stale, hand-edited,
+filtered, reordered, or supplemented manifest is refused.
 
+Evidence compatibility is executable policy:
+
+- Any selected `evidence_delivery=repository` row requires
+  `subject_kind=repository`, a caller-supplied lowercase 40-hex commit equal to
+  clean `HEAD`, and a nonempty exact list of regular files bound in that commit.
+  Directories, symlinks, submodule gitlinks, modified files, and untracked files
+  are refused.
+- A `packet-only` subject is admissible only when every selected row uses
+  `inline` delivery and `design_or_diff` embeds the complete UTF-8 evidence bytes
+  in this versioned form:
+
+  ```yaml
+  design_or_diff:
+    format: critical-review-complete-inline-evidence-v1
+    artifacts:
+      - name: src/example.py
+        sha256: <sha256 of the exact UTF-8 content below>
+        content: |
+          <complete reviewed bytes>
+  ```
+
+  A path, `agent://` handle, prose summary, or unstructured excerpt supplied in
+  place of this bundle never counts as inline evidence. The versioned format is
+  the accountable packet producer's declaration that each `content` value is a
+  complete artifact, so the verifier treats those declared UTF-8 bytes as opaque
+  and proves their digest rather than guessing their meaning from their text.
+  Artifact names are labels only. A repository subject with any inline member
+  must carry the same complete bundle for that member, while every repository
+  member still requires the bound commit and files.
+
+A focused preparation uses the same command with `--review-class focused` and
+exactly one `--reviewer`; it has no panel manifest. A targeted-refuter
+preparation uses `--review-class targeted-refuter`, requires the remediation
+record, and infers the complete fixed pool; callers do not name or filter it.
+Packet, scope, repository, subject, receipt, and envelope arguments retain the
+same meanings.
+
+The lower-level freeze, standing-resolution, and envelope builders remain
+internal policy functions for `prepare` and focused tests. They are not CLI
+subcommands and cannot mint a second provider-ready route. The only other CLI
+surface is internal `verify-task`, invoked by the Task policy gate against an
+existing `prepare` envelope.
+
+The review class is a completeness contract, not a label. `initial` is exactly
+the manifest's selected council; `focused` is exactly one configured initial
+critic; `targeted-refuter` is the complete fixed refutation pool. Standing remains
+resolver-owned: `selectionClass`, `role`, `independence_class`, and `authority`
+come from the fixed live authority and cannot be caller-supplied.
+
+`prepare` writes each strict, hash-bound, non-overwriting artifact atomically,
+with the envelope last as the dispatchability commit marker. A stop before that
+write leaves no provider-addressable dispatch; a caught failure removes every
+artifact created by the invocation. Only after `verify-task` rehashes the
+envelope and revalidates the current resolver and qualification authority,
+subject and manifest state, evidence compatibility, receipt, assignments, and
+exact canonical Task input does `prepare` print one JSON object whose only key
+is `task_input`. Submit that object verbatim as the Task call. An edited
+envelope, stale manifest, incompatible evidence mode, dirty tree, or path
+supplied instead of an inline bundle is blocked rather than
+warned.
+
+The manifest remains the epoch's roster of record and ledger provenance. Join
+rows only by `reviewer_id`; `model_family` is descriptive and two rows may share
+it. Every `skipped` entry retains its sorted `reasonCodes` and is reported as
+`not_selected/ineligible` in the close report.
+
+### Canonical Task boundary
 OMP uses one canonical batch Task shape for every review class: exactly `i`,
 `context`, and `tasks`. A single `focused` reviewer or targeted refuter is a
 one-item batch; never add a padding reviewer. `context` is:
@@ -473,6 +465,12 @@ call once; its inline completion is the review barrier for a focused review or
 the whole concurrent council. Do not detach reviewers, inspect `hub` jobs, or
 poll/sleep for verdicts. No reviewer payload may enter the lead's context or a
 peer-visible file until every member has settled.
+
+The policy gate records the envelope as in flight before execution, blocks
+concurrent or completed replay in the same session, and opens the one
+byte-identical transport retry only after the Task tool returns a terminal
+error. This state follows the protected Task lifecycle rather than the enclosing
+eval lifecycle, so an outer nonterminal transition cannot authorize redispatch.
 
 The extension treats every Task item whose agent name starts with `review-` as
 protected. A protected or mixed call without the exact
@@ -548,8 +546,8 @@ The transport allowance is exactly one total retry per member per epoch. Re-run
 `epoch.py recheck` and the full frozen-record gate
 (`./lrhe/review_sequence.py review-record.json`), then resubmit the exact
 `task_input` that `verify-task` regenerates from the same envelope. A retry
-reuses the existing envelope: `dispatch` never overwrites one, and re-freezing
-or re-resolving to obtain a fresh envelope is a new epoch, not a retry. Never reword
+reuses the existing envelope: `prepare` never overwrites one, and preparing a
+fresh envelope starts a new epoch rather than a retry. Never reword
 or reframe a task, change the frozen subject or evidence, reduce scope, change
 evidence delivery, lower thinking level, or substitute a model or family.
 If that identical retry also fails, the member is `missing` for the epoch. Never
@@ -630,18 +628,15 @@ adds another correlated draw. Its corpus and answer key are private
 ## One targeted refutation round
 
 Run a refutation only when the machine gate returns `action: targeted-refuter`
-for a readiness-complete `remediation` epoch. Resolve eligible reviewers with
-`./lrhe/qualification.py targeted-refuter --lead-family
-<gpt|claude|gemini|grok>`. That roster is fixed and separate: it never contains a
-conditional critic and takes no record or packet. There is at most
-one targeted refutation for the entire review sequence. Dispatch it through the
-same three commands as round one — `freeze`, then `resolve --review-class
-targeted-refuter` naming the complete fixed pool, then `dispatch` — and submit
-the emitted payload verbatim. The refuter's standing arrives the same way every
-reviewer's does, inside the generated
-`CRITICAL_REVIEW_RESOLVER_RECEIPT_V1` block; there is no separate hand-written
-refutation launch. The refutation scope carried in the frozen scope document is
-only:
+for a readiness-complete `remediation` epoch. Dispatch it only through
+`./lrhe/review_dispatch.py prepare --review-class targeted-refuter`. The command
+requires the frozen remediation record and immutable packet, resolves the fixed
+pool itself, validates each member's evidence mode, and refuses caller-supplied
+reviewers. There is at most one targeted refutation for the entire review
+sequence. Submit the emitted payload verbatim. The refuter's standing arrives
+inside the generated `CRITICAL_REVIEW_RESOLVER_RECEIPT_V1` block; there is no
+separate hand-written refutation launch. The refutation scope carried in the
+frozen scope document is only:
 
 ```text
 Claim and finding ID:

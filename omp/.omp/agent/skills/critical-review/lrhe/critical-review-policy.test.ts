@@ -80,24 +80,39 @@ function rejectingVerifier(
 	return Object.assign(verify, { calls });
 }
 
-type ToolCall = (toolName: string, input?: unknown) => Promise<unknown>;
+type ToolCall = {
+	(toolName: string, input?: unknown, toolCallId?: string): Promise<unknown>;
+	result(toolName: string, toolCallId: string, isError: boolean): Promise<unknown>;
+};
 
 function gate(
 	promptParts: string[],
 	verify: VerifyTask = approvingVerifier(),
 ): ToolCall {
-	let handler: ((event: unknown, ctx: unknown) => unknown) | undefined;
+	let toolCallHandler: ((event: unknown, ctx: unknown) => unknown) | undefined;
+	let toolResultHandler: ((event: unknown, ctx: unknown) => unknown) | undefined;
 	const pi = {
 		on: (
 			event: string,
 			registered: (event: unknown, ctx: unknown) => unknown,
 		) => {
-			if (event === "tool_call") handler = registered;
+			if (event === "tool_call") toolCallHandler = registered;
+			if (event === "tool_result") toolResultHandler = registered;
 		},
 	};
 	criticalReviewPolicy(pi as unknown as ExtensionAPI, verify);
 	const ctx = { getSystemPrompt: () => promptParts };
-	return async (toolName, input) => handler?.({ input, toolName }, ctx);
+	let callCount = 0;
+	const call = (async (toolName, input, toolCallId) => {
+		callCount += 1;
+		return toolCallHandler?.(
+			{ input, toolCallId: toolCallId ?? [toolName, callCount].join("-"), toolName },
+			ctx,
+		);
+	}) as ToolCall;
+	call.result = async (toolName, toolCallId, isError) =>
+		toolResultHandler?.({ isError, toolCallId, toolName }, ctx);
+	return call;
 }
 
 function reasonOf(decision: unknown): string {
@@ -423,6 +438,56 @@ describe("protected task calls", () => {
 		expect(verify.calls).toEqual([
 			{ envelopePath: ENVELOPE_PATH, envelopeSha256: ENVELOPE_SHA256 },
 		]);
+	});
+
+	test("blocks unresolved and completed envelope redispatches", async () => {
+		const call = gate(LEAD_PROMPT);
+
+		expect(
+			await call("task", structuredClone(CANONICAL_INPUT), "review-call-1"),
+		).toEqual({ input: CANONICAL_INPUT });
+		const unresolved = await call(
+			"task",
+			structuredClone(CANONICAL_INPUT),
+			"review-call-2",
+		);
+		const unresolvedReason = reasonOf(unresolved);
+		expect(unresolvedReason).toContain("unresolved Task call");
+		expect(unresolvedReason).toContain("background acknowledgement");
+
+		await call.result("task", "review-call-1", false);
+		expect(
+			reasonOf(
+				await call(
+					"task",
+					structuredClone(CANONICAL_INPUT),
+					"review-call-3",
+				),
+			),
+		).toContain("already completed");
+	});
+
+	test("allows one retry only after a terminal Task error", async () => {
+		const call = gate(LEAD_PROMPT);
+
+		expect(
+			await call("task", structuredClone(CANONICAL_INPUT), "review-call-1"),
+		).toEqual({ input: CANONICAL_INPUT });
+		await call.result("task", "review-call-1", true);
+		expect(
+			await call("task", structuredClone(CANONICAL_INPUT), "review-call-2"),
+		).toEqual({ input: CANONICAL_INPUT });
+		await call.result("task", "review-call-2", true);
+
+		expect(
+			reasonOf(
+				await call(
+					"task",
+					structuredClone(CANONICAL_INPUT),
+					"review-call-3",
+				),
+			),
+		).toContain("consumed its one transport retry");
 	});
 });
 

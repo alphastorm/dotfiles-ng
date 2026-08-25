@@ -1,4 +1,4 @@
-"""Meta-tests for the freeze -> resolve -> dispatch reviewer Task API.
+"""Meta-tests for atomic critical-review Task preparation and verification.
 
 The expected standing matrix is hard-coded here on purpose. Deriving it from the
 same authority the resolver reads would make these tests agree with whatever the
@@ -24,6 +24,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 import qualification  # noqa: E402  -- needs the path above
 import review_dispatch as rd  # noqa: E402
+from test_review_sequence import _ready_record  # noqa: E402
 
 # (lead_family, review_class, reviewer_id) -> (agent, selectionClass, role,
 # independence_class, authority). Standing is lead-relative and never
@@ -302,7 +303,14 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _packet_text(document: dict, *, record_path: str, record_sha256: str, diff: str) -> str:
+def _complete_inline_evidence(name: str, content: str) -> dict[str, object]:
+    return {
+        "format": rd.INLINE_EVIDENCE_FORMAT,
+        "artifacts": [{"name": name, "sha256": _digest(content), "content": content}],
+    }
+
+
+def _packet_text(document: dict, *, record_path: str, record_sha256: str, diff: object) -> str:
     """One immutable packet granting every configured lane both grants.
 
     The grants are read off the authority rather than hard-coded: these tests
@@ -411,6 +419,59 @@ def repository(tmp_path) -> dict:
     _git(repo, "commit", "-q", "-m", "subject")
     commit = _git(repo, "rev-parse", "HEAD").strip()
     return {"path": repo.resolve(), "commit": commit}
+
+
+@pytest.fixture
+def council_material(tmp_path, authority) -> dict:
+    """One ready record, packet, scope, and freshly resolved initial manifest."""
+
+    root = tmp_path / "council"
+    record = _ready_record(root)
+    record_path = root / "review-record.json"
+    record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    packet_path = root / "packet.md"
+    packet_path.write_text(
+        _packet_text(
+            authority,
+            record_path=str(record_path.resolve()),
+            record_sha256=_digest(record_path.read_text(encoding="utf-8")),
+            diff="controller.py",
+        ),
+        encoding="utf-8",
+    )
+    scope_path = root / "scope.md"
+    scope_path.write_text(
+        "# Assurance scope\nClass: production/hard-to-reverse.\nAsset: dispatch policy.\n",
+        encoding="utf-8",
+    )
+    bound_record, record_sha256, record_document = qualification.bind_record(record_path)
+    bound_packet, packet_sha256, packet = qualification.bind_packet(
+        packet_path, bound_record, record_sha256
+    )
+    authority_path, authority_sha256, authority_document = qualification.bind_qualification(
+        rd.LIVE_AUTHORITY
+    )
+    manifest = qualification.select_full_council(
+        authority_document,
+        record_document,
+        packet,
+        lead_family="gpt",
+        record_path=bound_record,
+        record_sha256=record_sha256,
+        packet_path=bound_packet,
+        packet_sha256=packet_sha256,
+        authority_path=authority_path,
+        authority_sha256=authority_sha256,
+    )
+    manifest_path = root / "panel-selection.json"
+    manifest_path.write_text(qualification.manifest_text(manifest), encoding="utf-8")
+    return {
+        "scope": scope_path,
+        "packet": packet_path,
+        "record": record_path,
+        "manifest": manifest_path,
+        "manifest_document": manifest,
+    }
 
 
 # --------------------------------------------------------------------------
@@ -661,6 +722,350 @@ def test_task_input_uses_one_batch_shape_for_every_reviewer_count(tmp_path):
 # freezing
 
 
+def test_evidence_compatibility_matrix(tmp_path, material, authority, repository):
+    packet_only = rd.freeze_subject(
+        scope_path=material["scope"], packet_path=material["packet"]
+    ).subject
+    content = "VALUE = 1\n"
+    inline_packet = tmp_path / "inline-packet.md"
+    inline_packet.write_text(
+        _packet_text(
+            authority,
+            record_path="/frozen/review-record.json",
+            record_sha256="a" * 64,
+            diff=_complete_inline_evidence("src/dispatch.py", content),
+        ),
+        encoding="utf-8",
+    )
+    complete_inline = rd.freeze_subject(scope_path=material["scope"], packet_path=inline_packet)
+    repository_subject = rd.freeze_subject(
+        scope_path=material["scope"],
+        packet_path=material["packet"],
+        repository_path=repository["path"],
+        subject_commit=repository["commit"],
+        files=["src/dispatch.py"],
+    )
+    matrix = (
+        (
+            "packet-only + repository reviewer",
+            packet_only,
+            material["packet"],
+            ("repository",),
+            "evidence_delivery=repository",
+        ),
+        (
+            "packet-only + path-only evidence",
+            packet_only,
+            material["packet"],
+            ("inline",),
+            "complete evidence bytes",
+        ),
+        (
+            "packet-only + complete inline evidence",
+            complete_inline.subject,
+            inline_packet,
+            ("inline",),
+            None,
+        ),
+        (
+            "repository reviewer + clean bound commit/files",
+            repository_subject.subject,
+            material["packet"],
+            ("repository",),
+            None,
+        ),
+    )
+    for name, subject, packet_path, deliveries, refusal in matrix:
+        packet = qualification.parse_packet(packet_path)
+        if refusal is None:
+            rd.validate_evidence_compatibility(subject, packet, deliveries)
+        else:
+            with pytest.raises(rd.DispatchError, match=refusal) as error:
+                rd.validate_evidence_compatibility(subject, packet, deliveries)
+            assert refusal in str(error.value), name
+
+
+def test_freeze_binds_panel_manifest_and_its_evidence_modes(council_material, repository):
+    verified = rd.freeze_subject(
+        scope_path=council_material["scope"],
+        packet_path=council_material["packet"],
+        record_path=council_material["record"],
+        manifest_path=council_material["manifest"],
+        repository_path=repository["path"],
+        subject_commit=repository["commit"],
+        files=["src/dispatch.py"],
+    )
+    assert verified.subject.manifest_sha256 == _digest(
+        council_material["manifest"].read_text(encoding="utf-8")
+    )
+    assert verified.manifest == council_material["manifest_document"]
+    assert rd.verify_subject(verified.subject).manifest == council_material["manifest_document"]
+
+    with pytest.raises(rd.DispatchError, match="evidence_delivery=repository"):
+        rd.freeze_subject(
+            scope_path=council_material["scope"],
+            packet_path=council_material["packet"],
+            record_path=council_material["record"],
+            manifest_path=council_material["manifest"],
+        )
+
+
+def test_verify_subject_refuses_panel_schema_drift(
+    tmp_path, council_material, repository, monkeypatch
+):
+    schema_copy = tmp_path / "panel-selection.schema.json"
+    schema_source = Path(rd.__file__).parent / Path(rd.PANEL_SCHEMA_RELATIVE_PATH).name
+    schema_copy.write_bytes(schema_source.read_bytes())
+    bind_public_schema = rd.bind_public_schema
+
+    def bind_from_copy(relative: str):
+        if relative != rd.PANEL_SCHEMA_RELATIVE_PATH:
+            return bind_public_schema(relative)
+        raw = schema_copy.read_bytes()
+        return schema_copy, hashlib.sha256(raw).hexdigest(), json.loads(raw)
+
+    monkeypatch.setattr(rd, "bind_public_schema", bind_from_copy)
+    verified = rd.freeze_subject(
+        scope_path=council_material["scope"],
+        packet_path=council_material["packet"],
+        record_path=council_material["record"],
+        manifest_path=council_material["manifest"],
+        repository_path=repository["path"],
+        subject_commit=repository["commit"],
+        files=["src/dispatch.py"],
+    )
+    schema_copy.write_text(schema_copy.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    with pytest.raises(rd.DispatchError, match="panel manifest schema now digests"):
+        rd.verify_subject(verified.subject)
+
+
+def _initial_prepare_args(council_material, repository, paths):
+    return [
+        "prepare",
+        "--scope",
+        str(council_material["scope"]),
+        "--packet",
+        str(council_material["packet"]),
+        "--record",
+        str(council_material["record"]),
+        "--manifest",
+        str(paths["manifest"]),
+        "--repo",
+        str(repository["path"]),
+        "--commit",
+        repository["commit"],
+        "--file",
+        "src/dispatch.py",
+        "--lead-family",
+        "gpt",
+        "--review-class",
+        "initial",
+        "--subject",
+        str(paths["subject"]),
+        "--receipt",
+        str(paths["receipt"]),
+        "--out",
+        str(paths["envelope"]),
+    ]
+
+
+def _initial_prepare_paths(root):
+    return {
+        "manifest": root / "panel-selection.json",
+        "subject": root / "frozen-subject.json",
+        "receipt": root / "resolver-receipt.json",
+        "envelope": root / "review-dispatch-envelope.json",
+    }
+
+
+def test_prepare_builds_the_verified_initial_dispatch_atomically(
+    tmp_path, council_material, repository, capsys
+):
+    paths = _initial_prepare_paths(tmp_path / "prepared")
+    assert rd.main(_initial_prepare_args(council_material, repository, paths)) == 0
+    emitted = json.loads(capsys.readouterr().out)["task_input"]
+    assert all(path.is_file() for path in paths.values())
+    subject = json.loads(paths["subject"].read_text(encoding="utf-8"))
+    assert subject["manifestPath"] == str(paths["manifest"].resolve())
+    manifest_text = paths["manifest"].read_text(encoding="utf-8")
+    manifest = json.loads(manifest_text)
+    assert len(emitted["tasks"]) == len(manifest["selected"])
+
+    envelope_sha256 = _digest(paths["envelope"].read_text(encoding="utf-8"))
+    paths["manifest"].chmod(0o644)
+    paths["manifest"].write_text(manifest_text + "\n", encoding="utf-8")
+    assert (
+        rd.main(
+            [
+                "verify-task",
+                "--envelope",
+                str(paths["envelope"]),
+                "--sha256",
+                envelope_sha256,
+            ]
+        )
+        == 1
+    )
+    refusal = capsys.readouterr()
+    assert refusal.out == ""
+    assert "panel manifest now digests" in refusal.err
+
+
+def test_prepare_refuses_a_dirty_repository_before_writing_artifacts(
+    tmp_path, council_material, repository, capsys
+):
+    (repository["path"] / "src/dispatch.py").write_text("VALUE = 99\n", encoding="utf-8")
+    paths = _initial_prepare_paths(tmp_path / "dirty-prepared")
+    assert rd.main(_initial_prepare_args(council_material, repository, paths)) == 1
+    captured = capsys.readouterr()
+    assert "modified or untracked" in captured.err
+    assert not any(path.exists() for path in paths.values())
+
+
+def test_prepare_rolls_back_every_artifact_when_final_verification_fails(
+    tmp_path, council_material, repository, monkeypatch, capsys
+):
+    paths = _initial_prepare_paths(tmp_path / "failed-prepared")
+
+    def refuse_final_verification(_args):
+        raise rd.DispatchError("forced final verification refusal")
+
+    monkeypatch.setattr(rd, "command_verify_task", refuse_final_verification)
+    assert rd.main(_initial_prepare_args(council_material, repository, paths)) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "forced final verification refusal" in captured.err
+    assert not any(path.exists() for path in paths.values())
+
+
+def test_prepare_never_publishes_envelope_after_dependency_write_failure(
+    tmp_path, council_material, repository, monkeypatch, capsys
+):
+    paths = _initial_prepare_paths(tmp_path / "dependency-failure")
+    write_once = rd._write_once
+    attempted: list[str] = []
+
+    def fail_receipt(path, text, label):
+        attempted.append(label)
+        if label == "resolver receipt":
+            raise rd.DispatchError("forced receipt write failure")
+        return write_once(path, text, label)
+
+    monkeypatch.setattr(rd, "_write_once", fail_receipt)
+    assert rd.main(_initial_prepare_args(council_material, repository, paths)) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "forced receipt write failure" in captured.err
+    assert attempted == [
+        "panel selection manifest",
+        "frozen subject",
+        "resolver receipt",
+    ]
+    assert not any(path.exists() for path in paths.values())
+
+
+def test_prepare_enforces_packet_only_evidence_end_to_end(tmp_path, material, authority, capsys):
+    def output_paths(root):
+        return {
+            "subject": root / "frozen-subject.json",
+            "receipt": root / "resolver-receipt.json",
+            "envelope": root / "review-dispatch-envelope.json",
+        }
+
+    def prepare_args(packet_path, paths):
+        return [
+            "prepare",
+            "--scope",
+            str(material["scope"]),
+            "--packet",
+            str(packet_path),
+            "--lead-family",
+            "gpt",
+            "--review-class",
+            "focused",
+            "--reviewer",
+            "claude-opus",
+            "--subject",
+            str(paths["subject"]),
+            "--receipt",
+            str(paths["receipt"]),
+            "--out",
+            str(paths["envelope"]),
+        ]
+
+    repository_only = output_paths(tmp_path / "repository-only")
+    assert rd.main(prepare_args(material["packet"], repository_only)) == 1
+    refusal = capsys.readouterr()
+    assert "evidence_delivery=repository" in refusal.err
+    assert refusal.out == ""
+    assert not any(path.exists() for path in repository_only.values())
+
+    authority["reviewers"]["claude-opus"]["evidenceDelivery"] = "inline"
+    authority["reviewers"]["claude-opus"]["tools"] = []
+    validated_authority = qualification.validate_qualification(authority)
+    rd.LIVE_AUTHORITY.write_text(
+        yaml.safe_dump(validated_authority, sort_keys=False), encoding="utf-8"
+    )
+    (rd.LIVE_AUTHORITY.parent / rd.RECEIPT_SCHEMA_FILENAME).write_text(
+        rd.receipt_schema_text(validated_authority), encoding="utf-8"
+    )
+
+    path_packet = tmp_path / "path-packet.md"
+    path_packet.write_text(
+        _packet_text(
+            validated_authority,
+            record_path="/frozen/review-record.json",
+            record_sha256="a" * 64,
+            diff="src/dispatch.py",
+        ),
+        encoding="utf-8",
+    )
+    path_only = output_paths(tmp_path / "path-only")
+    assert rd.main(prepare_args(path_packet, path_only)) == 1
+    refusal = capsys.readouterr()
+    assert "complete evidence bytes" in refusal.err
+    assert refusal.out == ""
+    assert not any(path.exists() for path in path_only.values())
+
+    content = "VALUE = 1\n"
+    inline_packet = tmp_path / "complete-inline-packet.md"
+    inline_packet.write_text(
+        _packet_text(
+            validated_authority,
+            record_path="/frozen/review-record.json",
+            record_sha256="a" * 64,
+            diff=_complete_inline_evidence("src/dispatch.py", content),
+        ),
+        encoding="utf-8",
+    )
+    complete = output_paths(tmp_path / "complete")
+    assert rd.main(prepare_args(inline_packet, complete)) == 0
+    emitted = json.loads(capsys.readouterr().out)["task_input"]
+    assert len(emitted["tasks"]) == 1
+    assert all(path.is_file() for path in complete.values())
+
+    envelope_sha256 = _digest(complete["envelope"].read_text(encoding="utf-8"))
+    inline_packet.write_text(
+        inline_packet.read_text(encoding="utf-8").replace("VALUE = 1", "VALUE = 2"),
+        encoding="utf-8",
+    )
+    assert (
+        rd.main(
+            [
+                "verify-task",
+                "--envelope",
+                str(complete["envelope"]),
+                "--sha256",
+                envelope_sha256,
+            ]
+        )
+        == 1
+    )
+    refusal = capsys.readouterr()
+    assert refusal.out == ""
+    assert "packet now digests" in refusal.err
+
+
 def test_freeze_refuses_an_abbreviated_commit(material, repository):
     with pytest.raises(rd.DispatchError, match="lowercase 40-hex commit"):
         rd.freeze_subject(
@@ -887,55 +1292,49 @@ def test_an_unknown_review_class_is_refused(material, authority):
 # the whole focused path
 
 
-def test_focused_dispatch_end_to_end(tmp_path, material, repository, capsys):
-    """freeze -> resolve -> dispatch -> verify-task, then prove it is not replayable."""
+def _focused_prepare_args(tmp_path, material, repository):
+    paths = {
+        "subject": tmp_path / "frozen-subject.json",
+        "receipt": tmp_path / "resolver-receipt.json",
+        "envelope": tmp_path / "review-dispatch-envelope.json",
+    }
+    return paths, [
+        "prepare",
+        "--scope",
+        str(material["scope"]),
+        "--packet",
+        str(material["packet"]),
+        "--repo",
+        str(repository["path"]),
+        "--commit",
+        repository["commit"],
+        "--file",
+        "src/dispatch.py",
+        "--lead-family",
+        "gpt",
+        "--review-class",
+        "focused",
+        "--reviewer",
+        "claude-opus",
+        "--subject",
+        str(paths["subject"]),
+        "--receipt",
+        str(paths["receipt"]),
+        "--out",
+        str(paths["envelope"]),
+    ]
 
-    subject_out = tmp_path / "frozen-subject.json"
-    assert (
-        rd.main(
-            [
-                "freeze",
-                "--scope",
-                str(material["scope"]),
-                "--packet",
-                str(material["packet"]),
-                "--repo",
-                str(repository["path"]),
-                "--commit",
-                repository["commit"],
-                "--file",
-                "src/dispatch.py",
-                "--out",
-                str(subject_out),
-            ]
-        )
-        == 0
-    )
-    subject = json.loads(subject_out.read_text(encoding="utf-8"))
+
+def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):
+    paths, argv = _focused_prepare_args(tmp_path, material, repository)
+    assert rd.main(argv) == 0
+    emitted = json.loads(capsys.readouterr().out)["task_input"]
+
+    subject = json.loads(paths["subject"].read_text(encoding="utf-8"))
     assert subject["kind"] == "repository"
     assert subject["files"] == ["src/dispatch.py"]
     assert subject["subjectCommit"] == repository["commit"]
-
-    receipt_out = tmp_path / "resolver-receipt.json"
-    assert (
-        rd.main(
-            [
-                "resolve",
-                "--subject",
-                str(subject_out),
-                "--lead-family",
-                "gpt",
-                "--review-class",
-                "focused",
-                "--reviewer",
-                "claude-opus",
-                "--out",
-                str(receipt_out),
-            ]
-        )
-        == 0
-    )
-    receipt = json.loads(receipt_out.read_text(encoding="utf-8"))
+    receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
     assert receipt["reviewClass"] == "focused"
     assert [row["reviewer_id"] for row in receipt["assignments"]] == ["claude-opus"]
     assignment = receipt["assignments"][0]
@@ -950,109 +1349,138 @@ def test_focused_dispatch_end_to_end(tmp_path, material, repository, capsys):
         assignment["authority"],
     ) == (agent, selection_class, role, independence_class, authority)
 
-    capsys.readouterr()
-    envelope_out = tmp_path / "review-dispatch-envelope.json"
-    assert rd.main(["dispatch", "--receipt", str(receipt_out), "--out", str(envelope_out)]) == 0
-    emitted = json.loads(capsys.readouterr().out)["task_input"]
-    envelope_sha256 = _digest(envelope_out.read_text(encoding="utf-8"))
-
+    envelope_sha256 = _digest(paths["envelope"].read_text(encoding="utf-8"))
     assert (
-        rd.main(["verify-task", "--envelope", str(envelope_out), "--sha256", envelope_sha256]) == 0
+        rd.main(
+            [
+                "verify-task",
+                "--envelope",
+                str(paths["envelope"]),
+                "--sha256",
+                envelope_sha256,
+            ]
+        )
+        == 0
     )
     approved = json.loads(capsys.readouterr().out)["task_input"]
     assert approved == emitted
     assert set(approved) == {"i", "context", "tasks"}
     assert approved["i"] == rd.DISPATCH_TASK_INTENT
-    assert approved["context"] == rd.dispatch_marker(envelope_out.resolve(), envelope_sha256)
     assert len(approved["tasks"]) == 1
-    item = approved["tasks"][0]
-    assert item["agent"] == agent
-    task = item["task"]
+    task = approved["tasks"][0]["task"]
     assert task.startswith(f"{rd.RECEIPT_MARKER}\n")
-    assert "envelope_path=" not in task
-    assert "envelope_sha256=" not in task
     assert f"subject_commit={repository['commit']}" in task
     assert f"repository_path={repository['path'].resolve()}" in task
     assert f"independence_class={independence_class}" in task
-    # The transmitted evidence is the bytes, not a path that may later hold
-    # something else.
     assert material["scope"].read_text(encoding="utf-8").rstrip("\n") in task
     assert material["packet"].read_text(encoding="utf-8").rstrip("\n") in task
 
-    # A digest the caller did not take from these exact bytes is refused.
-    assert rd.main(["verify-task", "--envelope", str(envelope_out), "--sha256", "f" * 64]) == 1
-    # And an edit to the scope after dispatch stops transmission rather than
-    # quietly sending material nobody froze.
     material["scope"].write_text("# Assurance scope\nClass: bounded experiment.\n", "utf-8")
-    assert (
-        rd.main(["verify-task", "--envelope", str(envelope_out), "--sha256", envelope_sha256]) == 1
-    )
-
-
-def test_generated_artifacts_are_read_only_and_never_overwritten(tmp_path, material, repository):
-    out = tmp_path / "frozen-subject.json"
-    argv = [
-        "freeze",
-        "--scope",
-        str(material["scope"]),
-        "--packet",
-        str(material["packet"]),
-        "--repo",
-        str(repository["path"]),
-        "--commit",
-        repository["commit"],
-        "--file",
-        "src/dispatch.py",
-        "--out",
-        str(out),
-    ]
-    assert rd.main(argv) == 0
-    assert out.stat().st_mode & 0o777 == 0o444
-    assert rd.main(argv) == 1
-
-
-def test_a_receipt_naming_another_authority_is_refused(tmp_path, material, repository):
-    subject_out = tmp_path / "frozen-subject.json"
-    receipt_out = tmp_path / "resolver-receipt.json"
     assert (
         rd.main(
             [
-                "freeze",
+                "verify-task",
+                "--envelope",
+                str(paths["envelope"]),
+                "--sha256",
+                envelope_sha256,
+            ]
+        )
+        == 1
+    )
+    assert capsys.readouterr().out == ""
+
+
+def test_targeted_refuter_prepare_infers_the_fixed_pool(tmp_path, authority, repository, capsys):
+    root = tmp_path / "targeted"
+    record = _ready_record(root, "remediation")
+    record["resolved_finding_ids"] = []
+    record["disputed_or_unresolved_p01"] = ["P1-001"]
+    record["lead_verification"] = [
+        {
+            "finding_id": "P1-001",
+            "result": "disputed",
+            "evidence": "direct reproducer is inconclusive",
+        }
+    ]
+    record_path = root / "review-record.json"
+    record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    packet_path = root / "packet.md"
+    packet_path.write_text(
+        _packet_text(
+            authority,
+            record_path=str(record_path.resolve()),
+            record_sha256=_digest(record_path.read_text(encoding="utf-8")),
+            diff="src/dispatch.py",
+        ),
+        encoding="utf-8",
+    )
+    scope_path = root / "scope.md"
+    scope_path.write_text("# Targeted refutation scope\n", encoding="utf-8")
+    paths = {
+        "subject": root / "frozen-subject.json",
+        "receipt": root / "resolver-receipt.json",
+        "envelope": root / "review-dispatch-envelope.json",
+    }
+    assert (
+        rd.main(
+            [
+                "prepare",
                 "--scope",
-                str(material["scope"]),
+                str(scope_path),
                 "--packet",
-                str(material["packet"]),
+                str(packet_path),
+                "--record",
+                str(record_path),
                 "--repo",
                 str(repository["path"]),
                 "--commit",
                 repository["commit"],
                 "--file",
                 "src/dispatch.py",
-                "--out",
-                str(subject_out),
-            ]
-        )
-        == 0
-    )
-    assert (
-        rd.main(
-            [
-                "resolve",
-                "--subject",
-                str(subject_out),
                 "--lead-family",
                 "gpt",
                 "--review-class",
-                "focused",
-                "--reviewer",
-                "claude-opus",
+                "targeted-refuter",
+                "--subject",
+                str(paths["subject"]),
+                "--receipt",
+                str(paths["receipt"]),
                 "--out",
-                str(receipt_out),
+                str(paths["envelope"]),
             ]
         )
         == 0
     )
-    forged = json.loads(receipt_out.read_text(encoding="utf-8"))
+    emitted = json.loads(capsys.readouterr().out)["task_input"]
+    receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
+    expected = [
+        reviewer.reviewer_id
+        for reviewer in qualification.live_reviewers(authority, "targeted-refuter", "gpt")
+    ]
+    assert [row["reviewer_id"] for row in receipt["assignments"]] == expected
+    assert len(emitted["tasks"]) == len(expected)
+
+
+@pytest.mark.parametrize("legacy_command", ["freeze", "resolve", "dispatch"])
+def test_cli_has_no_manual_dispatch_stage(legacy_command):
+    with pytest.raises(SystemExit) as refusal:
+        rd.main([legacy_command])
+    assert refusal.value.code == 2
+
+
+def test_generated_artifacts_are_read_only_and_never_overwritten(tmp_path, material, repository):
+    paths, argv = _focused_prepare_args(tmp_path, material, repository)
+    assert rd.main(argv) == 0
+    assert all(path.stat().st_mode & 0o777 == 0o444 for path in paths.values())
+    assert rd.main(argv) == 1
+
+
+def test_a_receipt_naming_another_authority_is_refused(tmp_path, material, repository, capsys):
+    paths, argv = _focused_prepare_args(tmp_path, material, repository)
+    assert rd.main(argv) == 0
+    capsys.readouterr()
+    forged = json.loads(paths["receipt"].read_text(encoding="utf-8"))
     forged["authorityPath"] = str(tmp_path / "elsewhere/qualification.yml")
     elsewhere = tmp_path / "forged-receipt.json"
     elsewhere.write_text(json.dumps(forged, indent=2, sort_keys=True) + "\n", encoding="utf-8")

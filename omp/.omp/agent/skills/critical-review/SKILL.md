@@ -55,10 +55,10 @@ This routing neither selects nor modifies a full council; full-council membershi
 remains resolver-owned.
 
 Routing chooses the reviewer; it never states the reviewer's standing. A focused
-review is dispatched through the same executable path as a council —
-`review_dispatch.py freeze`, then `resolve` with review class `focused` and that
-one reviewer id, then `dispatch` — and the emitted Task payload is submitted
-verbatim. The resolver emits `selectionClass`, `role`, `independence_class`, and
+review is dispatched through the atomic preparation path,
+`review_dispatch.py prepare --review-class focused --reviewer <reviewer_id>`, and
+the emitted Task payload is submitted verbatim. The resolver emits
+`selectionClass`, `role`, `independence_class`, and
 `authority` from the live authority; the lead never writes, derives, or
 hand-copies a standing field, and a reviewer reached any other way is not a
 review.
@@ -68,6 +68,13 @@ Review execution is a blocking Task boundary. Every `review-*` agent declares
 verdicts from that call. A focused review is a legitimate one-item batch, not a
 general delegation wave; never pad it, detach it, poll `hub`/jobs, or run sleep
 loops while the subject is frozen.
+
+An enclosing eval call may auto-background while that protected Task is still
+running. Its `bg_*` acknowledgement, an unavailable kernel result variable, or
+failure to resolve that id through `output()` is orchestration state, not a Task
+result and not failed reviewer delivery. Keep the original call as the sole
+attempt and consume its eventual completion; never dispatch the envelope again
+while that call is unresolved.
 
 When a full council is justified, encode the same brief using the existing packet fields rather than adding keys: `goal` carries outcome and class; `requirements` carries named assets, caps, and result-validity requirements; `non_goals` carries excluded adversaries and reuse; `trust_boundaries` carries credible actors and boundaries; `rollback_contract` carries containment, recovery, and residual effects; and `rejected_alternatives_and_reasons` records disproportionate mitigations rejected before review.
 
@@ -99,9 +106,11 @@ Every change admitted to the full council has one `review_sequence_id`. Every fr
 
 One optional design pass, the initial pass, and at most one verified material redesign are the only general council passes. There is never a third implementation council, and one targeted refutation is the entire refutation budget for a sequence.
 
-An admitted epoch runs in one order: triage the draft record, freeze the complete change, mint subject-bound proof receipts, pass the full gate on the frozen record, resolve the panel manifest, then dispatch through the one executable path — `review_dispatch.py freeze` a clean full-commit repository subject or a content-hashed packet, `resolve` the complete selected council against the live authority, `dispatch` the envelope, and submit the emitted Task payload verbatim in one gated wave — normalize every returned item into the ledger, then close on the lead's dispositions. Triage may instead close the epoch on direct lead verification and mint nothing. No triage result authorizes a provider call, and reviewers never see one another's first-round output.
+An admitted epoch runs in one order: triage the draft record, freeze the complete change, mint subject-bound proof receipts, pass the full gate on the frozen record, then invoke one `review_dispatch.py prepare` command. That command resolves the roster and panel manifest, rejects incompatible evidence delivery, freezes the manifest-bound subject, resolves standing, builds the envelope, and runs `verify-task` before returning the exact Task payload. Submit it verbatim in one gated wave, normalize every returned item into the ledger, then close on the lead's dispositions. Triage may instead close the epoch on direct lead verification and mint nothing. No triage result authorizes a provider call, and reviewers never see one another's first-round output.
 
-Read `./lrhe/LIVE-PROTOCOL.md` only after admission selects a full council, and read it before any scaffold, record, freeze, receipt, manifest, or dispatch. It owns roster and provider authorization, the frozen record schema and subject binding, freeze and receipt commands, panel resolution, dispatch and the single bounded retry, ledger scaffolding and outcome capture, targeted refutation, and close/report. Load it on demand; never expand it into a session that has not admitted a council. Its executable tools and the schemas beside them stay authoritative wherever prose could drift.
+Any selected reviewer with `evidence_delivery=repository` requires a clean repository subject bound to one full commit and every reviewed regular file. A packet-only subject is admissible only when every selected reviewer uses `inline` delivery and `design_or_diff` embeds a `critical-review-complete-inline-evidence-v1` bundle with every evidence artifact's complete UTF-8 content and matching SHA-256. A path, handle, summary, or excerpt supplied instead of that bundle never counts as inline evidence. Inside the bundle, `content` is the accountable producer's complete-byte declaration and the verifier treats it as opaque. The Task gate repeats this invariant from freshly read bytes.
+
+Read `./lrhe/LIVE-PROTOCOL.md` only after admission selects a full council, and read it before any scaffold, record, freeze, receipt, manifest, or dispatch. It owns roster and provider authorization, the frozen record schema and subject binding, atomic preparation and internal Task verification, ledger scaffolding and outcome capture, targeted refutation, and close/report. Load it on demand; never expand it into a session that has not admitted a council. Its executable tools and the schemas beside them stay authoritative wherever prose could drift.
 
 ## Design-stage council
 
@@ -129,7 +138,7 @@ than in a remediation chain.
 
 Every dispatched reviewer receives this complete assignment. It is the canonical trusted assignment and the single owner of the shared review floor, including state fidelity; a private reviewer definition supplies the lens and output schema and never restates these requirements. Do not give reviewers caller-provided output schemas that weaken their agent schema.
 
-The assignment is generated, never composed by hand. `review_dispatch.py resolve` emits the standing block and `dispatch` emits the complete task text; the lead submits that payload verbatim and writes none of it. The model's inputs are the frozen scope and packet, the reviewer ids, the accountable `lead_family`, and the review class. The resolver emits every standing field from the live authority, and the Task gate revalidates the whole payload before any reviewer runs. Never write, derive, copy, or edit a standing value, and never ask a reviewer to infer or choose its own standing: a reviewer trusts the receipt block and nothing else for those fields.
+The assignment is generated, never composed by hand. `review_dispatch.py prepare` resolves standing, builds the complete task text, and returns the only provider-ready payload; the lead submits it verbatim and writes none of it. The model's inputs are the frozen scope and packet, output paths, the accountable `lead_family`, the review class, and only the focused reviewer id when applicable. The resolver emits every standing field from the live authority, and the Task gate revalidates the whole payload before any reviewer runs. Never write, derive, copy, or edit a reviewer's `selectionClass`, `role`, `independence_class`, or `authority`.
 
 This is the shape the generated assignment takes:
 

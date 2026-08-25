@@ -1,45 +1,37 @@
 #!/usr/bin/env python3
-"""Ordered freeze -> resolve -> dispatch API for critical-review reviewer Tasks.
+"""Atomic preparation API for critical-review reviewer Tasks.
 
 A structurally valid reviewer dispatch is one where the material under review,
 the reviewer's standing, and the bytes actually transmitted are all the same
 thing that some earlier step committed to. This module is the only path that
-produces one, and it produces it in one order:
+produces one.
 
-`freeze` binds the subject. The caller supplies the assurance scope file, the
-immutable packet, an optional frozen review record, and -- for a repository
-subject -- the repository root, the full commit, and the exact repository-
-relative file list. Scope, packet, and record are bound by content digest in
-both subject kinds. A repository subject additionally requires a clean working
-tree and a caller-supplied lowercase 40-hex commit equal to HEAD, and every
-named path must be bound in that commit's tree. A `--repo` without a commit and
-a file list is a working tree, which is mutable and is refused by name: there is
-no freeze of a moving target.
+`prepare` is the operator path. It resolves the selected roster first, validates
+that every reviewer can receive evidence in the proposed subject shape, freezes
+the subject, resolves standing, builds the dispatch envelope, and runs the same
+verification used by the Task policy gate. No provider is called by this module.
+The lower-level freeze, resolution, and envelope functions are internal policy
+stages used by `prepare` and focused tests; they are not public CLI commands and
+cannot produce a second operator route.
 
-`resolve` assigns standing. The caller supplies the frozen subject, the
-accountable `lead_family`, the review class, and the reviewer ids. Nothing else
-is caller-selectable: the qualification authority is the fixed live install, and
-`selectionClass`, `role`, `independence_class`, and `authority` are derived by
-`qualification.py`, which stays the single standing authority. `focused`
-resolves exactly one configured initial critic for that lead family; `initial`
-resolves the complete selected council through `qualification.select_full_council`
-and refuses a set that is not exactly it; `targeted-refuter` refuses a set that
-is not exactly the complete fixed pool. The receipt binds the subject, the
-authority bytes, both resolver modules' bytes, and all three schema files'
-bytes.
+`freeze_subject` binds the assurance scope, immutable packet, optional frozen
+review record, and optional resolver-owned panel manifest. A repository subject
+also binds a clean HEAD commit and every exact reviewed regular file. A
+repository without a full commit and file list is a mutable working tree and is
+refused.
 
-`dispatch` builds the transmission. It re-reads and rehashes every bound byte,
-re-resolves the council, requires the fresh resolution to equal the receipt, and
-writes one envelope holding the canonical Task items. Reviewer task text embeds
-the verified scope and packet bytes rather than paths that could be edited
-afterwards, so what a reviewer reads is what was frozen. stdout is the exact
-batch `task_input` object the caller submits verbatim.
+`resolve_assignments` derives every standing field from the fixed live
+authority. Initial standing comes only from the manifest re-resolved during
+freeze; focused standing names exactly one configured critic; targeted
+refutation uses the complete fixed pool. Receipts bind the subject, authority,
+both resolvers, and all schemas.
 
-`verify-task` is internal and is what the policy extension calls immediately
-before transmission. It rehashes the envelope against the caller's digest, then
-repeats the whole dispatch verification from freshly read bytes and rebuilds the
-canonical tasks from them. A scope or packet edited after the freeze changes a
-digest, so the rebuild refuses instead of transmitting evidence nobody froze.
+Canonical task construction re-reads every bound byte, re-resolves standing,
+and embeds the verified scope and packet bytes. `verify-task` is internal and is
+what the policy extension calls immediately before transmission. It rehashes
+the envelope, repeats evidence compatibility, and rebuilds the canonical Task
+input. No provider-ready envelope can be created through the CLI except by
+`prepare`.
 
 Every generated artifact is strict, hash-bound, atomic, read-only, and never
 overwritten. The private receipt schema is generated from the live authority and
@@ -76,7 +68,7 @@ except ModuleNotFoundError:
 
 HERE = Path(__file__).resolve().parent
 
-SUBJECT_SCHEMA_VERSION = 1
+SUBJECT_SCHEMA_VERSION = 2
 RECEIPT_SCHEMA_VERSION = 1
 ENVELOPE_SCHEMA_VERSION = 1
 
@@ -85,6 +77,7 @@ ENVELOPE_SCHEMA_VERSION = 1
 # produced it could authenticate a forgery against itself.
 RESOLVER_RELATIVE_PATH = "lrhe/review_dispatch.py"
 SUBJECT_SCHEMA_RELATIVE_PATH = "lrhe/frozen-subject.schema.json"
+PANEL_SCHEMA_RELATIVE_PATH = "lrhe/panel-selection.schema.json"
 ENVELOPE_SCHEMA_RELATIVE_PATH = "lrhe/review-dispatch-envelope.schema.json"
 # Generated, not written by hand, and co-located with the authority it was
 # generated from. A schema beside a different authority describes a different
@@ -121,11 +114,12 @@ SELECTION_CLASSES = (FOCUSED_SELECTION_CLASS, *qualification.SELECTION_CLASSES)
 
 DISPATCH_MARKER = "CRITICAL_REVIEW_DISPATCH_V1"
 RECEIPT_MARKER = "CRITICAL_REVIEW_RESOLVER_RECEIPT_V1"
-SUBJECT_DIGEST_DOMAIN = "omp.critical-review.frozen-subject.v1"
+SUBJECT_DIGEST_DOMAIN = "omp.critical-review.frozen-subject.v2"
 # The Task call's intent line is generated, never carried from the caller. The
 # verifier approves an exact payload, so a caller-chosen intent would leave one
 # field of the compared object outside the comparison.
 DISPATCH_TASK_INTENT = "Dispatching resolved reviewers"
+INLINE_EVIDENCE_FORMAT = "critical-review-complete-inline-evidence-v1"
 
 # The only tree entries a reviewer can be pointed at. A committed symlink is a
 # clean, immutable entry whose *target* is neither: following one would let a
@@ -305,6 +299,9 @@ class FrozenSubject:
     packet_sha256: str
     record_path: Path | None
     record_sha256: str | None
+    manifest_path: Path | None
+    manifest_sha256: str | None
+    manifest_schema_sha256: str | None
     repository_path: Path | None
     subject_commit: str | None
     files: tuple[str, ...]
@@ -324,6 +321,8 @@ class FrozenSubject:
                 self.scope_sha256,
                 self.packet_sha256,
                 self.record_sha256 or "-",
+                self.manifest_sha256 or "-",
+                self.manifest_schema_sha256 or "-",
                 self.subject_commit or "-",
                 *self.files,
             )
@@ -340,6 +339,17 @@ class VerifiedSubject:
     packet_text: str
     packet: Mapping[str, object]
     record: Mapping[str, object] | None
+    manifest: Mapping[str, object] | None
+
+
+@dataclass(frozen=True)
+class BoundManifest:
+    """One schema-valid panel manifest snapshot and the bytes that bind it."""
+
+    path: Path
+    sha256: str
+    schema_sha256: str
+    document: Mapping[str, object]
 
 
 def _repository_files(values: Sequence[object]) -> tuple[str, ...]:
@@ -478,6 +488,162 @@ def verify_repository(repository_path: Path, subject_commit: str, files: Sequenc
         )
 
 
+def _inline_evidence(packet: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
+    """Verify the packet carries self-authenticating UTF-8 evidence bytes.
+
+    A path, prose summary, or unstructured diff cannot prove which bytes an
+    inline reviewer received. The versioned bundle makes the producer assert
+    completeness while this verifier proves that every named artifact's bytes
+    are present and match their declared digest.
+    """
+
+    bundle = packet.get("design_or_diff")
+    if not isinstance(bundle, Mapping):
+        raise DispatchError(
+            "inline evidence requires design_or_diff to be a "
+            f"{INLINE_EVIDENCE_FORMAT!r} bundle containing complete evidence bytes; "
+            "a path, summary, or unstructured excerpt never counts as inline evidence"
+        )
+    if set(bundle) != {"format", "artifacts"} or bundle.get("format") != INLINE_EVIDENCE_FORMAT:
+        raise DispatchError(
+            "inline evidence design_or_diff must contain exactly "
+            f"format={INLINE_EVIDENCE_FORMAT!r} and artifacts"
+        )
+    artifacts = bundle.get("artifacts")
+    if not isinstance(artifacts, Sequence) or isinstance(artifacts, (str, bytes)) or not artifacts:
+        raise DispatchError("inline evidence artifacts must be a nonempty array of embedded bytes")
+    result: list[Mapping[str, object]] = []
+    names: set[str] = set()
+    for index, value in enumerate(artifacts):
+        if not isinstance(value, Mapping) or set(value) != {"name", "sha256", "content"}:
+            raise DispatchError(
+                f"inline evidence artifact {index} must contain exactly name, sha256, and content"
+            )
+        name = value.get("name")
+        content = value.get("content")
+        if not isinstance(name, str) or not name.strip() or name != name.strip():
+            raise DispatchError(f"inline evidence artifact {index} has an invalid name {name!r}")
+        if name in names:
+            raise DispatchError(f"inline evidence artifact name {name!r} appears more than once")
+        if not isinstance(content, str) or not content:
+            raise DispatchError(f"inline evidence artifact {name!r} embeds no UTF-8 content bytes")
+        declared = _digest(value.get("sha256"), f"inline evidence artifact {name!r} sha256")
+        actual = _digest_bytes(content.encode("utf-8"))
+        if declared != actual:
+            raise DispatchError(
+                f"inline evidence artifact {name!r} content digests to {actual}, not {declared}"
+            )
+        names.add(name)
+        result.append(cast(Mapping[str, object], value))
+    return tuple(result)
+
+
+def validate_evidence_compatibility(
+    subject: FrozenSubject,
+    packet: Mapping[str, object],
+    evidence_deliveries: Sequence[str],
+) -> None:
+    """Fail closed unless every selected reviewer can inspect this subject."""
+
+    deliveries = tuple(evidence_deliveries)
+    if not deliveries:
+        raise DispatchError("evidence compatibility cannot be checked for an empty reviewer set")
+    unknown = sorted(set(deliveries) - {"inline", "repository"})
+    if unknown:
+        raise DispatchError(f"selected reviewers declare unknown evidence delivery modes {unknown}")
+    if "repository" in deliveries and subject.kind != REPOSITORY_KIND:
+        raise DispatchError(
+            "a selected reviewer with evidence_delivery=repository requires "
+            "subject_kind=repository, an immutable subject_commit, a clean tree, and every "
+            "reviewed path bound in that commit; packet-only evidence is incompatible"
+        )
+    if subject.kind == PACKET_ONLY_KIND and any(mode != "inline" for mode in deliveries):
+        raise DispatchError(
+            "a packet-only subject requires every selected reviewer to use inline evidence"
+        )
+    if "repository" in deliveries and (
+        subject.repository_path is None or subject.subject_commit is None or not subject.files
+    ):
+        raise DispatchError(
+            "repository evidence requires a repository root, immutable subject commit, and "
+            "nonempty exact file list"
+        )
+    if "inline" in deliveries:
+        _inline_evidence(packet)
+
+
+def bind_panel_manifest(path: Path) -> BoundManifest:
+    """Read and schema-bind one immutable panel selection manifest."""
+
+    resolved = _resolved(path, "panel selection manifest")
+    document, digest = _load_json(resolved, "panel selection manifest")
+    _, schema_sha256, schema = bind_public_schema(PANEL_SCHEMA_RELATIVE_PATH)
+    _validate(document, schema, "panel selection manifest")
+    return BoundManifest(resolved, digest, schema_sha256, document)
+
+
+def _validate_panel_manifest(
+    binding: BoundManifest,
+    subject: FrozenSubject,
+    packet: Mapping[str, object],
+    record: Mapping[str, object] | None,
+) -> None:
+    """Re-resolve and validate the roster whose evidence modes gate freezing."""
+
+    manifest = binding.document
+    if record is None or subject.record_path is None or subject.record_sha256 is None:
+        raise DispatchError("a panel manifest requires the frozen review record that selected it")
+    if manifest.get("mode") != INITIAL:
+        raise DispatchError(
+            f"freeze accepts an initial council panel manifest, not mode {manifest.get('mode')!r}"
+        )
+    expected_bindings = (
+        ("reviewRecordPath", str(subject.record_path)),
+        ("reviewRecordSha256", subject.record_sha256),
+        ("packetPath", str(subject.packet_path)),
+        ("packetSha256", subject.packet_sha256),
+    )
+    for field, expected in expected_bindings:
+        if manifest.get(field) != expected:
+            raise DispatchError(
+                f"panel manifest {field} is {manifest.get(field)!r}, not the frozen {expected!r}"
+            )
+    authority_path, authority_sha256, authority = bind_live_authority()
+    qualification_path, qualification_sha256 = qualification.qualification_binding()
+    for field, expected in (
+        ("authorityPath", str(authority_path)),
+        ("authoritySha256", authority_sha256),
+        ("qualificationPath", qualification_path),
+        ("qualificationSha256", qualification_sha256),
+    ):
+        if manifest.get(field) != expected:
+            raise DispatchError(
+                f"panel manifest {field} is {manifest.get(field)!r}, not the live {expected!r}"
+            )
+    expected_manifest = qualification.select_full_council(
+        authority,
+        record,
+        packet,
+        lead_family=cast(str, manifest["leadFamily"]),
+        record_path=subject.record_path,
+        record_sha256=subject.record_sha256,
+        packet_path=subject.packet_path,
+        packet_sha256=subject.packet_sha256,
+        authority_path=authority_path,
+        authority_sha256=authority_sha256,
+    )
+    if dict(manifest) != expected_manifest:
+        raise DispatchError(
+            "panel manifest does not equal a fresh roster resolution from its bound record, "
+            "packet, lead family, and live authority; it is stale or was altered"
+        )
+    selected = cast(Sequence[object], manifest["selected"])
+    deliveries = [
+        cast(str, cast(Mapping[str, object], row)["evidence_delivery"]) for row in selected
+    ]
+    validate_evidence_compatibility(subject, packet, deliveries)
+
+
 def _bind_material(
     scope_path: Path, packet_path: Path, record_path: Path | None
 ) -> tuple[
@@ -547,6 +713,8 @@ def freeze_subject(
     scope_path: Path,
     packet_path: Path,
     record_path: Path | None = None,
+    manifest_path: Path | None = None,
+    _manifest_binding: BoundManifest | None = None,
     repository_path: Path | None = None,
     subject_commit: str | None = None,
     files: Sequence[str] = (),
@@ -590,6 +758,17 @@ def freeze_subject(
         packet_resolved,
         record_resolved,
     ) = _bind_material(scope_path, packet_path, record_path)
+    if manifest_path is not None and _manifest_binding is not None:
+        raise DispatchError(
+            "freeze received both a manifest path and an in-memory manifest binding"
+        )
+    manifest_binding = (
+        _manifest_binding
+        if _manifest_binding is not None
+        else bind_panel_manifest(manifest_path)
+        if manifest_path is not None
+        else None
+    )
     subject = FrozenSubject(
         kind=kind,
         scope_path=scope_resolved,
@@ -598,16 +777,24 @@ def freeze_subject(
         packet_sha256=packet_sha256,
         record_path=record_resolved,
         record_sha256=record_sha256,
+        manifest_path=manifest_binding.path if manifest_binding is not None else None,
+        manifest_sha256=manifest_binding.sha256 if manifest_binding is not None else None,
+        manifest_schema_sha256=(
+            manifest_binding.schema_sha256 if manifest_binding is not None else None
+        ),
         repository_path=repository_resolved,
         subject_commit=subject_commit,
         files=bound_files,
     )
+    if manifest_binding is not None:
+        _validate_panel_manifest(manifest_binding, subject, packet, record)
     return VerifiedSubject(
         subject=subject,
         scope_text=scope_text,
         packet_text=packet_text,
         packet=packet,
         record=record,
+        manifest=manifest_binding.document if manifest_binding is not None else None,
     )
 
 
@@ -624,6 +811,15 @@ def subject_document(subject: FrozenSubject) -> dict[str, object]:
     if subject.record_path is not None and subject.record_sha256 is not None:
         document["recordPath"] = str(subject.record_path)
         document["recordSha256"] = subject.record_sha256
+    if (
+        subject.manifest_path is not None
+        and subject.manifest_sha256 is not None
+        and subject.manifest_schema_sha256 is not None
+    ):
+        document["manifestPath"] = str(subject.manifest_path)
+        document["manifestSha256"] = subject.manifest_sha256
+        document["manifestSchemaPath"] = PANEL_SCHEMA_RELATIVE_PATH
+        document["manifestSchemaSha256"] = subject.manifest_schema_sha256
     if subject.kind == REPOSITORY_KIND:
         document["repositoryPath"] = str(cast(Path, subject.repository_path))
         document["subjectCommit"] = cast(str, subject.subject_commit)
@@ -641,6 +837,7 @@ def load_subject(document: Mapping[str, object]) -> FrozenSubject:
             f"{WORKING_TREE_KIND} subject is mutable and was never frozen"
         )
     record_path = document.get("recordPath")
+    manifest_path = document.get("manifestPath")
     subject = FrozenSubject(
         kind=cast(str, kind),
         scope_path=Path(cast(str, document["scopePath"])),
@@ -651,6 +848,17 @@ def load_subject(document: Mapping[str, object]) -> FrozenSubject:
         record_sha256=(
             _digest(document["recordSha256"], "recordSha256")
             if isinstance(record_path, str)
+            else None
+        ),
+        manifest_path=(Path(cast(str, manifest_path)) if isinstance(manifest_path, str) else None),
+        manifest_sha256=(
+            _digest(document["manifestSha256"], "manifestSha256")
+            if isinstance(manifest_path, str)
+            else None
+        ),
+        manifest_schema_sha256=(
+            _digest(document["manifestSchemaSha256"], "manifestSchemaSha256")
+            if isinstance(manifest_path, str)
             else None
         ),
         repository_path=(
@@ -703,12 +911,28 @@ def verify_subject(subject: FrozenSubject) -> VerifiedSubject:
                 f"{label} now digests to {current}, not the frozen {frozen}; the subject was "
                 "edited after it was frozen and no reviewer may be sent it"
             )
+    manifest: Mapping[str, object] | None = None
+    if subject.manifest_path is not None:
+        binding = bind_panel_manifest(subject.manifest_path)
+        if binding.sha256 != subject.manifest_sha256:
+            raise DispatchError(
+                f"panel manifest now digests to {binding.sha256}, not the frozen "
+                f"{subject.manifest_sha256}"
+            )
+        if binding.schema_sha256 != subject.manifest_schema_sha256:
+            raise DispatchError(
+                f"panel manifest schema now digests to {binding.schema_sha256}, not the "
+                f"frozen {subject.manifest_schema_sha256}"
+            )
+        _validate_panel_manifest(binding, subject, packet, record)
+        manifest = binding.document
     return VerifiedSubject(
         subject=subject,
         scope_text=scope_text,
         packet_text=packet_text,
         packet=packet,
         record=record,
+        manifest=manifest,
     )
 
 
@@ -989,11 +1213,15 @@ def resolve_assignments(
                 f"{lead_family!r}; the configured critics are {sorted(critics)}"
             )
         _require_grants(reviewer, verified.packet)
-        return (
+        assignments = (
             _assignment(
                 reviewer, FOCUSED_SELECTION_CLASS, (qualification.UNCONDITIONAL_REASON_CODE,)
             ),
         )
+        validate_evidence_compatibility(
+            subject, verified.packet, [item.evidence_delivery for item in assignments]
+        )
+        return assignments
 
     if review_class == TARGETED_REFUTER:
         decision = qualification.select_review_action(cast(Mapping[str, object], verified.record))
@@ -1010,33 +1238,44 @@ def resolve_assignments(
         for reviewer in pool:
             _require_grants(reviewer, verified.packet)
         _require_exact_roster(review_class, requested, [item.reviewer_id for item in pool])
-        return tuple(
+        assignments = tuple(
             _assignment(reviewer, "unconditional", (qualification.TARGETED_REFUTER_REASON_CODE,))
             for reviewer in pool
         )
+        validate_evidence_compatibility(
+            subject, verified.packet, [item.evidence_delivery for item in assignments]
+        )
+        return assignments
 
-    # `initial` is resolved by the council resolver itself rather than reassembled
-    # here. It owns the critic floor, both packet grants, the conditional
-    # eligibility policy, and the dispatch order, and a second implementation of
-    # any of that would be a second standing authority.
-    manifest = qualification.select_full_council(
-        document,
-        cast(Mapping[str, object], verified.record),
-        verified.packet,
-        lead_family=lead_family,
-        record_path=cast(Path, subject.record_path),
-        record_sha256=cast(str, subject.record_sha256),
-        packet_path=subject.packet_path,
-        packet_sha256=subject.packet_sha256,
-        authority_path=authority_path,
-        authority_sha256=authority_sha256,
-    )
-    selected = [
+    # The initial roster was resolved before freeze and is now part of the
+    # subject. verify_subject re-resolved it from the bound record, packet, lead
+    # family, and live authority, so adopting these exact rows does not create a
+    # second standing authority.
+    manifest = verified.manifest
+    if manifest is None:
+        raise DispatchError(
+            "review class 'initial' requires a frozen panel manifest; use prepare or "
+            "freeze --manifest before resolving standing"
+        )
+    if manifest.get("mode") != INITIAL or manifest.get("leadFamily") != lead_family:
+        raise DispatchError(
+            f"panel manifest resolves {manifest.get('mode')!r} for lead family "
+            f"{manifest.get('leadFamily')!r}, not initial for {lead_family!r}"
+        )
+    if (
+        manifest.get("authorityPath") != str(authority_path)
+        or manifest.get("authoritySha256") != authority_sha256
+    ):
+        raise DispatchError("panel manifest is not bound to the authority resolving this receipt")
+    selected = tuple(
         _assignment_from_row(cast(Mapping[str, object], row))
         for row in cast(Sequence[object], manifest["selected"])
-    ]
+    )
     _require_exact_roster(review_class, requested, [item.reviewer_id for item in selected])
-    return tuple(selected)
+    validate_evidence_compatibility(
+        subject, verified.packet, [item.evidence_delivery for item in selected]
+    )
+    return selected
 
 
 # --------------------------------------------------------------------------
@@ -1629,47 +1868,36 @@ def _verified_receipt(
     return receipt, receipt_sha256, verified, canonical_tasks(receipt, receipt_sha256, verified)
 
 
-def command_freeze(args: argparse.Namespace) -> str:
-    verified = freeze_subject(
-        scope_path=args.scope,
-        packet_path=args.packet,
-        record_path=args.record,
-        repository_path=args.repo,
-        subject_commit=args.commit,
-        files=args.files,
-    )
-    document = subject_document(verified.subject)
-    _, _, schema = bind_public_schema(SUBJECT_SCHEMA_RELATIVE_PATH)
-    _validate(document, schema, "frozen subject")
-    text = _artifact_text(document)
-    _write_once(args.out, text, "frozen subject")
-    return text
+def _build_receipt(
+    verified: VerifiedSubject,
+    *,
+    subject_path: Path,
+    subject_sha256: str,
+    lead_family: str,
+    review_class: str,
+    reviewer_ids: Sequence[str],
+) -> tuple[Receipt, str]:
+    """Resolve and validate one receipt without requiring intermediate files."""
 
-
-def command_resolve(args: argparse.Namespace) -> str:
     authority_path, authority_sha256, authority = bind_live_authority()
     _, receipt_schema_sha256, schema = bind_receipt_schema(authority_path, authority)
-    subject_path = _resolved(args.subject, "frozen subject")
-    document, subject_sha256 = _load_json(subject_path, "frozen subject")
-    _, subject_schema_sha256, subject_schema = bind_public_schema(SUBJECT_SCHEMA_RELATIVE_PATH)
-    _validate(document, subject_schema, "frozen subject")
-    verified = verify_subject(load_subject(document))
+    _, subject_schema_sha256, _subject_schema = bind_public_schema(SUBJECT_SCHEMA_RELATIVE_PATH)
     _, envelope_schema_sha256, _envelope_schema = bind_public_schema(ENVELOPE_SCHEMA_RELATIVE_PATH)
     _, resolver_sha256 = resolver_binding()
     _, qualification_sha256 = qualification.qualification_binding()
     assignments = resolve_assignments(
         authority,
         verified,
-        lead_family=args.lead_family,
-        review_class=args.review_class,
-        reviewer_ids=args.reviewers,
+        lead_family=lead_family,
+        review_class=review_class,
+        reviewer_ids=reviewer_ids,
         authority_path=authority_path,
         authority_sha256=authority_sha256,
     )
     receipt = Receipt(
         panel_id=cast(str, cast(Mapping[str, object], authority["liveDispatch"])["panelId"]),
-        lead_family=args.lead_family,
-        review_class=args.review_class,
+        lead_family=lead_family,
+        review_class=review_class,
         subject=verified.subject,
         subject_path=subject_path,
         subject_sha256=subject_sha256,
@@ -1684,9 +1912,210 @@ def command_resolve(args: argparse.Namespace) -> str:
     )
     body = receipt_document(receipt)
     _validate(body, schema, "resolver receipt")
-    text = _artifact_text(body)
+    return receipt, _artifact_text(body)
+
+
+def _preflight_output_paths(items: Sequence[tuple[str, Path]]) -> None:
+    paths = [path for _label, path in items]
+    if len(set(paths)) != len(paths):
+        raise DispatchError("preparation artifact paths must be distinct")
+    for label, path in items:
+        if path.exists():
+            raise DispatchError(f"refusing to overwrite existing {label}: {path}")
+
+
+def _publish_preparation(
+    artifacts: Sequence[tuple[str, Path, str]],
+    *,
+    envelope_path: Path,
+    envelope_sha256: str,
+) -> str:
+    """Write dependencies first and the dispatchable envelope last.
+
+    The envelope is the commit marker: a process that stops before its write
+    leaves no provider-addressable dispatch. Caught failures roll back every
+    path created by this invocation; `verify-task` still revalidates all current
+    bytes before this command returns a payload.
+    """
+
+    if not artifacts or artifacts[-1][1] != envelope_path:
+        raise DispatchError("the review dispatch envelope must be the final preparation artifact")
+    _preflight_output_paths([(label, path) for label, path, _text in artifacts])
+    created: list[Path] = []
+    try:
+        for label, path, text in artifacts:
+            created.append(_write_once(path, text, label))
+        return command_verify_task(
+            argparse.Namespace(envelope=envelope_path, sha256=envelope_sha256)
+        )
+    except BaseException as exc:
+        cleanup_errors: list[str] = []
+        for path in reversed(created):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as cleanup_error:
+                cleanup_errors.append(f"{path}: {cleanup_error}")
+        if cleanup_errors:
+            raise DispatchError(
+                "preparation failed and rollback could not remove every published artifact: "
+                + "; ".join(cleanup_errors)
+            ) from exc
+        raise
+
+
+def command_freeze(args: argparse.Namespace) -> str:
+    verified = freeze_subject(
+        scope_path=args.scope,
+        packet_path=args.packet,
+        record_path=args.record,
+        manifest_path=args.manifest,
+        repository_path=args.repo,
+        subject_commit=args.commit,
+        files=args.files,
+    )
+    document = subject_document(verified.subject)
+    _, _, schema = bind_public_schema(SUBJECT_SCHEMA_RELATIVE_PATH)
+    _validate(document, schema, "frozen subject")
+    text = _artifact_text(document)
+    _write_once(args.out, text, "frozen subject")
+    return text
+
+
+def command_resolve(args: argparse.Namespace) -> str:
+    subject_path = _resolved(args.subject, "frozen subject")
+    document, subject_sha256 = _load_json(subject_path, "frozen subject")
+    _, _, subject_schema = bind_public_schema(SUBJECT_SCHEMA_RELATIVE_PATH)
+    _validate(document, subject_schema, "frozen subject")
+    verified = verify_subject(load_subject(document))
+    _receipt, text = _build_receipt(
+        verified,
+        subject_path=subject_path,
+        subject_sha256=subject_sha256,
+        lead_family=args.lead_family,
+        review_class=args.review_class,
+        reviewer_ids=args.reviewers,
+    )
     _write_once(args.out, text, "resolver receipt")
     return text
+
+
+def command_prepare(args: argparse.Namespace) -> str:
+    """Prepare every dispatch artifact and return only verifier-approved Task input."""
+
+    if args.review_class not in REVIEW_CLASSES:
+        raise DispatchError(
+            f"review class {args.review_class!r} is not one of {list(REVIEW_CLASSES)}"
+        )
+    subject_path = _resolved(args.subject, "frozen subject output")
+    receipt_path = _resolved(args.receipt, "resolver receipt output")
+    envelope_path = _resolved(args.out, "review dispatch envelope output")
+    manifest_binding: BoundManifest | None = None
+    manifest_text: str | None = None
+    reviewers = tuple(args.reviewers)
+
+    authority_path, authority_sha256, authority = bind_live_authority()
+    if args.review_class == INITIAL:
+        if args.record is None or args.manifest is None:
+            raise DispatchError("an initial council preparation requires --record and --manifest")
+        if reviewers:
+            raise DispatchError("prepare resolves the initial roster; do not supply --reviewer")
+        record_path, record_sha256, record = qualification.bind_record(args.record)
+        packet_path, packet_sha256, packet = qualification.bind_packet(
+            args.packet, record_path, record_sha256
+        )
+        manifest = qualification.select_full_council(
+            authority,
+            record,
+            packet,
+            lead_family=args.lead_family,
+            record_path=record_path,
+            record_sha256=record_sha256,
+            packet_path=packet_path,
+            packet_sha256=packet_sha256,
+            authority_path=authority_path,
+            authority_sha256=authority_sha256,
+        )
+        manifest_text = qualification.manifest_text(manifest)
+        manifest_path = _resolved(args.manifest, "panel selection manifest output")
+        _, manifest_schema_sha256, manifest_schema = bind_public_schema(PANEL_SCHEMA_RELATIVE_PATH)
+        _validate(manifest, manifest_schema, "panel selection manifest")
+        manifest_binding = BoundManifest(
+            path=manifest_path,
+            sha256=_digest_bytes(manifest_text.encode("utf-8")),
+            schema_sha256=manifest_schema_sha256,
+            document=manifest,
+        )
+        reviewers = tuple(
+            cast(str, cast(Mapping[str, object], row)["reviewer_id"])
+            for row in cast(Sequence[object], manifest["selected"])
+        )
+    else:
+        if args.manifest is not None:
+            raise DispatchError("only an initial council has a panel manifest")
+        if args.review_class == FOCUSED:
+            if len(reviewers) != 1:
+                raise DispatchError("a focused preparation requires exactly one --reviewer")
+        else:
+            if args.record is None:
+                raise DispatchError("a targeted-refuter preparation requires --record")
+            if reviewers:
+                raise DispatchError(
+                    "prepare resolves the targeted-refuter pool; do not supply --reviewer"
+                )
+            reviewers = tuple(
+                reviewer.reviewer_id
+                for reviewer in qualification.live_reviewers(
+                    authority, "targeted-refuter", args.lead_family
+                )
+            )
+
+    verified = freeze_subject(
+        scope_path=args.scope,
+        packet_path=args.packet,
+        record_path=args.record,
+        _manifest_binding=manifest_binding,
+        repository_path=args.repo,
+        subject_commit=args.commit,
+        files=args.files,
+    )
+    subject_document_value = subject_document(verified.subject)
+    _, _, subject_schema = bind_public_schema(SUBJECT_SCHEMA_RELATIVE_PATH)
+    _validate(subject_document_value, subject_schema, "frozen subject")
+    subject_text = _artifact_text(subject_document_value)
+    subject_sha256 = _digest_bytes(subject_text.encode("utf-8"))
+    receipt, receipt_text = _build_receipt(
+        verified,
+        subject_path=subject_path,
+        subject_sha256=subject_sha256,
+        lead_family=args.lead_family,
+        review_class=args.review_class,
+        reviewer_ids=reviewers,
+    )
+    receipt_sha256 = _digest_bytes(receipt_text.encode("utf-8"))
+    tasks = canonical_tasks(receipt, receipt_sha256, verified)
+    envelope_value = envelope_document(receipt, receipt_path, receipt_sha256, tasks)
+    _, _, envelope_schema = bind_public_schema(ENVELOPE_SCHEMA_RELATIVE_PATH)
+    _validate(envelope_value, envelope_schema, "review dispatch envelope")
+    envelope_text = _artifact_text(envelope_value)
+    envelope_sha256 = _digest_bytes(envelope_text.encode("utf-8"))
+
+    artifacts = [
+        ("frozen subject", subject_path, subject_text),
+        ("resolver receipt", receipt_path, receipt_text),
+        ("review dispatch envelope", envelope_path, envelope_text),
+    ]
+    if manifest_binding is not None and manifest_text is not None:
+        artifacts.insert(
+            0,
+            ("panel selection manifest", manifest_binding.path, manifest_text),
+        )
+    return _publish_preparation(
+        artifacts,
+        envelope_path=envelope_path,
+        envelope_sha256=envelope_sha256,
+    )
 
 
 def command_dispatch(args: argparse.Namespace) -> str:
@@ -1719,7 +2148,15 @@ def command_verify_task(args: argparse.Namespace) -> str:
     _, _, schema = bind_public_schema(ENVELOPE_SCHEMA_RELATIVE_PATH)
     document = _validate(value, schema, "review dispatch envelope")
     receipt_path = _resolved(Path(cast(str, document["receiptPath"])), "resolver receipt")
-    receipt, receipt_sha256, _verified, tasks = _verified_receipt(receipt_path)
+    receipt, receipt_sha256, verified, tasks = _verified_receipt(receipt_path)
+    # Deliberate duplicate of the resolve/dispatch preflight. The Task gate is
+    # the final trust boundary and must reject a stale or manually altered
+    # envelope even when an earlier artifact was prepared correctly.
+    validate_evidence_compatibility(
+        receipt.subject,
+        verified.packet,
+        [assignment.evidence_delivery for assignment in receipt.assignments],
+    )
     if receipt_sha256 != document["receiptSha256"]:
         raise DispatchError(
             f"resolver receipt digests to {receipt_sha256}, not the "
@@ -1737,62 +2174,50 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    freeze = commands.add_parser(
-        "freeze",
+    prepare = commands.add_parser(
+        "prepare",
         help=(
-            "bind one immutable review subject: the assurance scope, the immutable packet, an "
-            "optional frozen record, and for a repository subject its clean commit and exact "
-            "file list"
+            "resolve the roster, validate evidence delivery, freeze, resolve standing, build "
+            "the envelope, and print verifier-approved Task input in one command"
         ),
     )
-    freeze.add_argument("--scope", type=Path, required=True)
-    freeze.add_argument("--packet", type=Path, required=True)
-    freeze.add_argument("--record", type=Path)
-    freeze.add_argument(
+    prepare.add_argument("--scope", type=Path, required=True)
+    prepare.add_argument("--packet", type=Path, required=True)
+    prepare.add_argument("--record", type=Path)
+    prepare.add_argument(
+        "--manifest",
+        type=Path,
+        help="initial-council panel manifest output; prohibited for other review classes",
+    )
+    prepare.add_argument(
         "--repo", type=Path, help="repository root; requires --commit and at least one --file"
     )
-    freeze.add_argument("--commit", help="full lowercase 40-hex commit, which must be HEAD")
-    freeze.add_argument(
+    prepare.add_argument("--commit", help="full lowercase 40-hex commit, which must be HEAD")
+    prepare.add_argument(
         "--file",
         action="append",
         default=[],
         dest="files",
         help="one exact repository-relative reviewed path; repeat for each",
     )
-
-    resolve = commands.add_parser(
-        "resolve",
-        help=(
-            "resolve one review class into the complete standing-bearing assignment set for "
-            "one frozen subject, then persist the receipt that authorizes dispatch"
-        ),
-    )
-    resolve.add_argument("--subject", type=Path, required=True)
-    resolve.add_argument(
+    prepare.add_argument("--subject", type=Path, required=True, help="frozen subject output")
+    prepare.add_argument("--receipt", type=Path, required=True, help="resolver receipt output")
+    prepare.add_argument("--out", type=Path, required=True, help="dispatch envelope output")
+    prepare.add_argument(
         "--lead-family",
         required=True,
         help="accountable main-session model_family; must name a configured profile",
     )
-    resolve.add_argument(
+    prepare.add_argument(
         "--review-class", required=True, help=f"one of {', '.join(REVIEW_CLASSES)}"
     )
-    resolve.add_argument(
+    prepare.add_argument(
         "--reviewer",
         action="append",
         default=[],
         dest="reviewers",
-        help="one reviewer id; repeat for each. Must be exactly the roster the class resolves",
+        help="exactly one for focused; inferred and prohibited for roster-owned classes",
     )
-
-    dispatch = commands.add_parser(
-        "dispatch",
-        help=(
-            "re-verify one receipt from freshly read bytes, write the envelope holding the "
-            "canonical reviewer Task items, and print the exact Task input"
-        ),
-    )
-    dispatch.add_argument("--receipt", type=Path, required=True)
-
     verify = commands.add_parser(
         "verify-task",
         help=(
@@ -1803,19 +2228,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     verify.add_argument("--envelope", type=Path, required=True)
     verify.add_argument("--sha256", required=True)
 
-    for command in (freeze, resolve, dispatch):
-        command.add_argument(
-            "--out",
-            type=Path,
-            required=True,
-            help="durable artifact path; an existing file is never overwritten",
-        )
-
     args = parser.parse_args(argv)
     handlers = {
-        "freeze": command_freeze,
-        "resolve": command_resolve,
-        "dispatch": command_dispatch,
+        "prepare": command_prepare,
         "verify-task": command_verify_task,
     }
     try:

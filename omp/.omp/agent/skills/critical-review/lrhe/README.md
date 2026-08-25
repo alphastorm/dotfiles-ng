@@ -257,16 +257,20 @@ the resolver fails closed when it is omitted or unsupported and records the sele
 value as manifest `leadFamily`. Resolve the current full-council or targeted-refuter
 roster with `qualification.py`; this public package never grants live membership.
 
-Live dispatch itself has one entry point, `review_dispatch.py`, and one order:
-`freeze` a clean full-commit repository subject or a content-hashed packet,
-`resolve` standing against the fixed live authority, `dispatch` the envelope, then
-submit the emitted Task payload verbatim. The model chooses the frozen scope, the
-reviewer ids, and the review class (`focused`, `initial`, or `targeted-refuter`);
-executable resolution owns standing; the Task gate injects the trusted
-`CRITICAL_REVIEW_RESOLVER_RECEIPT_V1` block. There is no hand-written reviewer
-assignment and no direct reviewer launch. A protected `review-*` Task is blocked
-unless its batch shape exactly matches the verifier-approved canonical input
-regenerated from the dispatch envelope.
+Live dispatch itself has one entry point, `review_dispatch.py`, and one operator
+path: `prepare`. It resolves the roster, validates every selected evidence mode,
+binds the panel manifest, clean repository commit and exact files when required,
+freezes the subject, resolves standing, builds the envelope, and runs
+`verify-task` before printing the canonical Task input. Lower-level freeze,
+standing-resolution, and envelope builders are internal policy functions for
+`prepare` and tests, not CLI subcommands. A packet-only subject is admitted only
+when every selected reviewer uses inline delivery and its packet embeds a
+`critical-review-complete-inline-evidence-v1`
+bundle; paths and summaries supplied instead of the bundle are not evidence,
+while declared `content` bytes are opaque and digest-checked. Dependencies are
+written first and the envelope last as the dispatchability marker. A protected
+`review-*` Task is blocked unless its batch shape and evidence compatibility
+exactly match the verifier-approved envelope regenerated from current bytes.
 
 A reviewer is not a model lineage. The `reviewers` mapping key is the `reviewer_id`,
 and that is the only join key a manifest, dispatcher, or finding ledger uses.

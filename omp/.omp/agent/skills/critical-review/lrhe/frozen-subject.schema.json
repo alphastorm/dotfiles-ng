@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "lrhe/frozen-subject.schema.json",
   "title": "Critical Review Frozen Subject",
-  "description": "One immutable statement of what is under review, written once before any standing is resolved. Scope, packet, and optional record are bound by content digest in both kinds, because a path is a promise about a file's future contents that nothing can keep. A `repository` subject additionally binds the full commit and the exact repository-relative file list; a `packet-only` subject is its bytes and identifies no repository epoch. There is deliberately no third kind: a working tree is mutable, so freezing one would record an identity that stops being true the moment anybody types.",
+  "description": "One immutable statement of what is under review, written once before any standing is resolved. Scope, packet, optional record, and optional resolver-owned panel manifest are bound by content digest. A repository subject additionally binds the full commit and exact regular-file list; a packet-only subject identifies no repository epoch and is admissible only for an all-inline roster carrying complete evidence bytes. There is deliberately no working-tree kind.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,7 +16,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": 1,
+      "const": 2,
       "description": "Pins this subject contract; a consumer that accepts an unknown version is guessing at what was frozen."
     },
     "kind": {
@@ -53,6 +53,23 @@
       "$ref": "#/$defs/sha256",
       "description": "Digest of the exact record bytes. The record is dispatch control state rather than reviewed material, so it is bound by digest and not reproduced to reviewers."
     },
+    "manifestPath": {
+      "type": "string",
+      "pattern": "^/",
+      "description": "Absolute path of the resolver-owned panel manifest whose selected evidence-delivery modes were validated before freeze."
+    },
+    "manifestSha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "Digest of the exact panel manifest bytes, making a changed roster a changed subject."
+    },
+    "manifestSchemaPath": {
+      "const": "lrhe/panel-selection.schema.json",
+      "description": "Fixed skill-relative schema used to validate the bound manifest."
+    },
+    "manifestSchemaSha256": {
+      "$ref": "#/$defs/sha256",
+      "description": "Digest of the exact manifest schema bytes used at freeze."
+    },
     "repositoryPath": {
       "type": "string",
       "pattern": "^/",
@@ -76,7 +93,7 @@
     },
     "subjectDigest": {
       "$ref": "#/$defs/sha256",
-      "description": "Digest over this subject's whole identity -- kind, every bound component digest, commit, and file list -- so two subjects differing in any one of them are different subjects. Every receipt, envelope, and reviewer assignment carries it as the join key."
+      "description": "Digest over this subject's whole identity -- kind, every bound component digest, optional manifest and its schema, commit, and file list -- so two subjects differing in any one of them are different subjects. Every receipt, envelope, and reviewer assignment carries it as the join key."
     }
   },
   "allOf": [
@@ -143,6 +160,27 @@
           "recordSha256"
         ],
         "description": "A record is bound by path and digest together. A path without a digest binds nothing, and a digest without a path names nothing."
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          { "required": ["manifestPath"] },
+          { "required": ["manifestSha256"] },
+          { "required": ["manifestSchemaPath"] },
+          { "required": ["manifestSchemaSha256"] }
+        ]
+      },
+      "then": {
+        "required": [
+          "manifestPath",
+          "manifestSha256",
+          "manifestSchemaPath",
+          "manifestSchemaSha256",
+          "recordPath",
+          "recordSha256"
+        ],
+        "description": "A panel manifest, its schema, and the record that selected it are bound as one unit; no path-only or digest-only manifest claim is valid."
       }
     }
   ],
