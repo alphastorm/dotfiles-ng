@@ -341,6 +341,9 @@ fi
 path=("$PNPM_HOME" $path)
 # pnpm end
 
+# Prefer Homebrew LLVM over Apple's system toolchain.
+path=("$(brew --prefix llvm)/bin" $path)
+
 # Prefer user-installed tools, including the gateway-compatible OMP build.
 path=("$HOME/.local/bin" $path)
 
