@@ -35,24 +35,24 @@ If the full-council criteria are not met, stop before review ceremony. Complete 
 
 #### Focused review routing
 
-For the single focused reviewer outside this council, first identify the active
-main-session `model_family`:
+Only GPT/ChatGPT and Claude are qualified accountable leads. Use exactly one
+cross-family reviewer outside a council:
 
-- security, credentials, authorization, money or assets, and trust boundaries use
-  `review-daybreak-blue` for a Claude lead and `review-claude-opus` under CVP for
-  GPT, Gemini, or Grok leads;
-- non-security architecture, operational correctness, migration, production,
-  compatibility, or cross-system behavior uses `review-gemini` or `review-grok`
-  when its lens matches and its family differs from the lead;
-- `review-claude-fable` remains resolver-qualified conditional council evidence, not an
-  unqualified focused-review shortcut.
+- for a bounded, reversible, low-consequence sanity check, use review-gemini;
+  this is the fast 30–60 second target and never substitutes for strong assurance;
+- for consequential architecture, production, security, credentials,
+  authorization, money/assets, persistent state, compatibility, or costly
+  rollback, use the reciprocal strong critic: review-claude-opus under CVP for
+  a GPT lead and review-daybreak-blue for a Claude lead;
+- do not route focused review to Grok by default. Grok is the full council's
+  cheap third-family supplement, not the owner of an adversarial assurance lens;
+- review-claude-fable remains resolver-qualified architecture synthesis for
+  full councils, not an unqualified focused shortcut.
 
-Use exactly one focused reviewer; do not escalate to multiple reviewers by
-fallback shopping. The focused reviewer must be cross-family: do not use
-Daybreak for a GPT lead, Opus or Fable for a Claude lead, Gemini for a Gemini
-lead, or Grok for a Grok lead. Standing is lead-relative, not reviewer-intrinsic.
-This routing neither selects nor modifies a full council; full-council membership
-remains resolver-owned.
+Do not escalate to multiple focused reviewers by fallback shopping. Routing
+chooses the reviewer; the resolver still owns selectionClass, role,
+independence_class, and authority. This routing does not modify the full council
+roster.
 
 Routing chooses the reviewer; it never states the reviewer's standing. A focused
 review is dispatched through the atomic preparation path,
@@ -99,6 +99,34 @@ These bind every dispatch, focused or full council. Reviewers render verdicts; t
 4. Freeze the reviewed subject. Never edit the reviewed tree — including its policy and context files — while any reviewer is reading; queue such edits for the disposition commit. A verdict rendered over a moving target is discarded and the round is wasted.
 5. Remediation-scoped verification defaults to the focused-reviewer lane; the full council renders only the sequence's budgeted general passes and the final verdict. Target at most two council rounds per subject.
 6. Exit is by disposition, not zero findings: no in-scope residual P0/P1 and clean credential paths close the sequence, and remaining P2/P3 items receive explicit owner-accepted residual dispositions. A supplemental seat's credential-path claim blocks only after lead verification against the committed bytes.
+
+### Pragmatic full-council composition
+
+The resolver uses three profile groups, not one role per model:
+
+| Group | GPT lead | Claude lead | Standing |
+|---|---|---|---|
+| strongCritic | Opus 5 through the CVP-approved route | Daybreak Blue | reciprocal cross-family independent evidence |
+| supplements | Gemini 3.7 Flash and Grok 4.6 | Gemini 3.7 Flash and Grok 4.6 | always-on cross-family supplemental evidence |
+| architectureSpecialists | Fable 5 when eligible | Fable 5 when eligible | record-selected supplemental architecture synthesis |
+
+The strong critic and supplements must be pairwise distinct by model family and
+correlation group. Fable may intentionally share a lineage because its standing
+is always supplemental.
+
+The accountable lead already supplies its own family, so no same-family security
+specialist runs by default. A future route-specific capability may justify one,
+for example Opus CVP when a Claude lead lacks CVP access, but that requires an
+explicit authority change rather than another permanent roster group.
+
+ChatGPT Pro Web through pinned pi-oracle is an asynchronous shadow on every full
+council, outside the resolver roster. It has no council standing, never blocks
+closure or retries, receives no peer output, and never substitutes for a missing
+qualified reviewer. The envelope selects it only when the packet separately grants
+`openai` and the exact `chatgpt-pro-web-asxst0rm` access profile; otherwise it
+records a nonblocking skip. A selected shadow uses `pro_extended` against the
+frozen repository commit. Browser auth, submission, collection, or output-schema
+failure is recorded for later evaluation and has no effect on the council.
 
 ## Full council at a glance
 
@@ -148,7 +176,7 @@ CRITICAL_REVIEW_RESOLVER_RECEIPT_V1
 `subject_digest`: <resolved>
 `subject_kind`: <repository|packet-only>
 `subject_commit`: <clean full 40-hex commit|none>
-`lead_family`: <gpt|claude|gemini|grok>
+`lead_family`: <gpt|claude>
 `review_class`: <focused|initial|targeted-refuter>
 `reviewer_id`: <resolved>
 `selectionClass`: <resolved>

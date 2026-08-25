@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "lrhe/review-dispatch-envelope.schema.json",
   "title": "Critical Review Dispatch Envelope",
-  "description": "The exact Task payload one verified receipt authorizes, written once after every bound byte has been re-read and the council re-resolved. `tasks` is the transmission itself, not a description of one: each item carries the reviewer's whole assignment with the verified scope and packet bytes reproduced inline, so nothing a reviewer reads depends on a path still holding what it held at freeze. The envelope cannot carry its own digest or the dispatch marker built from it, which is why `dispatch` prints that marker instead of storing it.",
+  "description": "The exact native Task payload and non-authoritative Oracle shadow selection authorized by one verified receipt and rebuilt from frozen bytes before dispatch.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -15,47 +15,42 @@
     "receiptSha256",
     "taskIntent",
     "tasks",
-    "tasksSha256"
+    "tasksSha256",
+    "oracleShadow"
   ],
   "properties": {
     "schemaVersion": {
-      "const": 1,
-      "description": "Pins this envelope contract; a consumer that accepts an unknown version is guessing at what would be transmitted."
+      "const": 2
     },
     "panelId": {
       "type": "string",
-      "minLength": 1,
-      "description": "The live panel definition the receipt resolved under, so an envelope built under a superseded panel is visible rather than silent."
+      "minLength": 1
     },
     "leadFamily": {
-      "type": "string",
-      "minLength": 1,
-      "description": "The accountable main-session model family whose profile granted every assignment its standing."
+      "enum": [
+        "gpt",
+        "claude"
+      ]
     },
     "reviewClass": {
       "enum": [
         "focused",
         "initial",
         "targeted-refuter"
-      ],
-      "description": "Which resolution this envelope transmits: one configured critic outside a council, the complete selected council, or the complete fixed refutation pool."
+      ]
     },
     "subjectDigest": {
-      "$ref": "#/$defs/sha256",
-      "description": "The frozen subject's whole-identity digest, joining this transmission to the same subject the receipt and every reviewer assignment bind."
+      "$ref": "#/$defs/sha256"
     },
     "receiptPath": {
       "type": "string",
-      "pattern": "^/",
-      "description": "Absolute path of the resolver receipt this envelope was built from. The verifier re-reads it and repeats the whole resolution rather than believing this envelope's summary of it."
+      "pattern": "^/"
     },
     "receiptSha256": {
-      "$ref": "#/$defs/sha256",
-      "description": "Digest of the exact receipt bytes, so a receipt edited between resolution and transmission is detectable rather than assumed unchanged."
+      "$ref": "#/$defs/sha256"
     },
     "taskIntent": {
-      "const": "Dispatching resolved reviewers",
-      "description": "The generated intent line of the authorized Task call. Fixed rather than caller-supplied: the verifier approves an exact payload, so an intent chosen at the call site would leave one field of the compared object outside the comparison."
+      "const": "Dispatching resolved reviewers"
     },
     "tasks": {
       "type": "array",
@@ -63,14 +58,50 @@
       "uniqueItems": true,
       "items": {
         "$ref": "#/$defs/task"
-      },
-      "description": "One canonical Task item per resolved reviewer, in resolver order. The dispatcher transmits this array exactly and never adds, removes, reorders, retypes, or supplements a member."
+      }
     },
     "tasksSha256": {
-      "$ref": "#/$defs/sha256",
-      "description": "Digest over the canonical form of `tasks` alone, so a ledger row can cite the transmitted evidence by one stable value that survives any reformatting of the envelope around it."
+      "$ref": "#/$defs/sha256"
+    },
+    "oracleShadow": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/oracleShadow"
+        }
+      ]
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "reviewClass": {
+            "const": "initial"
+          }
+        },
+        "required": [
+          "reviewClass"
+        ]
+      },
+      "then": {
+        "properties": {
+          "oracleShadow": {
+            "$ref": "#/$defs/oracleShadow"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "oracleShadow": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "sha256": {
       "type": "string",
@@ -86,16 +117,207 @@
       "properties": {
         "agent": {
           "type": "string",
-          "pattern": "^review-",
-          "description": "The native Task agent for this reviewer, resolved from the qualification authority. The `review-` prefix is what makes the item protected, so the policy extension can recognize a reviewer dispatch without knowing any reviewer's name."
+          "pattern": "^review-[a-z0-9-]+$"
         },
         "task": {
           "type": "string",
           "pattern": "^CRITICAL_REVIEW_RESOLVER_RECEIPT_V1\\n",
-          "description": "The reviewer's complete assignment, beginning with the resolver-receipt marker and its machine header. It carries the resolved standing and the verified scope and packet bytes; a reviewer never infers, chooses, or renegotiates its own standing, and never depends on a path to still hold the reviewed material."
+          "minLength": 1
+        }
+      }
+    },
+    "oracleRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryPath",
+        "subjectCommit",
+        "files",
+        "prompt",
+        "promptSha256"
+      ],
+      "properties": {
+        "repositoryPath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "subjectCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+          }
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^CRITICAL_REVIEW_ORACLE_SHADOW_V1\\n"
+        },
+        "promptSha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "oracleShadow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "reviewId",
+        "requestPath",
+        "dispatchPath",
+        "resultPath",
+        "datasetRecordPath",
+        "shadowId",
+        "modelFamily",
+        "correlationGroup",
+        "providerRoute",
+        "accessProfile",
+        "dataAllowlistKey",
+        "preset",
+        "executionMode",
+        "evidenceDelivery",
+        "selection",
+        "reasonCodes",
+        "standing",
+        "blocksClosure",
+        "receivesPeerOutput",
+        "request"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "shadowId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "modelFamily": {
+          "type": "string",
+          "minLength": 1
+        },
+        "correlationGroup": {
+          "type": "string",
+          "minLength": 1
+        },
+        "providerRoute": {
+          "type": "string",
+          "minLength": 1
+        },
+        "accessProfile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dataAllowlistKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "preset": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executionMode": {
+          "const": "pi_oracle_async"
+        },
+        "evidenceDelivery": {
+          "const": "repository"
+        },
+        "selection": {
+          "enum": [
+            "selected",
+            "skipped",
+            "disabled"
+          ]
+        },
+        "reasonCodes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "standing": {
+          "const": "none"
+        },
+        "blocksClosure": {
+          "const": false
+        },
+        "receivesPeerOutput": {
+          "const": false
+        },
+        "request": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/oracleRequest"
+            }
+          ]
+        },
+        "reviewId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requestPath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "dispatchPath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "resultPath": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "datasetRecordPath": {
+          "type": "string",
+          "pattern": "^/"
         }
       },
-      "description": "Exactly two keys. Every optional Task field is omitted so that nothing in the compared payload has a default that could drift between the verifier and the call site."
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "selection": {
+                "const": "selected"
+              }
+            },
+            "required": [
+              "selection"
+            ]
+          },
+          "then": {
+            "properties": {
+              "reasonCodes": {
+                "maxItems": 0
+              },
+              "request": {
+                "$ref": "#/$defs/oracleRequest"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "reasonCodes": {
+                "minItems": 1
+              },
+              "request": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

@@ -46,10 +46,13 @@ import freeze_lock  # noqa: E402  -- needs the path above
 import canary  # noqa: E402
 import run_review  # noqa: E402
 from qualification import (  # noqa: E402
+    ARCHITECTURE_ROLE,
+    STRONG_ROLE,
+    SUPPLEMENT_ROLE,
     CONDITIONAL_POLICIES,
     READ_ONLY_REPOSITORY_TOOLS,
     QualificationError,
-    all_conditional_critics,
+    all_architecture_specialists,
     load_qualification,
     reviewers as qualification_reviewers,
     reviewer_roles,
@@ -382,6 +385,12 @@ def check_model_selectors() -> Result:
     return Result(PASS, f"{resolved} reviewer selectors resolve against the installed build")
 
 
+PROBE_ROLE_SUCCESSORS = {
+    "primary_critic": {STRONG_ROLE, SUPPLEMENT_ROLE},
+    "security_specialist": {STRONG_ROLE},
+    "conditional_critic": {ARCHITECTURE_ROLE},
+}
+
 def _probe_pin_problems(
     family: str,
     measured: dict[str, object],
@@ -441,9 +450,10 @@ def _probe_pin_problems(
             f"{family}: probe {version} never names its pinned fixture {Path(fixture).name}"
         )
     role = entry.get("role")
-    if role not in dispatch_roles:
+    compatible_roles = PROBE_ROLE_SUCCESSORS.get(role, set()) if isinstance(role, str) else set()
+    if role not in dispatch_roles and not compatible_roles.intersection(dispatch_roles):
         problems.append(
-            f"{family}: probe {version} role {role!r} is not in selected roles "
+            f"{family}: probe {version} role {role!r} is not compatible with selected roles "
             f"{list(dispatch_roles)!r}"
         )
     return problems
@@ -865,7 +875,7 @@ def _cohort_problems(
         "evidence_delivery": delivery,
         "read_only_marker": policy.read_only_marker,
         "agent_definition_sha256": _sha256(cohort_definition),
-        "risk_domain_scope": list(policy.allowed_risk_domains),
+        "risk_domain_scope": list(policy.qualified_risk_domains),
         "fallback_used": False,
     }
     problems.extend(
@@ -1005,7 +1015,7 @@ def check_conditional_critic_scope() -> Result:
     """
     try:
         document = load_qualification(SKILL / "qualification.yml")
-        critics = all_conditional_critics(document)
+        critics = all_architecture_specialists(document)
     except QualificationError as exc:
         return Result(FAIL, str(exc))
     if not critics:

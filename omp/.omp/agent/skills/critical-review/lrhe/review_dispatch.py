@@ -70,7 +70,7 @@ HERE = Path(__file__).resolve().parent
 
 SUBJECT_SCHEMA_VERSION = 2
 RECEIPT_SCHEMA_VERSION = 1
-ENVELOPE_SCHEMA_VERSION = 1
+ENVELOPE_SCHEMA_VERSION = 2
 
 # Both resolver modules are named by fixed skill-relative literals, checked
 # against where the file really sits. A receipt free to name whichever copy
@@ -120,6 +120,8 @@ SUBJECT_DIGEST_DOMAIN = "omp.critical-review.frozen-subject.v2"
 # field of the compared object outside the comparison.
 DISPATCH_TASK_INTENT = "Dispatching resolved reviewers"
 INLINE_EVIDENCE_FORMAT = "critical-review-complete-inline-evidence-v1"
+ORACLE_SHADOW_MARKER = "CRITICAL_REVIEW_ORACLE_SHADOW_V1"
+ORACLE_EVIDENCE_INCOMPATIBLE = "oracle_repository_evidence_required"
 
 # The only tree entries a reviewer can be pointed at. A committed symlink is a
 # clean, immutable entry whose *target* is neither: following one would let a
@@ -1025,28 +1027,33 @@ def class_candidates(
     if review_class == FOCUSED:
         return tuple(
             _standing(lead_family, FOCUSED, reviewer, FOCUSED_SELECTION_CLASS)
-            for reviewer in qualification.live_reviewers(document, "initial", lead_family)
+            for reviewer in qualification.focused_reviewers(document, lead_family)
         )
     if review_class == TARGETED_REFUTER:
         return tuple(
-            _standing(lead_family, TARGETED_REFUTER, reviewer, "unconditional")
-            for reviewer in qualification.live_reviewers(document, "targeted-refuter", lead_family)
+            _standing(lead_family, TARGETED_REFUTER, reviewer, "targeted")
+            for reviewer in qualification.global_reviewers(
+                document, "targetedRefuters", lead_family
+            )
         )
     if review_class == INITIAL:
-        return (
+        rows = [
             *(
-                _standing(lead_family, INITIAL, reviewer, "unconditional")
-                for reviewer in qualification.live_reviewers(document, "initial", lead_family)
+                _standing(lead_family, INITIAL, reviewer, "strong")
+                for reviewer in qualification.strong_reviewers(document, lead_family)
             ),
             *(
-                _standing(lead_family, INITIAL, reviewer, "specialist")
-                for reviewer in qualification.live_specialists(document, lead_family)
+                _standing(lead_family, INITIAL, reviewer, "supplement")
+                for reviewer in qualification.profile_reviewers(
+                    document, lead_family, "supplements"
+                )
             ),
             *(
                 _standing(lead_family, INITIAL, critic.reviewer, "conditional")
-                for critic in qualification.conditional_critics(document, lead_family)
+                for critic in qualification.architecture_specialists(document, lead_family)
             ),
-        )
+        ]
+        return tuple(rows)
     raise DispatchError(f"review class {review_class!r} is not one of {list(REVIEW_CLASSES)}")
 
 
@@ -1198,25 +1205,32 @@ def resolve_assignments(
     if review_class == FOCUSED:
         critics = {
             reviewer.reviewer_id: reviewer
-            for reviewer in qualification.live_reviewers(document, "initial", lead_family)
+            for reviewer in qualification.focused_reviewers(document, lead_family)
         }
         if len(requested) != 1:
             raise DispatchError(
-                f"a focused review dispatches exactly one configured initial critic, not "
+                f"a focused review dispatches exactly one configured focused reviewer, not "
                 f"{list(requested)}; escalating by naming more reviewers is a council nobody "
                 "resolved"
             )
         reviewer = critics.get(requested[0])
         if reviewer is None:
             raise DispatchError(
-                f"{requested[0]!r} is not a configured initial critic for lead family "
-                f"{lead_family!r}; the configured critics are {sorted(critics)}"
+                f"{requested[0]!r} is not a configured focused reviewer for lead family "
+                f"{lead_family!r}; the configured reviewers are {sorted(critics)}"
             )
         _require_grants(reviewer, verified.packet)
+        reason_code = {
+            qualification.STRONG_ROLE: qualification.STRONG_REASON_CODE,
+            qualification.SUPPLEMENT_ROLE: qualification.SUPPLEMENT_REASON_CODE,
+        }.get(reviewer.role)
+        if reason_code is None:
+            raise DispatchError(
+                f"focused reviewer {reviewer.reviewer_id!r} resolved unsupported role "
+                f"{reviewer.role!r}"
+            )
         assignments = (
-            _assignment(
-                reviewer, FOCUSED_SELECTION_CLASS, (qualification.UNCONDITIONAL_REASON_CODE,)
-            ),
+            _assignment(reviewer, FOCUSED_SELECTION_CLASS, (reason_code,)),
         )
         validate_evidence_compatibility(
             subject, verified.packet, [item.evidence_delivery for item in assignments]
@@ -1230,7 +1244,7 @@ def resolve_assignments(
                 f"record does not authorize targeted refutation: status={decision.status!r}, "
                 f"action={decision.action!r}, reasons={list(decision.reason_codes)}"
             )
-        pool = qualification.live_reviewers(document, "targeted-refuter", lead_family)
+        pool = qualification.global_reviewers(document, "targetedRefuters", lead_family)
         if not pool:
             raise DispatchError(
                 f"liveDispatch.targetedRefuters selects no refuter for lead family {lead_family!r}"
@@ -1239,7 +1253,7 @@ def resolve_assignments(
             _require_grants(reviewer, verified.packet)
         _require_exact_roster(review_class, requested, [item.reviewer_id for item in pool])
         assignments = tuple(
-            _assignment(reviewer, "unconditional", (qualification.TARGETED_REFUTER_REASON_CODE,))
+            _assignment(reviewer, "targeted", (qualification.TARGETED_REFUTER_REASON_CODE,))
             for reviewer in pool
         )
         validate_evidence_compatibility(
@@ -1645,6 +1659,11 @@ def canonical_task_text(
     its commit and its exact bound paths, which the commit does keep.
     """
 
+    if assignment.execution_mode != "task_agent":
+        raise DispatchError(
+            f"reviewer {assignment.reviewer_id!r} uses {assignment.execution_mode!r}, "
+            "not native Task execution"
+        )
     subject = receipt.subject
     header = [
         RECEIPT_MARKER,
@@ -1756,8 +1775,153 @@ def dispatch_marker(envelope_path: Path, envelope_sha256: str) -> str:
     return f"{DISPATCH_MARKER}\nenvelope_path={envelope_path}\nenvelope_sha256={envelope_sha256}"
 
 
+def canonical_oracle_shadow_prompt(
+    receipt: Receipt, receipt_sha256: str, verified: VerifiedSubject
+) -> str:
+    """Render the frozen council subject for the non-authoritative Oracle shadow."""
+
+    subject = receipt.subject
+    if subject.kind != REPOSITORY_KIND:
+        raise DispatchError("the Oracle shadow requires repository evidence")
+    target = [
+        f"Review commit {cast(str, subject.subject_commit)} in repository ",
+        f"{cast(Path, subject.repository_path)}, restricted to these ",
+        f"{len(subject.files)} bound paths:",
+        *(f"- {name}" for name in subject.files),
+    ]
+    sections = [
+        ORACLE_SHADOW_MARKER,
+        f"receipt_sha256={receipt_sha256}",
+        f"subject_digest={subject.subject_digest}",
+        f"lead_family={receipt.lead_family}",
+        "review_class=initial",
+        "standing=none",
+        "blocks_closure=false",
+        "receives_peer_output=false",
+        f"subject_commit={subject.subject_commit}",
+        f"scope_sha256={subject.scope_sha256}",
+        f"packet_sha256={subject.packet_sha256}",
+        "",
+        "# Target",
+        "".join(target[:3]),
+        *target[3:],
+        "",
+        "Read no other path. Do not modify files or inspect peer output. The archive is built ",
+        "from a detached worktree at the bound commit, not the caller's mutable working tree.",
+        "",
+        f"# Assurance scope (verified bytes, sha256 {subject.scope_sha256})",
+        verified.scope_text.rstrip("\n"),
+        "",
+        f"# Immutable packet (verified bytes, sha256 {subject.packet_sha256})",
+        verified.packet_text.rstrip("\n"),
+        "",
+        "# Review",
+        "Act as an independent shadow reviewer. Apply the common critical floor across the ",
+        "whole frozen subject. Return falsifiable root-cause claims with exact anchors. This ",
+        "is review only: no implementation, no competing rewrite, and no assumptions from ",
+        "other reviewers.",
+        "",
+        "Before accepting readiness or lifecycle claims, compare the implementation's assumed ",
+        "starting state with bound predecessor evidence. Report the smallest concrete mismatch; ",
+        "do not answer one with a generalized recovery system unless the declared consequence ",
+        "requires it.",
+        "",
+        "# Output contract",
+        "Return only one strict JSON object with exactly the keys summary, evidence, and ",
+        "unresolved. evidence and unresolved must be arrays; evidence may contain at most 12 ",
+        "items. Every evidence item must identify the protected asset or invariant, an exact ",
+        "anchor present in the supplied evidence, and the residual consequence after declared ",
+        "controls. Put missing evidence for unresolved claims in unresolved. General hardening ",
+        "and speculative future-proofing are not defects. Zero findings is valid. Do not wrap ",
+        "the JSON in a Markdown fence or add prose before or after it.",
+    ]
+    return "\n".join(sections) + "\n"
+
+
+def oracle_shadow_document(
+    receipt: Receipt, receipt_sha256: str, verified: VerifiedSubject
+) -> dict[str, object] | None:
+    """Resolve the best-effort Oracle lane from live authority and frozen packet grants."""
+
+    if receipt.review_class != INITIAL:
+        return None
+    authority_path, _authority_sha256, authority = bind_live_authority()
+    shadow = qualification.oracle_shadow(authority)
+    selection = qualification.oracle_shadow_selection(authority, verified.packet)
+    if selection is None:
+        raise DispatchError("the live qualification authority has no oracleShadow lane")
+    reason_codes = list(cast(Sequence[str], selection["reasonCodes"]))
+    selected = selection["selection"] == qualification.ORACLE_SHADOW_SELECTED
+    if selected and receipt.subject.kind != REPOSITORY_KIND:
+        selected = False
+        reason_codes = [ORACLE_EVIDENCE_INCOMPATIBLE]
+    selection_value = (
+        qualification.ORACLE_SHADOW_SELECTED
+        if selected
+        else cast(str, selection["selection"])
+    )
+    if not selected and selection_value == qualification.ORACLE_SHADOW_SELECTED:
+        selection_value = qualification.ORACLE_SHADOW_SKIPPED
+
+    subject = receipt.subject
+    if verified.record is None or subject.record_path is None:
+        raise DispatchError("an initial Oracle shadow requires a bound review record")
+    review_id = verified.record.get("review_id")
+    if not isinstance(review_id, str) or not review_id.strip():
+        raise DispatchError("the bound review record has no non-empty review_id")
+    run_digest = _digest_bytes(f"{review_id}\0{receipt_sha256}".encode("utf-8"))[:16]
+    stem = f"oracle-shadow-{subject.subject_digest[:16]}-{run_digest}"
+    review_directory = subject.record_path.parent.resolve()
+    dataset_directory = (authority_path.parent / shadow.dataset_path).resolve()
+    request_path = review_directory / f"{stem}-request.json"
+    dispatch_path = review_directory / f"{stem}-dispatch.json"
+    result_path = review_directory / f"{stem}-result.json"
+    dataset_record_path = dataset_directory / f"{subject.subject_digest}-{run_digest}.json"
+
+    request: dict[str, object] | None = None
+    if selected:
+        if subject.repository_path is None or subject.subject_commit is None or not subject.files:
+            raise DispatchError("the selected Oracle shadow has no immutable repository subject")
+        prompt = canonical_oracle_shadow_prompt(receipt, receipt_sha256, verified)
+        request = {
+            "repositoryPath": str(subject.repository_path),
+            "subjectCommit": subject.subject_commit,
+            "files": list(subject.files),
+            "prompt": prompt,
+            "promptSha256": _digest_bytes(prompt.encode("utf-8")),
+        }
+
+    return {
+        "schemaVersion": 1,
+        "reviewId": review_id,
+        "requestPath": str(request_path),
+        "dispatchPath": str(dispatch_path),
+        "resultPath": str(result_path),
+        "datasetRecordPath": str(dataset_record_path),
+        "shadowId": shadow.shadow_id,
+        "modelFamily": shadow.model_family,
+        "correlationGroup": shadow.correlation_group,
+        "providerRoute": shadow.provider_route,
+        "accessProfile": shadow.access_profile,
+        "dataAllowlistKey": shadow.data_allowlist_key,
+        "preset": shadow.preset,
+        "executionMode": shadow.execution_mode,
+        "evidenceDelivery": shadow.evidence_delivery,
+        "selection": selection_value,
+        "reasonCodes": sorted(reason_codes),
+        "standing": "none",
+        "blocksClosure": False,
+        "receivesPeerOutput": False,
+        "request": request,
+    }
+
+
 def envelope_document(
-    receipt: Receipt, receipt_path: Path, receipt_sha256: str, tasks: Sequence[Mapping[str, str]]
+    receipt: Receipt,
+    receipt_path: Path,
+    receipt_sha256: str,
+    tasks: Sequence[Mapping[str, str]],
+    oracle_shadow: Mapping[str, object] | None,
 ) -> dict[str, object]:
     items = [dict(task) for task in tasks]
     return {
@@ -1771,6 +1935,7 @@ def envelope_document(
         "taskIntent": DISPATCH_TASK_INTENT,
         "tasks": items,
         "tasksSha256": _digest_bytes(_canonical_json(items).encode("utf-8")),
+        "oracleShadow": dict(oracle_shadow) if oracle_shadow is not None else None,
     }
 
 
@@ -1865,7 +2030,9 @@ def _verified_receipt(
             f"it records: {[item.standing for item in fresh]} instead of "
             f"{[item.standing for item in receipt.assignments]}"
         )
-    return receipt, receipt_sha256, verified, canonical_tasks(receipt, receipt_sha256, verified)
+    return receipt, receipt_sha256, verified, canonical_tasks(
+        receipt, receipt_sha256, verified
+    )
 
 
 def _build_receipt(
@@ -2002,7 +2169,7 @@ def command_resolve(args: argparse.Namespace) -> str:
 
 
 def command_prepare(args: argparse.Namespace) -> str:
-    """Prepare every dispatch artifact and return only verifier-approved Task input."""
+    """Prepare every dispatch artifact and return verified Task input."""
 
     if args.review_class not in REVIEW_CLASSES:
         raise DispatchError(
@@ -2066,8 +2233,8 @@ def command_prepare(args: argparse.Namespace) -> str:
                 )
             reviewers = tuple(
                 reviewer.reviewer_id
-                for reviewer in qualification.live_reviewers(
-                    authority, "targeted-refuter", args.lead_family
+                for reviewer in qualification.global_reviewers(
+                    authority, "targetedRefuters", args.lead_family
                 )
             )
 
@@ -2095,7 +2262,10 @@ def command_prepare(args: argparse.Namespace) -> str:
     )
     receipt_sha256 = _digest_bytes(receipt_text.encode("utf-8"))
     tasks = canonical_tasks(receipt, receipt_sha256, verified)
-    envelope_value = envelope_document(receipt, receipt_path, receipt_sha256, tasks)
+    oracle_shadow_value = oracle_shadow_document(receipt, receipt_sha256, verified)
+    envelope_value = envelope_document(
+        receipt, receipt_path, receipt_sha256, tasks, oracle_shadow_value
+    )
     _, _, envelope_schema = bind_public_schema(ENVELOPE_SCHEMA_RELATIVE_PATH)
     _validate(envelope_value, envelope_schema, "review dispatch envelope")
     envelope_text = _artifact_text(envelope_value)
@@ -2121,7 +2291,10 @@ def command_prepare(args: argparse.Namespace) -> str:
 def command_dispatch(args: argparse.Namespace) -> str:
     receipt, receipt_sha256, _verified, tasks = _verified_receipt(args.receipt)
     receipt_path = _resolved(args.receipt, "resolver receipt")
-    document = envelope_document(receipt, receipt_path, receipt_sha256, tasks)
+    oracle_shadow_value = oracle_shadow_document(receipt, receipt_sha256, _verified)
+    document = envelope_document(
+        receipt, receipt_path, receipt_sha256, tasks, oracle_shadow_value
+    )
     _, _, schema = bind_public_schema(ENVELOPE_SCHEMA_RELATIVE_PATH)
     _validate(document, schema, "review dispatch envelope")
     envelope_path = _write_once(args.out, _artifact_text(document), "review dispatch envelope")
@@ -2162,7 +2335,11 @@ def command_verify_task(args: argparse.Namespace) -> str:
             f"resolver receipt digests to {receipt_sha256}, not the "
             f"{document['receiptSha256']} this envelope was built from"
         )
-    if envelope_document(receipt, receipt_path, receipt_sha256, tasks) != dict(document):
+    oracle_shadow_value = oracle_shadow_document(receipt, receipt_sha256, verified)
+    if (
+        envelope_document(receipt, receipt_path, receipt_sha256, tasks, oracle_shadow_value)
+        != dict(document)
+    ):
         raise DispatchError(
             "rebuilding this envelope from freshly read bytes does not reproduce it; the "
             "reviewed material or the resolved roster changed after dispatch"
@@ -2178,7 +2355,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "prepare",
         help=(
             "resolve the roster, validate evidence delivery, freeze, resolve standing, build "
-            "the envelope, and print verifier-approved Task input in one command"
+            "the envelope, and print verifier-approved Task input"
         ),
     )
     prepare.add_argument("--scope", type=Path, required=True)
@@ -2222,7 +2399,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "verify-task",
         help=(
             "internal: rehash one envelope, repeat the whole dispatch verification, rebuild "
-            "the canonical tasks from current bytes, and print the approved Task input"
+            "canonical Task input from current bytes, and print approved input"
         ),
     )
     verify.add_argument("--envelope", type=Path, required=True)

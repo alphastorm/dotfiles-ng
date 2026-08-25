@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Fail-closed reader for lead-relative critical-review qualification.
 
-Schema v8 selects one live panel profile from the accountable main session's
-explicit `model_family`. `initialCritics` are three mutually distinct lineages,
-all cross-family to that lead. `initialSpecialists` are same-family blind samples
-with supplemental authority. A conditional critic dispatches only when the frozen
-record and immutable packet satisfy its pinned eligibility; its selection remains
-conditional while its standing is independent when cross-family and supplemental
-when same-family. Selection mechanism and evidentiary authority are separate.
+Schema v9 selects one live profile for one of two qualified accountable lead
+families: GPT/ChatGPT or Claude. Each profile has exactly three concepts:
+strongCritic, always-on supplements, and record-selected
+architectureSpecialists. The strong critic is reciprocal cross-family
+independent evidence. Gemini Flash and Grok are cross-family supplemental
+evidence. Eligible Fable architecture synthesis is always supplemental, with
+lead-relative lineage recorded honestly.
 
-Reviewer identity is not model lineage. The `reviewers` mapping key is the
-`reviewer_id`, the only join key for manifests, dispatch, and findings.
-`model_family` and `correlation_group` describe which model produced an opinion.
-Reviewer entries carry no role or standing: this resolver derives `role`,
-`independence_class`, and `authority` from lead family, reviewer family, and the
+Reviewer identity is not model lineage. The reviewers mapping key is the
+reviewer_id, the only join key for manifests, dispatch, and findings.
+model_family and correlation_group describe which model produced an opinion.
+Reviewer entries carry no role or standing: this resolver derives role,
+independence_class, and authority from lead family, reviewer family, and the
 selected profile group.
 
 Roster choice belongs to this resolver, not its caller. `initial` requires
@@ -61,6 +61,7 @@ except ModuleNotFoundError:
     os.execv(venv_python, [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
 
 from review_sequence import (
+    CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN,
     RISK_DOMAINS,
     _is_session_local,
     _sha256,
@@ -68,11 +69,11 @@ from review_sequence import (
     select_review_action,
 )
 
-SCHEMA_VERSION = 8
-# Pinned beside the schema version so activation is atomic: a v8 resolver and
-# v5 panel definition cannot half-agree about which lead-family profile is live.
-LIVE_PANEL_ID = "critical-review-primary-v5"
-MANIFEST_SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
+# Pinned beside the schema version so activation is atomic: a v9 resolver and
+# v6 panel definition cannot half-agree about lead eligibility or reviewer tiers.
+LIVE_PANEL_ID = "critical-review-primary-v6"
+MANIFEST_SCHEMA_VERSION = 8
 DEFAULT_QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
 # The manifest records which resolver bytes produced its roster. This is
 # provenance for later audit and re-resolution, not a caller-selectable authority:
@@ -82,36 +83,21 @@ CANARY_AUTHORITIES = frozenset({"historical-non-scoring", "evaluation", "live-qu
 PROVIDER_CANARY_AUTHORITIES = frozenset({"evaluation", "live-qualification"})
 READ_ONLY_REPOSITORY_TOOLS = ("read", "grep", "glob", "lsp", "ast_grep")
 
-CONDITIONAL_ROLE = "conditional_critic"
-SPECIALIST_ROLE = "security_specialist"
+STRONG_ROLE = "strong_critic"
+SUPPLEMENT_ROLE = "supplement"
+ARCHITECTURE_ROLE = "architecture_specialist"
 DISABLED_ROLE = "disabled"
 
-# Read off every reviewer entry, live or held. `reviewer_id` is absent on purpose:
-# it is the mapping key, so duplicating it inside the entry would create a second
-# place for the same identity to be wrong.
 REVIEWER_IDENTITY_FIELDS = (
     "model_family",
     "correlation_group",
     "provider_route",
     "access_profile",
-    # The vendor-rights token a packet's `provider_data_allowlist` is matched
-    # against, and distinct from both neighbours on purpose: a route is named per
-    # account (`openai-codex`), an access profile per entitlement lane
-    # (`daybreak-blue`), and a data-rights grant per vendor (`openai`). The
-    # licence decision is about who receives the material, not which billing path
-    # carried it or what the lane was entitled to read.
     "data_allowlist_key",
 )
 
-# How a selected member is executed. Every live reviewer is a named Task agent;
-# keeping the field in the manifest makes that dispatch contract explicit and
-# leaves no reviewer-id-specific branch for callers to invent.
 EXECUTION_MODES = ("task_agent",)
 
-# A reviewer has no intrinsic standing. The active lead-family profile assigns a
-# group; the selected role fixes standing except for conditional evidence, whose
-# lead/reviewer family relationship decides between independent and supplemental.
-# One qualified lane can therefore change standing without duplicating identity.
 CROSS_FAMILY = "cross_family"
 SAME_LINEAGE_BLIND_SAMPLE = "same_lineage_blind_sample"
 NO_LINEAGE_CLAIM = "not_applicable"
@@ -119,31 +105,51 @@ INDEPENDENT_EVIDENCE = "independent_evidence"
 SUPPLEMENTAL_EVIDENCE = "supplemental_evidence"
 NO_LIVE_AUTHORITY = "no_live_authority"
 LIVE_ROLES: Mapping[str, tuple[str, str]] = {
-    "primary_critic": (CROSS_FAMILY, INDEPENDENT_EVIDENCE),
-    CONDITIONAL_ROLE: (CROSS_FAMILY, INDEPENDENT_EVIDENCE),
-    SPECIALIST_ROLE: (SAME_LINEAGE_BLIND_SAMPLE, SUPPLEMENTAL_EVIDENCE),
+    STRONG_ROLE: (CROSS_FAMILY, INDEPENDENT_EVIDENCE),
+    SUPPLEMENT_ROLE: (CROSS_FAMILY, SUPPLEMENTAL_EVIDENCE),
+    ARCHITECTURE_ROLE: (CROSS_FAMILY, SUPPLEMENTAL_EVIDENCE),
     "targeted_refuter": (CROSS_FAMILY, INDEPENDENT_EVIDENCE),
     "evaluation_only": (NO_LINEAGE_CLAIM, NO_LIVE_AUTHORITY),
     DISABLED_ROLE: (NO_LINEAGE_CLAIM, NO_LIVE_AUTHORITY),
 }
-CONDITIONAL_STANDINGS = (
-    (CROSS_FAMILY, INDEPENDENT_EVIDENCE),
-    (SAME_LINEAGE_BLIND_SAMPLE, SUPPLEMENTAL_EVIDENCE),
-)
+LEAD_RELATIVE_SUPPLEMENTAL_ROLES = frozenset({ARCHITECTURE_ROLE})
 
-# group -> (derived role, required dispatchEnabled). The three profile groups are
-# selected under `byLeadFamily`; the global groups do not vary with the lead.
 LIVE_GROUPS: Mapping[str, tuple[str, bool]] = {
-    "initialCritics": ("primary_critic", True),
-    "initialSpecialists": (SPECIALIST_ROLE, True),
-    "conditionalCritics": (CONDITIONAL_ROLE, True),
+    "strongCritic": (STRONG_ROLE, True),
+    "supplements": (SUPPLEMENT_ROLE, True),
+    "architectureSpecialists": (ARCHITECTURE_ROLE, True),
     "targetedRefuters": ("targeted_refuter", True),
     "evaluationOnly": ("evaluation_only", False),
     "disabled": (DISABLED_ROLE, False),
 }
-PROFILE_GROUPS = ("initialCritics", "initialSpecialists", "conditionalCritics")
+PROFILE_GROUPS = ("strongCritic", "supplements", "architectureSpecialists")
 GLOBAL_GROUPS = ("targetedRefuters", "evaluationOnly", "disabled")
-CROSS_FAMILY_GROUPS = ("initialCritics", "targetedRefuters")
+CROSS_FAMILY_GROUPS = ("strongCritic", "supplements", "targetedRefuters")
+ORACLE_SHADOW_FIELDS = frozenset(
+    {
+        "enabled",
+        "shadow_id",
+        "model_family",
+        "correlation_group",
+        "provider_route",
+        "access_profile",
+        "data_allowlist_key",
+        "preset",
+        "execution_mode",
+        "evidence_delivery",
+        "dataset_path",
+    }
+)
+ORACLE_SHADOW_EXECUTION_MODE = "pi_oracle_async"
+ORACLE_SHADOW_EVIDENCE_DELIVERY = "repository"
+ORACLE_SHADOW_MODEL_FAMILY = "gpt"
+ORACLE_SHADOW_PROVIDER_ROUTE = "openai-chatgpt-web"
+ORACLE_SHADOW_DATA_ALLOWLIST_KEY = "openai"
+ORACLE_SHADOW_PRESET = "pro_extended"
+ORACLE_SHADOW_SELECTED = "selected"
+ORACLE_SHADOW_SKIPPED = "skipped"
+ORACLE_SHADOW_DISABLED = "disabled"
+ORACLE_SHADOW_DISABLED_REASON_CODE = "oracle_shadow_disabled"
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 QUALIFICATION_FIELDS = frozenset({"common", "scopes"})
@@ -155,7 +161,8 @@ ELIGIBILITY_FIELDS = frozenset(
     {
         "policy",
         "allowedReviewModes",
-        "allRiskDomainsIn",
+        "activationRiskDomainsAny",
+        "deniedRiskDomains",
         "requiredProofClassStatuses",
         "denyPathComponentRegex",
         "onUnknown",
@@ -206,50 +213,51 @@ SECURITY_PATH_PATTERN = (
 SECURITY_SENSITIVE_PATH = re.compile(SECURITY_PATH_PATTERN)
 
 MANIFEST_MODES = ("initial", "targeted-refuter")
-UNCONDITIONAL_REASON_CODE = "configured-primary-critic"
-SPECIALIST_REASON_CODE = "configured-security-specialist"
+STRONG_REASON_CODE = "configured-strong-critic"
+SUPPLEMENT_REASON_CODE = "configured-supplement"
+ARCHITECTURE_DESIGN_REASON_CODE = "architecture-design-council"
+ARCHITECTURE_INITIAL_REASON_CODE = "architecture-material"
+ARCHITECTURE_REDESIGN_REASON_CODE = "architecture-material-redesign"
 TARGETED_REFUTER_REASON_CODE = "configured-targeted-refuter"
-SELECTION_CLASSES = ("unconditional", "conditional", "specialist")
-# Every role a manifest row can carry, and the closed vocabulary
-# `panel-selection.schema.json` pins independence and authority against. Two roles
-# are absent because no resolution can emit them: an `evaluation_only` lane is
-# never resolved into a roster at all, and a `disabled` lane holds no live role,
-# so a row naming either would be a seat at a table its holder is being kept from.
+SELECTION_REASON_CODES = (
+    STRONG_REASON_CODE,
+    SUPPLEMENT_REASON_CODE,
+    ARCHITECTURE_DESIGN_REASON_CODE,
+    ARCHITECTURE_INITIAL_REASON_CODE,
+    ARCHITECTURE_REDESIGN_REASON_CODE,
+    TARGETED_REFUTER_REASON_CODE,
+)
+SELECTION_CLASSES = ("strong", "supplement", "conditional", "targeted")
 SELECTABLE_ROLES = (
-    "primary_critic",
-    CONDITIONAL_ROLE,
-    SPECIALIST_ROLE,
+    STRONG_ROLE,
+    SUPPLEMENT_ROLE,
+    ARCHITECTURE_ROLE,
     "targeted_refuter",
 )
-# Closed and sorted on emission, so two resolutions of one record never disagree
-# and a new skip reason cannot enter a manifest without a schema change.
 ACCESS_PROFILE_SKIP_REASON_CODE = "access-profile-not-authorized"
 PROVIDER_DATA_RIGHTS_SKIP_REASON_CODE = "provider-data-rights-not-authorized"
 SKIP_REASON_CODES = (
     ACCESS_PROFILE_SKIP_REASON_CODE,
+    "architecture-scope-absent",
     "authorization-proof-applicable",
     PROVIDER_DATA_RIGHTS_SKIP_REASON_CODE,
     "review-mode-ineligible",
-    "risk-domain-outside-allowlist",
     "risk-domains-empty",
+    "security-risk-domain",
     "security-sensitive-path",
 )
 
 
 @dataclass(frozen=True)
 class ConditionalPolicy:
-    """What a conditional critic may review, pinned in public code.
-
-    Membership stays private configuration; scope does not. Pinning the allowed
-    modes, allowed risk domains, required proof statuses, deny regex, and cohort
-    promotion gates here means a private edit can retire a conditional critic
-    but cannot quietly widen one into security review.
-    """
+    """Pinned eligibility for one record-selected supplemental specialist."""
 
     policy: str
     required_scope: str
     allowed_review_modes: tuple[str, ...]
-    allowed_risk_domains: tuple[str, ...]
+    activation_risk_domains: tuple[str, ...]
+    denied_risk_domains: tuple[str, ...]
+    qualified_risk_domains: tuple[str, ...]
     required_proof_class_statuses: tuple[tuple[str, str], ...]
     deny_path_pattern: str
     on_unknown: str
@@ -265,11 +273,26 @@ class ConditionalPolicy:
     cohort_max_negative_control_percent: int
 
 
-FABLE_NON_SECURITY_ARCHITECTURE_V1 = ConditionalPolicy(
+FABLE_ARCHITECTURE_SYNTHESIS_V2 = ConditionalPolicy(
     policy="fable-non-security-architecture-v1",
     required_scope="non-security-architecture",
     allowed_review_modes=("design", "initial", "material-redesign"),
-    allowed_risk_domains=(
+    activation_risk_domains=(
+        "architecture",
+        "cache-invalidation",
+        "concurrency",
+        "documentation-policy",
+        "persistent-state",
+    ),
+    denied_risk_domains=(
+        "authorization",
+        CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN,
+        "money-or-assets",
+        "privacy",
+        "release-supply-chain",
+        "secrets-cryptography",
+    ),
+    qualified_risk_domains=(
         "architecture",
         "cache-invalidation",
         "concurrency",
@@ -282,8 +305,6 @@ FABLE_NON_SECURITY_ARCHITECTURE_V1 = ConditionalPolicy(
     fallback_allowed=False,
     thinking_level="max",
     read_only_marker="FABLE_ARCHITECTURE_REVIEWER_READ_ONLY_V2",
-    # The packet's six promotion gates, integers so a cohort is graded by exact
-    # arithmetic instead of float comparison.
     cohort_schema="lrhe-fable-architecture-cohort-v1",
     cohort_min_eligible_attempts=20,
     cohort_max_security_misroutes=0,
@@ -292,8 +313,10 @@ FABLE_NON_SECURITY_ARCHITECTURE_V1 = ConditionalPolicy(
     cohort_max_forbidden_tool_attempts=0,
     cohort_max_negative_control_percent=10,
 )
+# Kept as a source-level name for callers; the v1 policy id itself is removed.
+FABLE_POLICY = FABLE_ARCHITECTURE_SYNTHESIS_V2
 CONDITIONAL_POLICIES: Mapping[str, ConditionalPolicy] = {
-    FABLE_NON_SECURITY_ARCHITECTURE_V1.policy: FABLE_NON_SECURITY_ARCHITECTURE_V1
+    FABLE_POLICY.policy: FABLE_POLICY
 }
 
 
@@ -322,6 +345,23 @@ class LiveReviewer:
 
 
 @dataclass(frozen=True)
+class OracleShadow:
+    """One asynchronous no-standing consultation outside the resolver roster."""
+
+    enabled: bool
+    shadow_id: str
+    model_family: str
+    correlation_group: str
+    provider_route: str
+    access_profile: str
+    data_allowlist_key: str
+    preset: str
+    execution_mode: str
+    evidence_delivery: str
+    dataset_path: str
+
+
+@dataclass(frozen=True)
 class ConditionalCritic:
     reviewer: LiveReviewer
     policy: ConditionalPolicy
@@ -346,6 +386,48 @@ def _names(value: object, field: str) -> tuple[str, ...]:
     if len(names) != len(set(names)):
         raise QualificationError(f"{field} contains duplicate names")
     return tuple(names)
+
+
+def oracle_shadow(document: Mapping[str, object]) -> OracleShadow | None:
+    """Validate the asynchronous ChatGPT Pro shadow configuration."""
+
+    raw = document.get("oracleShadow")
+    if raw is None:
+        return None
+    block = _mapping(raw, "oracleShadow")
+    if set(block) != ORACLE_SHADOW_FIELDS:
+        raise QualificationError(
+            f"oracleShadow fields must be {sorted(ORACLE_SHADOW_FIELDS)}, got {sorted(block)}"
+        )
+    enabled = block.get("enabled")
+    if not isinstance(enabled, bool):
+        raise QualificationError("oracleShadow.enabled must be boolean")
+    values: dict[str, str] = {}
+    for field in ORACLE_SHADOW_FIELDS - {"enabled"}:
+        value = block.get(field)
+        if not isinstance(value, str) or not value.strip() or value != value.strip():
+            raise QualificationError(f"oracleShadow.{field} must be a non-empty trimmed string")
+        values[field] = value
+    if values["execution_mode"] != ORACLE_SHADOW_EXECUTION_MODE:
+        raise QualificationError(
+            f"oracleShadow.execution_mode must be {ORACLE_SHADOW_EXECUTION_MODE!r}"
+        )
+    if values["evidence_delivery"] != ORACLE_SHADOW_EVIDENCE_DELIVERY:
+        raise QualificationError(
+            f"oracleShadow.evidence_delivery must be {ORACLE_SHADOW_EVIDENCE_DELIVERY!r}"
+        )
+    for field, expected in (
+        ("model_family", ORACLE_SHADOW_MODEL_FAMILY),
+        ("provider_route", ORACLE_SHADOW_PROVIDER_ROUTE),
+        ("data_allowlist_key", ORACLE_SHADOW_DATA_ALLOWLIST_KEY),
+        ("preset", ORACLE_SHADOW_PRESET),
+    ):
+        if values[field] != expected:
+            raise QualificationError(f"oracleShadow.{field} must be {expected!r}")
+    dataset = Path(values["dataset_path"])
+    if dataset.is_absolute() or ".." in dataset.parts or not dataset.parts or dataset.parts[0] != "lrhe-data":
+        raise QualificationError("oracleShadow.dataset_path must stay under lrhe-data")
+    return OracleShadow(enabled=enabled, **values)
 
 
 def selector_thinking_level(selector: str) -> str:
@@ -484,15 +566,24 @@ def _eligibility(reviewer_id: str, entry: Mapping[str, object]) -> ConditionalPo
             f"{field}.allowedReviewModes must be {list(policy.allowed_review_modes)!r} "
             f"for {policy_id}, got {list(modes)!r}"
         )
-    domains = _names(block.get("allRiskDomainsIn"), f"{field}.allRiskDomainsIn")
-    if domains != policy.allowed_risk_domains:
+    activation = _names(
+        block.get("activationRiskDomainsAny"), f"{field}.activationRiskDomainsAny"
+    )
+    if activation != policy.activation_risk_domains:
         raise QualificationError(
-            f"{field}.allRiskDomainsIn must be {list(policy.allowed_risk_domains)!r} "
-            f"for {policy_id}, got {list(domains)!r}"
+            f"{field}.activationRiskDomainsAny must be "
+            f"{list(policy.activation_risk_domains)!r} for {policy_id}, "
+            f"got {list(activation)!r}"
         )
-    unknown = sorted(set(domains) - RISK_DOMAINS)
+    denied = _names(block.get("deniedRiskDomains"), f"{field}.deniedRiskDomains")
+    if denied != policy.denied_risk_domains:
+        raise QualificationError(
+            f"{field}.deniedRiskDomains must be {list(policy.denied_risk_domains)!r} "
+            f"for {policy_id}, got {list(denied)!r}"
+        )
+    unknown = sorted((set(activation) | set(denied)) - RISK_DOMAINS)
     if unknown:
-        raise QualificationError(f"{field}.allRiskDomainsIn names unknown domains {unknown}")
+        raise QualificationError(f"{field} names unknown risk domains {unknown}")
     statuses = _mapping(
         block.get("requiredProofClassStatuses"), f"{field}.requiredProofClassStatuses"
     )
@@ -525,7 +616,7 @@ def _identity(
     if "profileBinding" in entry:
         raise QualificationError(
             f"reviewers.{reviewer_id}.profileBinding is no longer supported; "
-            "all reviewers use native task_agent dispatch"
+            "execution is resolved from the selected profile and execution_mode"
         )
     for field in ("dispatchRole", "independence_class", "authority"):
         if field in entry:
@@ -547,6 +638,11 @@ def _identity(
             f"got {execution_mode!r}"
         )
     identity["execution_mode"] = execution_mode
+    focused_eligible = entry.get("focusedEligible")
+    if focused_eligible is not None and not isinstance(focused_eligible, bool):
+        raise QualificationError(
+            f"reviewers.{reviewer_id}.focusedEligible must be boolean when present"
+        )
     if entry.get("fallbackAllowed") is True:
         raise QualificationError(
             f"reviewers.{reviewer_id}.fallbackAllowed must not be true; a reviewer "
@@ -658,6 +754,9 @@ def validate_qualification(document: object) -> Mapping[str, object]:
                     f"canaryLedgers.{ledger_name}.prefixRows must be a positive integer"
                 )
 
+    if oracle_shadow(root) is None:
+        raise QualificationError("qualification must declare oracleShadow for full-council shadowing")
+
     live = _mapping(root.get("liveDispatch"), "liveDispatch")
     expected_live_fields = {"panelId", "byLeadFamily", *GLOBAL_GROUPS}
     if set(live) != expected_live_fields:
@@ -671,6 +770,11 @@ def validate_qualification(document: object) -> Mapping[str, object]:
         )
 
     profiles = _profiles(live)
+    if set(profiles) != {"gpt", "claude"}:
+        raise QualificationError(
+            "liveDispatch.byLeadFamily must contain exactly the qualified lead families "
+            f"['claude', 'gpt'], got {sorted(profiles)}"
+        )
     profile_groups = {
         lead_family: {
             group: _names(
@@ -702,7 +806,16 @@ def validate_qualification(document: object) -> Mapping[str, object]:
     memberships: dict[str, set[str]] = {}
     for lead_family, groups in profile_groups.items():
         seen: dict[str, str] = {}
-        critic_lineages: dict[str, str] = {}
+        active_profile = bool(groups["strongCritic"] or groups["supplements"])
+        if active_profile and len(groups["strongCritic"]) != 1:
+            raise QualificationError(
+                f"liveDispatch.byLeadFamily.{lead_family}.strongCritic must select "
+                "exactly one reciprocal strong critic"
+            )
+        if active_profile and not groups["supplements"]:
+            raise QualificationError(
+                f"liveDispatch.byLeadFamily.{lead_family}.supplements must not be empty"
+            )
         for group in PROFILE_GROUPS:
             for reviewer_id in groups[group]:
                 if reviewer_id in seen:
@@ -726,23 +839,24 @@ def validate_qualification(document: object) -> Mapping[str, object]:
                         f"the accountable lead's own lineage; "
                         f"liveDispatch.byLeadFamily.{lead_family}.{group} must be cross-family"
                     )
-                if group == "initialSpecialists" and model_family != lead_family:
+                if identity["execution_mode"] != "task_agent":
                     raise QualificationError(
-                        f"reviewers.{reviewer_id} has model_family {model_family!r}; "
-                        f"liveDispatch.byLeadFamily.{lead_family}.initialSpecialists must "
-                        "sample the accountable lead's own lineage"
+                        f"reviewers.{reviewer_id}.execution_mode must be 'task_agent' in "
+                        f"liveDispatch.byLeadFamily.{lead_family}.{group}"
                     )
-                if group == "initialCritics":
-                    twin = critic_lineages.get(model_family)
-                    if twin is not None:
-                        raise QualificationError(
-                            f"reviewers.{reviewer_id} and reviewers.{twin} are both "
-                            f"initialCritics for lead family {lead_family!r} on model_family "
-                            f"{model_family!r}; two samples of one lineage are not two "
-                            "independent critics"
-                        )
-                    critic_lineages[model_family] = reviewer_id
-
+        core_reviewers = (*groups["strongCritic"], *groups["supplements"])
+        for field in ("model_family", "correlation_group"):
+            owners: dict[str, str] = {}
+            for reviewer_id in core_reviewers:
+                value = cast(str, identities[reviewer_id][field])
+                previous = owners.get(value)
+                if previous is not None:
+                    raise QualificationError(
+                        f"liveDispatch.byLeadFamily.{lead_family}.strongCritic and supplements "
+                        f"must use distinct {field} values; reviewers {previous!r} and "
+                        f"{reviewer_id!r} both use {value!r}"
+                    )
+                owners[value] = reviewer_id
     global_memberships: dict[str, str] = {}
     for group in GLOBAL_GROUPS:
         for reviewer_id in global_groups[group]:
@@ -782,10 +896,14 @@ def validate_qualification(document: object) -> Mapping[str, object]:
     for reviewer_id, entry in entries.items():
         groups = memberships[reviewer_id]
         roles = {LIVE_GROUPS[group][0] for group in groups}
-        if CONDITIONAL_ROLE in roles and roles != {CONDITIONAL_ROLE}:
+        if ARCHITECTURE_ROLE in roles and roles != {ARCHITECTURE_ROLE}:
             raise QualificationError(
-                f"reviewers.{reviewer_id} is conditional in one profile and carries "
-                "another live role; conditional eligibility cannot change by lead family"
+                f"reviewers.{reviewer_id} is an architecture specialist in one profile and "
+                "carries another live role; scoped eligibility cannot change by lead family"
+            )
+        if entry.get("focusedEligible") is True and SUPPLEMENT_ROLE not in roles:
+            raise QualificationError(
+                f"reviewers.{reviewer_id}.focusedEligible requires the supplement role"
             )
         expected_dispatch = any(LIVE_GROUPS[group][1] for group in groups)
         if entry.get("dispatchEnabled") is not expected_dispatch:
@@ -807,7 +925,7 @@ def validate_qualification(document: object) -> Mapping[str, object]:
         if earned:
             required = (
                 ()
-                if roles == {CONDITIONAL_ROLE}
+                if roles == {ARCHITECTURE_ROLE}
                 else (
                     ("providerCanary", "passed"),
                     ("schemaValid", True),
@@ -856,14 +974,14 @@ def validate_qualification(document: object) -> Mapping[str, object]:
                     f"reviewers.{reviewer_id}.canaryReceipt must stay under the skill directory"
                 )
 
-        if roles == {CONDITIONAL_ROLE}:
+        if roles == {ARCHITECTURE_ROLE}:
             _scope_receipt(reviewer_id, entry, _eligibility(reviewer_id, entry))
         else:
             for stray in ("eligibility", "qualification"):
                 if stray in entry:
                     raise QualificationError(
                         f"reviewers.{reviewer_id} declares {stray} without the "
-                        f"{CONDITIONAL_ROLE!r} role; scope and role activate together"
+                        f"{ARCHITECTURE_ROLE!r} role; scope and role activate together"
                     )
     return root
 
@@ -923,8 +1041,8 @@ def _reviewer(
     lens_value = entry.get("lens")
     role = LIVE_GROUPS[group][0]
     independence_class, authority = LIVE_ROLES[role]
-    if role == CONDITIONAL_ROLE and entry.get("model_family") == lead_family:
-        independence_class, authority = CONDITIONAL_STANDINGS[1]
+    if role in LEAD_RELATIVE_SUPPLEMENTAL_ROLES and entry.get("model_family") == lead_family:
+        independence_class = SAME_LINEAGE_BLIND_SAMPLE
     return LiveReviewer(
         **_identity(reviewer_id, entry),
         role=role,
@@ -941,81 +1059,84 @@ def _reviewer(
     )
 
 
-def live_reviewers(
-    document: Mapping[str, object], mode: str, lead_family: str
+def profile_reviewers(
+    document: Mapping[str, object], lead_family: str, group: str
 ) -> tuple[LiveReviewer, ...]:
-    """Return the lead-relative critic roster or the global refutation pool."""
-
-    live = _mapping(document.get("liveDispatch"), "liveDispatch")
-    if mode == "initial":
-        group = "initialCritics"
-        source = _profile(document, lead_family)
-        field = f"liveDispatch.byLeadFamily.{lead_family}.{group}"
-    elif mode == "targeted-refuter":
-        # A lead family is still required: validation proves that this global pool
-        # is cross-family for every configured profile, and the caller must name
-        # which of those profiles owns the review.
-        _profile(document, lead_family)
-        group = "targetedRefuters"
-        source = live
-        field = f"liveDispatch.{group}"
-    else:
-        raise QualificationError(f"unsupported live review mode: {mode}")
-    return tuple(
-        _reviewer(document, reviewer_id, group, lead_family)
-        for reviewer_id in _names(source.get(group), field)
-    )
-
-
-def live_specialists(document: Mapping[str, object], lead_family: str) -> tuple[LiveReviewer, ...]:
-    """Return the same-lineage specialists configured for one lead family."""
-
-    group = "initialSpecialists"
+    if group not in PROFILE_GROUPS:
+        raise QualificationError(f"unsupported profile reviewer group: {group}")
     profile = _profile(document, lead_family)
     return tuple(
         _reviewer(document, reviewer_id, group, lead_family)
         for reviewer_id in _names(
-            profile.get(group),
-            f"liveDispatch.byLeadFamily.{lead_family}.{group}",
+            profile.get(group), f"liveDispatch.byLeadFamily.{lead_family}.{group}"
         )
     )
 
 
-def conditional_critics(
+def strong_reviewers(
+    document: Mapping[str, object], lead_family: str
+) -> tuple[LiveReviewer, ...]:
+    return profile_reviewers(document, lead_family, "strongCritic")
+
+
+def focused_reviewers(
+    document: Mapping[str, object], lead_family: str
+) -> tuple[LiveReviewer, ...]:
+    supplements = profile_reviewers(document, lead_family, "supplements")
+    entries = reviewers(document)
+    return (
+        *strong_reviewers(document, lead_family),
+        *(
+            reviewer
+            for reviewer in supplements
+            if _mapping(
+                entries.get(reviewer.reviewer_id), f"reviewers.{reviewer.reviewer_id}"
+            ).get("focusedEligible")
+            is True
+        ),
+    )
+
+
+def global_reviewers(
+    document: Mapping[str, object], group: str, lead_family: str
+) -> tuple[LiveReviewer, ...]:
+    if group not in GLOBAL_GROUPS:
+        raise QualificationError(f"unsupported global reviewer group: {group}")
+    _profile(document, lead_family)
+    live = _mapping(document.get("liveDispatch"), "liveDispatch")
+    return tuple(
+        _reviewer(document, reviewer_id, group, lead_family)
+        for reviewer_id in _names(live.get(group), f"liveDispatch.{group}")
+    )
+
+
+def architecture_specialists(
     document: Mapping[str, object], lead_family: str
 ) -> tuple[ConditionalCritic, ...]:
-    """Return the conditional critics configured for one lead family."""
-
-    group = "conditionalCritics"
-    profile = _profile(document, lead_family)
+    group = "architectureSpecialists"
     entries = reviewers(document)
     result: list[ConditionalCritic] = []
-    for reviewer_id in _names(
-        profile.get(group),
-        f"liveDispatch.byLeadFamily.{lead_family}.{group}",
-    ):
-        entry = _mapping(entries.get(reviewer_id), f"reviewers.{reviewer_id}")
-        policy = _eligibility(reviewer_id, entry)
+    for reviewer in profile_reviewers(document, lead_family, group):
+        entry = _mapping(entries.get(reviewer.reviewer_id), f"reviewers.{reviewer.reviewer_id}")
+        policy = _eligibility(reviewer.reviewer_id, entry)
         result.append(
             ConditionalCritic(
-                reviewer=_reviewer(document, reviewer_id, group, lead_family),
+                reviewer=reviewer,
                 policy=policy,
-                scope_receipt=_scope_receipt(reviewer_id, entry, policy),
+                scope_receipt=_scope_receipt(reviewer.reviewer_id, entry, policy),
             )
         )
     return tuple(result)
 
 
-def all_conditional_critics(
+def all_architecture_specialists(
     document: Mapping[str, object],
 ) -> tuple[ConditionalCritic, ...]:
-    """Return each conditional lane once across every lead-family profile."""
-
     live = _mapping(document.get("liveDispatch"), "liveDispatch")
     seen: set[str] = set()
     result: list[ConditionalCritic] = []
     for lead_family in _profiles(live):
-        for critic in conditional_critics(document, lead_family):
+        for critic in architecture_specialists(document, lead_family):
             reviewer_id = critic.reviewer.reviewer_id
             if reviewer_id not in seen:
                 seen.add(reviewer_id)
@@ -1083,8 +1204,11 @@ def fable_skip_reason_codes(
     domains = set(_strings(record.get("touched_risk_domains")))
     if not domains:
         reasons.add("risk-domains-empty")
-    elif not domains <= set(policy.allowed_risk_domains):
-        reasons.add("risk-domain-outside-allowlist")
+    else:
+        if not domains.intersection(policy.activation_risk_domains):
+            reasons.add("architecture-scope-absent")
+        if domains.intersection(policy.denied_risk_domains):
+            reasons.add("security-risk-domain")
     proof_classes = record.get("proof_classes")
     for proof_class, expected in policy.required_proof_class_statuses:
         row = proof_classes.get(proof_class) if isinstance(proof_classes, Mapping) else None
@@ -1195,13 +1319,14 @@ def bind_packet(
 def _selected(
     reviewer: LiveReviewer, selection_class: str, reason_codes: Sequence[str]
 ) -> dict[str, object]:
-    """Emit one roster row, joined by `reviewer_id` and never by lineage.
+    """Emit one roster row, joined by reviewer_id and never by lineage.
 
     Lineage metadata rides along so a later audit can ask what a result was worth
-    without re-reading private configuration, but it is descriptive: two rows may
-    share `model_family` and `correlation_group` and still be distinct reviewers.
-    `execution_mode` is resolved here so every dispatcher uses the same native
-    Task-agent path instead of branching on reviewer names.
+    without re-reading private configuration. The strong critic and supplements
+    are pairwise distinct; an architecture specialist may intentionally share
+    model_family or correlation_group with another row. execution_mode is
+    resolved here so every dispatcher uses the same native Task-agent path
+    instead of branching on reviewer names.
     """
 
     return {
@@ -1290,6 +1415,22 @@ def _manifest(
     }
 
 
+def _packet_authorization_reason_codes(
+    *, access_profile: str, data_allowlist_key: str, packet: Mapping[str, object]
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if data_allowlist_key not in _names(
+        packet.get("provider_data_allowlist"), "packet provider_data_allowlist"
+    ):
+        reasons.append(PROVIDER_DATA_RIGHTS_SKIP_REASON_CODE)
+    if access_profile not in _names(
+        packet.get("reviewer_access_profile_allowlist"),
+        "packet reviewer_access_profile_allowlist",
+    ):
+        reasons.append(ACCESS_PROFILE_SKIP_REASON_CODE)
+    return tuple(sorted(reasons))
+
+
 def packet_authorization_reason_codes(
     reviewer: LiveReviewer, packet: Mapping[str, object]
 ) -> tuple[str, ...]:
@@ -1303,17 +1444,50 @@ def packet_authorization_reason_codes(
     for a lane grant, and neither is implied by the route or chosen credential.
     """
 
-    reasons: list[str] = []
-    if reviewer.data_allowlist_key not in _names(
-        packet.get("provider_data_allowlist"), "packet provider_data_allowlist"
-    ):
-        reasons.append(PROVIDER_DATA_RIGHTS_SKIP_REASON_CODE)
-    if reviewer.access_profile not in _names(
-        packet.get("reviewer_access_profile_allowlist"),
-        "packet reviewer_access_profile_allowlist",
-    ):
-        reasons.append(ACCESS_PROFILE_SKIP_REASON_CODE)
-    return tuple(sorted(reasons))
+    return _packet_authorization_reason_codes(
+        access_profile=reviewer.access_profile,
+        data_allowlist_key=reviewer.data_allowlist_key,
+        packet=packet,
+    )
+
+
+def oracle_shadow_selection(
+    document: Mapping[str, object], packet: Mapping[str, object]
+) -> dict[str, object] | None:
+    """Resolve the no-standing shadow and its packet-specific data grants."""
+
+    shadow = oracle_shadow(document)
+    if shadow is None:
+        return None
+    if not shadow.enabled:
+        selection = ORACLE_SHADOW_DISABLED
+        reasons = (ORACLE_SHADOW_DISABLED_REASON_CODE,)
+    else:
+        missing = _packet_authorization_reason_codes(
+            access_profile=shadow.access_profile,
+            data_allowlist_key=shadow.data_allowlist_key,
+            packet=packet,
+        )
+        selection = ORACLE_SHADOW_SKIPPED if missing else ORACLE_SHADOW_SELECTED
+        reasons = missing
+    return {
+        "schemaVersion": 1,
+        "shadowId": shadow.shadow_id,
+        "selection": selection,
+        "reasonCodes": list(reasons),
+        "modelFamily": shadow.model_family,
+        "correlationGroup": shadow.correlation_group,
+        "providerRoute": shadow.provider_route,
+        "accessProfile": shadow.access_profile,
+        "dataAllowlistKey": shadow.data_allowlist_key,
+        "preset": shadow.preset,
+        "executionMode": shadow.execution_mode,
+        "evidenceDelivery": shadow.evidence_delivery,
+        "datasetPath": shadow.dataset_path,
+        "standing": "none",
+        "blocksClosure": False,
+        "receivesPeerOutput": False,
+    }
 
 
 def _require_packet_authorization(reviewer: LiveReviewer, packet: Mapping[str, object]) -> None:
@@ -1337,6 +1511,15 @@ def _require_packet_authorization(reviewer: LiveReviewer, packet: Mapping[str, o
         )
 
 
+def _architecture_selection_reason(record: Mapping[str, object]) -> str:
+    mode = record.get("review_mode")
+    if mode == "design":
+        return ARCHITECTURE_DESIGN_REASON_CODE
+    if mode == "material-redesign":
+        return ARCHITECTURE_REDESIGN_REASON_CODE
+    return ARCHITECTURE_INITIAL_REASON_CODE
+
+
 def select_full_council(
     document: Mapping[str, object],
     record: Mapping[str, object],
@@ -1350,7 +1533,7 @@ def select_full_council(
     authority_path: Path,
     authority_sha256: str,
 ) -> dict[str, object]:
-    """Resolve one lead-relative council: critics, specialists, then conditionals."""
+    """Resolve one lead-relative tiered council in stable dispatch order."""
 
     decision = select_review_action(record)
     if decision.action != "full-council":
@@ -1359,45 +1542,28 @@ def select_full_council(
             f"action={decision.action!r}, reasons={list(decision.reason_codes)}"
         )
     live = _mapping(document.get("liveDispatch"), "liveDispatch")
-    critics = live_reviewers(document, "initial", lead_family)
-    if not critics:
-        # Checked here rather than in `validate_qualification`: an evaluation-only
-        # checkout legitimately declares no live critic. Counted on the critics
-        # alone and never on `selected`, so neither an additive conditional critic
-        # nor a supplemental specialist can pass for the independent floor.
+    strong = strong_reviewers(document, lead_family)
+    if not strong:
         raise QualificationError(
-            f"liveDispatch.byLeadFamily.{lead_family}.initialCritics selects no "
-            "independent critic; a full council cannot consist of conditional critics "
-            "or supplemental specialists alone"
+            f"liveDispatch.byLeadFamily.{lead_family}.strongCritic selects no "
+            "independent assurance anchor"
         )
-    for reviewer in critics:
-        _require_packet_authorization(reviewer, packet)
-    selected = [
-        _selected(reviewer, "unconditional", (UNCONDITIONAL_REASON_CODE,)) for reviewer in critics
-    ]
-    # After the critics, in the same roster. An always-on specialist is additive
-    # evidence about the lead's lineage rather than an independent voice, and this
-    # array is the dispatch order.
-    specialists = live_specialists(document, lead_family)
-    for reviewer in specialists:
-        _require_packet_authorization(reviewer, packet)
-    selected += [
-        _selected(reviewer, "specialist", (SPECIALIST_REASON_CODE,)) for reviewer in specialists
-    ]
+
+    selected: list[dict[str, object]] = []
     skipped: list[dict[str, object]] = []
+    for reviewer in strong:
+        _require_packet_authorization(reviewer, packet)
+        selected.append(_selected(reviewer, "strong", (STRONG_REASON_CODE,)))
+    for reviewer in profile_reviewers(document, lead_family, "supplements"):
+        _require_packet_authorization(reviewer, packet)
+        selected.append(_selected(reviewer, "supplement", (SUPPLEMENT_REASON_CODE,)))
+
     sources = packet_paths(packet)
-    for candidate in conditional_critics(document, lead_family):
+    for candidate in architecture_specialists(document, lead_family):
         reasons = tuple(
             sorted(
                 {
                     *fable_skip_reason_codes(candidate.policy, record, sources),
-                    # A conditional critic already has a not-selected state that
-                    # the protocol treats as a routing fact rather than a failure,
-                    # and its absence never shrinks the unconditional council. So
-                    # an unauthorized one is skipped with its reason recorded,
-                    # exactly like an ineligible one -- refusing the whole council
-                    # because an additive lane lacked a grant would let an
-                    # optional member veto every member that did have one.
                     *packet_authorization_reason_codes(candidate.reviewer, packet),
                 }
             )
@@ -1412,7 +1578,11 @@ def select_full_council(
             )
         else:
             selected.append(
-                _selected(candidate.reviewer, "conditional", (candidate.policy.policy,))
+                _selected(
+                    candidate.reviewer,
+                    "conditional",
+                    (_architecture_selection_reason(record),),
+                )
             )
     return _manifest(
         mode="initial",
@@ -1512,8 +1682,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         authority_path, authority_sha256, document = bind_qualification(args.qualification)
         if args.mode == "targeted-refuter":
             roster = [
-                _selected(reviewer, "unconditional", (TARGETED_REFUTER_REASON_CODE,))
-                for reviewer in live_reviewers(document, "targeted-refuter", args.lead_family)
+                _selected(reviewer, "targeted", (TARGETED_REFUTER_REASON_CODE,))
+                for reviewer in global_reviewers(document, "targetedRefuters", args.lead_family)
             ]
             print(json.dumps(roster, sort_keys=True))
             return 0

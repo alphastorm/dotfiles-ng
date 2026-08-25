@@ -1,9 +1,15 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import {
+	launchOracleShadow,
+	resumeOracleShadowCollectors,
+} from "../skills/critical-review/lrhe/oracle-shadow.ts";
+import { isJsonObject } from "../skills/critical-review/lrhe/json-object.ts";
 
 const REVIEWER_MARKER = "CRITICAL_REVIEWER_READ_ONLY_V1";
+const FABLE_REVIEWER_MARKER = "FABLE_ARCHITECTURE_REVIEWER_READ_ONLY_V2";
 const INLINE_ISOLATED_MARKER = "CRITICAL_REVIEWER_INLINE_ISOLATED_V1";
 const ISOLATED_TOOLS: Record<string, true> = { yield: true };
 const READ_ONLY_TOOLS: Record<string, true> = {
@@ -60,6 +66,11 @@ export interface CanonicalTaskInput {
 
 /** Resolves the verifier's stdout on a clean exit; rejects on any other outcome. */
 export type VerifyTask = (marker: DispatchMarker) => Promise<string>;
+export type LaunchOracleShadow = (
+	envelopePath: string,
+	envelopeSha256: string,
+	ctx: ExtensionContext,
+) => Promise<void>;
 
 export type TaskDecision =
 	| { block: true; reason: string }
@@ -70,10 +81,6 @@ interface DispatchAttempt {
 	activeCallId: string | undefined;
 	attempts: number;
 	completed: boolean;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function blocked(reason: string): { block: true; reason: string } {
@@ -92,7 +99,7 @@ export function deepEqual(left: unknown, right: unknown): boolean {
 			return false;
 		return left.every((value, index) => deepEqual(value, right[index]));
 	}
-	if (!isPlainObject(left) || !isPlainObject(right)) return false;
+	if (!isJsonObject(left) || !isJsonObject(right)) return false;
 	const keys = Object.keys(left);
 	if (keys.length !== Object.keys(right).length) return false;
 	return keys.every(
@@ -102,7 +109,7 @@ export function deepEqual(left: unknown, right: unknown): boolean {
 
 export function isReviewerItem(item: unknown): item is Record<string, unknown> {
 	return (
-		isPlainObject(item) &&
+		isJsonObject(item) &&
 		typeof item.agent === "string" &&
 		item.agent.startsWith(REVIEWER_AGENT_PREFIX)
 	);
@@ -146,11 +153,11 @@ export function parseVerifierOutput(
 	} catch {
 		return null;
 	}
-	if (!isPlainObject(parsed)) return null;
+	if (!isJsonObject(parsed)) return null;
 	const outerKeys = Object.keys(parsed);
 	if (outerKeys.length !== 1 || outerKeys[0] !== "task_input") return null;
 	const taskInput = parsed.task_input;
-	if (!isPlainObject(taskInput)) return null;
+	if (!isJsonObject(taskInput)) return null;
 	const innerKeys = Object.keys(taskInput).sort();
 	if (
 		innerKeys.length !== 3 ||
@@ -172,7 +179,7 @@ function verifierFailureReason(error: unknown, stderr?: string): string {
 		.trim()
 		.split("\n")[0]
 		?.slice(0, VERIFIER_REASON_LIMIT);
-	if (!isPlainObject(error))
+	if (!isJsonObject(error))
 		return `verifier could not be run: ${String(error)}`;
 	if (
 		error.killed === true ||
@@ -230,7 +237,7 @@ export async function evaluateTaskDispatch(
 	rawInput: unknown,
 	verify: VerifyTask = verifyTaskViaSkill,
 ): Promise<TaskDecision> {
-	if (!isPlainObject(rawInput)) return undefined;
+	if (!isJsonObject(rawInput)) return undefined;
 	const tasks = rawInput.tasks;
 	if (!Array.isArray(tasks)) {
 		if (!isReviewerItem(rawInput)) return undefined;
@@ -279,6 +286,7 @@ export async function evaluateTaskDispatch(
 export default function criticalReviewPolicy(
 	pi: ExtensionAPI,
 	verify: VerifyTask = verifyTaskViaSkill,
+	launchShadow: LaunchOracleShadow = launchOracleShadow,
 ): void {
 	const dispatchAttempts = new Map<string, DispatchAttempt>();
 	const callDispatches = new Map<string, string>();
@@ -289,7 +297,12 @@ export default function criticalReviewPolicy(
 			part.includes(INLINE_ISOLATED_MARKER),
 		);
 		const isCriticalReviewer =
-			isolated || prompt.some((part) => part.includes(REVIEWER_MARKER));
+			isolated ||
+			prompt.some(
+				(part) =>
+					part.includes(REVIEWER_MARKER) ||
+					part.includes(FABLE_REVIEWER_MARKER),
+			);
 		if (isCriticalReviewer) {
 			const allowedTools = isolated ? ISOLATED_TOOLS : READ_ONLY_TOOLS;
 			if (allowedTools[event.toolName]) return;
@@ -328,6 +341,7 @@ export default function criticalReviewPolicy(
 			completed: false,
 		});
 		callDispatches.set(event.toolCallId, dispatchKey);
+		void launchShadow(marker.envelopePath, marker.envelopeSha256, ctx);
 		return { input: decision.input };
 	});
 
@@ -340,6 +354,10 @@ export default function criticalReviewPolicy(
 		if (!attempt || attempt.activeCallId !== event.toolCallId) return;
 		attempt.activeCallId = undefined;
 		if (event.isError !== true) attempt.completed = true;
+	});
+
+	pi.on("session_start", () => {
+		void resumeOracleShadowCollectors();
 	});
 
 	pi.on("session_shutdown", () => {

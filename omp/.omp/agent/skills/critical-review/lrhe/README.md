@@ -278,38 +278,41 @@ and that is the only join key a manifest, dispatcher, or finding ledger uses.
 reviewer ids may deliberately share one lineage, so joining on family would silently
 merge distinct configured lanes.
 
-Standing is lead-relative rather than reviewer-intrinsic. Each selected profile keeps
-three `initialCritics` whose `model_family` values are mutually distinct and disjoint
-from `leadFamily`; those unconditional rows satisfy the independent critic floor.
-`initialSpecialists` are additive blind samples of the lead's own lineage and resolve
-as `same_lineage_blind_sample` / `supplemental_evidence`. They never rescue the floor,
-replace another member, or break a disagreement.
+Standing is lead-relative rather than reviewer-intrinsic. Only GPT and Claude
+profiles exist, and each has three concepts:
 
-`conditionalCritics` are additive and record-selected. Eligibility and evidentiary
-standing are separate: the resolver admits one only when the frozen record and packet
-satisfy the policy pinned in `qualification.py`, then derives its standing from the
-lead/reviewer family relationship. A cross-family conditional carries
-`independent_evidence`; a same-family conditional remains
-`same_lineage_blind_sample` / `supplemental_evidence`. Thus a Claude-led Fable result
-can preserve its packet-eligible architecture lens without being misrepresented as an
-independent family. The allowed modes, risk domains, authorization proof status,
-deny-path rule, and cohort promotion gates remain public and executable.
+- strongCritic selects one reciprocal cross-family independent reviewer: Opus
+  through the CVP-approved route for a GPT lead, or Daybreak Blue for a Claude
+  lead;
+- supplements selects Gemini 3.7 Flash and Grok 4.6 on every full council. Both
+  are cross-family supplemental evidence; Gemini supplies a fast sanity pass and
+  Grok supplies cheap decorrelated coverage;
+- architectureSpecialists is record-selected. Fable is default-on for eligible
+  design, architecture-heavy initial, and material-redesign councils, but always
+  carries supplemental authority. Its independence_class still records whether
+  its Claude lineage matches the lead.
 
-Reviewer entries carry identity, transport, qualification, and capability evidence;
-they do not declare `dispatchRole`, `independence_class`, or `authority`. The resolver
-derives those fields from `(lead_family, reviewer_family, selected_role)` and writes
-them into every manifest row, while the manifest schema permits only coherent
-independent or supplemental pairs. Those resolved values reach a reviewer only inside
-the generated receipt block, so a reviewer neither recomputes the matrix nor
-self-promotes.
+No same-family security specialist runs by default: the accountable lead already
+supplies that family. Reviewer entries carry identity, transport, qualification,
+and capability evidence, while the resolver derives role, independence_class,
+and authority from the selected profile. Every live row uses task_agent and the
+same atomic Task envelope; OMP owns provider credentials and account rotation.
+The strong critic and supplements are pairwise distinct by model family and
+correlation group; the conditional architecture specialist may share lineage
+because it remains supplemental.
 
-How a member is executed is resolved rather than inferred from its id. Every live
-row carries `execution_mode: task_agent` together with the exact named agent and
-model selector, so the dispatcher uses one native Task path for critics,
-specialists, and refuters. The agent definition owns thinking level, read-only
-tools, output schema, and reviewer charter. OMP owns provider credential
-selection and sibling-account rotation; the council does not implement a second
-OAuth router.
+Gemini alone is focusedEligible among supplements, enabling the bounded quick
+sanity route without making Grok a second focused-review policy. Consequential
+focused review uses the reciprocal strong critic.
+
+ChatGPT Pro Web remains deliberately outside liveDispatch. The separate
+`oracleShadow` authority attempts pinned pi-oracle `pro_extended` on every full
+council only when the packet explicitly grants both `openai` data egress and the
+exact `chatgpt-pro-web-asxst0rm` access profile. Its output has no reviewer
+standing, never blocks closure, receives no peer output, and never substitutes for
+a qualified lane. Missing grants and every operational failure are persisted as
+nonblocking outcomes under `lrhe-data/oracle-shadow/`, so browser automation can
+accumulate evidence without becoming part of the council availability contract.
 
 Agent names are stable lane identifiers, not model-version aliases. Multiple
 qualified lanes in one family use durable variant names such as
@@ -334,15 +337,14 @@ Conflating experiment membership with live dispatch turns evaluation lanes into
 unapproved reviewers and makes independent roles look like votes. `panels.yaml`
 therefore owns experiments only; `qualification.yml` owns live dispatch.
 
-`qualification.py` fails closed unless schema version 8, the pinned panel id,
-lead-family profiles, dispatch/evaluation flags, canary results, read-only proof,
-agents, and selectors are internally consistent. Each profile rejects a same-family
-primary critic, a cross-family specialist, duplicate primary lineages, duplicate
-memberships, and an unavailable independent floor. A conditional critic proves the
-common schema/read-only gates and one `passed` scope with a fresh receipt, per scope
-rather than once globally; a scope recorded `ineligible` must keep its boundary
-evidence. `targeted-refuter` returns only the separately configured refutation pool and
-never a conditional critic.
+qualification.py fails closed unless schema version 9, panel v6, exactly the GPT
+and Claude lead profiles, one strong critic, nonempty supplements,
+dispatch/evaluation flags, canary results, read-only proof, agents, and selectors
+are internally consistent. Each profile rejects a same-family strong critic or
+supplement, duplicate memberships, and an unavailable strong floor. Fable proves
+the common schema/read-only gates and one passed non-security architecture scope
+with a fresh receipt. targeted-refuter returns only its separately configured
+global pool.
 
 `initial` is the full-council resolution, not a record mode: it resolves any record the
 gate answers `full-council` for, which is `design`, `initial`, or `material-redesign`.
@@ -370,19 +372,13 @@ authority are distinct, and changing any bound input invalidates the manifest. T
 `reasonCodes` vocabulary is closed, so a new selection or skip reason costs a schema
 change.
 
-Authorization is two grants and never one. A reviewer's `data_allowlist_key` is
-the vendor-rights token its material may reach (`anthropic`, `google`, `xai`,
-`opencode`, `openai`) and must appear in the packet's
-`provider_data_allowlist`; its `access_profile` is the entitlement lane and must
-appear in `reviewer_access_profile_allowlist`. Three names answer three
-questions: `openai-codex` is a native route shared by ordinary GPT and
-`daybreak-blue`, while the licence decision concerns the receiving vendor and
-the access-profile grant concerns the selected lane. A withheld grant fails the
-whole resolution for an unconditional critic or always-on specialist — neither
-has a not-selected state — and skips a conditional critic with the reason
-recorded. Neither allowlist is scanned by the conditional critic's deny-path
-rule: they are closed grant vocabularies matched exactly against reviewer
-metadata.
+Authorization is two grants and never one. A reviewer's data_allowlist_key must
+appear in provider_data_allowlist and its access_profile must appear in
+reviewer_access_profile_allowlist. A withheld grant fails the whole resolution
+for the strong critic or an always-on supplement. It skips a record-selected
+architecture specialist with every reason recorded. Neither allowlist is scanned
+by Fable's deny-path rule because both are closed grant vocabularies rather than
+reviewed source paths.
 
 Skip reasons are reported as a sorted set, not first-match: a packet ineligible on three
 independent grounds is a different fact from one ineligible on a single ground, and the
@@ -396,13 +392,11 @@ testable on its own.
 ### Daybreak native Task lane
 
 Daybreak Blue is an entitlement alias, not another generic Sol invocation. Its
-thin named agent requests `openai-codex/gpt-daybreak-blue-latest:max` and fixes
-the read-only tools and structured finding schema. Its evidentiary standing is
-resolved from the selected lead profile, never from the lane: under one profile it
-resolves as a same-lineage supplemental specialist and under another as a
-cross-family independent primary critic. The agent reads that standing out of the
-generated receipt block and stops on a malformed or absent one rather than
-recomputing the combination or declaring its own authority.
+named agent requests openai-codex/gpt-daybreak-blue-latest:max and fixes the
+read-only tools and structured finding schema. It is the reciprocal strong critic
+for Claude leads and is absent from the default GPT-led roster, whose accountable
+lead already supplies the GPT family. The generated receipt supplies standing;
+the reviewer never recomputes it.
 
 OMP 17.2.15 preserves the Responses Lite `reasoning.context=all_turns`
 requirement for the opaque alias. On 2026-08-12 the lane passed all three

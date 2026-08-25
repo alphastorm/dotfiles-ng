@@ -35,36 +35,36 @@ reviewer prose:
   `model_family` and `correlation_group` describe which model answers for a lane,
   and two reviewer ids may deliberately share one lineage — so never join, dedupe,
   or substitute on the family;
-- manifest `leadFamily` records the supplied accountable lead lineage. Every
-  `initialCritic` and targeted refuter is cross-family, and no two
-  `initialCritics` in one profile may share a `model_family`;
-- `initialCritics` are unconditional for the selected profile and are the three
-  members that satisfy the independent critic floor;
-- `initialSpecialists` are additive blind samples of the lead's own lineage.
-  Their standing is `same_lineage_blind_sample` / `supplemental_evidence`: they
-  resolve after every critic, never replace or fall back to another member, and
-  never satisfy the independent floor;
-- `conditionalCritics` are additive and record-selected. Eligibility and
-  standing are separate: an eligible cross-family conditional carries
-  `independent_evidence`; an eligible same-family conditional carries
-  `supplemental_evidence`. Its absence never shrinks the unconditional council;
-- role, `independence_class`, and `authority` are derived from lead family,
-  reviewer family, and the selected profile group. Reviewer entries and prompts
-  cannot declare or promote their own standing, and these fields reach a reviewer
-  only inside the generated `CRITICAL_REVIEW_RESOLVER_RECEIPT_V1` block;
-- `initialCritics`, `initialSpecialists`, `conditionalCritics`, and
-  `targetedRefuters` are distinct dispatch roles;
-- `evaluationOnly` and `disabled` lanes, and every experiment in
-  `lrhe/panels.yaml`, never authorize live review dispatch. A lane in `disabled`
-  may be fully described by lineage, transport, lens, agent, and model and is
-  still not on the council. Being representable is not being selected.
+- manifest leadFamily records the supplied accountable lead lineage. Only gpt
+  and claude profiles exist; Gemini and Grok cannot drive a council;
+- strongCritic selects exactly one reciprocal cross-family assurance anchor:
+  Opus CVP for a GPT lead or Daybreak Blue for a Claude lead;
+- supplements selects Gemini 3.7 Flash and Grok 4.6 on every full council.
+  They are cross-family supplemental evidence: useful for fast sanity and cheap
+  decorrelation, but unable to rescue the independent floor or break a dispute.
+  The strong critic and supplements are pairwise distinct by model family and
+  correlation group;
+- architectureSpecialists is additive and record-selected. Eligible Fable is
+  supplemental whether cross-family or same-lineage, and its absence never
+  shrinks the unconditional council;
+- no same-family security specialist runs by default. The accountable lead
+  already supplies that lineage. A concrete route capability requires a future
+  explicit authority change rather than another permanent role group;
+- ChatGPT Pro Web through pi-oracle remains outside liveDispatch but is attempted
+  asynchronously for every full council. The separate oracleShadow authority has
+  no standing and no effect on closure, retries, or reviewer substitution. It is
+  selected only when the packet grants both its OpenAI data key and exact access
+  profile; every withheld grant records a nonblocking skip;
+- standing reaches each reviewer only inside the generated
+  CRITICAL_REVIEW_RESOLVER_RECEIPT_V1 block. evaluationOnly and disabled lanes,
+  and every experiment in lrhe/panels.yaml, never authorize live review.
 
 Before dispatch, in addition to the hosted-material floor in `SKILL.md`:
 
-1. Read `skill://critical-review/qualification.yml`. A reviewer is enabled only when its `reviewer_id` is in the selected `byLeadFamily` profile or required global group, its reviewer entry says `dispatchEnabled: true`, its canary and read-only gates pass, its exact model selector still resolves, and the packet authorizes its provider. A conditional critic additionally needs a fresh passed receipt for the exact scope being requested; a scope recorded `ineligible` is an explicit supported boundary, not a failure to work around.
-2. Authorize by `access_profile`, not by `provider_route`. Several lanes with different entitlements share one route, so route-level permission proves nothing about a given lane. A member whose `access_profile` is not authorized is `missing`. The packet carries the two grants separately and the resolver matches both exactly: `provider_data_allowlist` must contain the reviewer's `data_allowlist_key`, the vendor-rights token (`anthropic`, `google`, `xai`, `opencode`, `openai`), and `reviewer_access_profile_allowlist` must contain its exact `access_profile`. A missing grant on an unconditional critic or an always-on specialist fails the whole resolution — neither has a not-selected state, so dropping one would silently shrink a council; a conditional critic is skipped with `provider-data-rights-not-authorized` or `access-profile-not-authorized` recorded. In particular, `daybreak-blue` shares the native `openai-codex` route with ordinary GPT lanes and requires both `openai` vendor authorization and explicit `daybreak-blue` access-profile authorization. OMP may rotate among sibling Codex credentials when one account returns a TAC policy denial; credential selection is transport behavior, not a substitute for either packet grant, and authorization for `daybreak-blue` never implies authorization for another lane.
+1. Read skill://critical-review/qualification.yml. A reviewer is enabled only when its reviewer_id is in the selected profile or required global group, dispatchEnabled is true, its canary and read-only gates pass, its exact selector resolves, and the packet authorizes its provider. Fable additionally needs a passed scope receipt for the requested architecture domain.
+2. Authorize by access_profile, not provider_route. provider_data_allowlist must contain the reviewer's data_allowlist_key and reviewer_access_profile_allowlist must contain its exact access_profile. A missing grant on the strong critic or an always-on supplement fails resolution; a record-selected architecture specialist is skipped with every reason recorded.
 
-A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is `missing`, never `approved`. Do not substitute another model for an unavailable lane. A conditional critic the resolver did not select is `not_selected/ineligible` — neither `missing` nor a failed member. Any selected row with `supplemental_evidence` remains additive: it cannot rescue the independent floor, break a disagreement, or earn a retry that an independent critic would not get.
+A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is missing, never approved. Do not substitute another model. An architecture specialist the resolver did not select is not_selected/ineligible. Any selected supplemental_evidence row remains additive: it cannot rescue the independent floor, break a disagreement, or earn a retry that the strong critic would not get.
 
 ## Internal resource compatibility
 
@@ -324,6 +324,12 @@ provider_data_allowlist:
 reviewer_access_profile_allowlist:
 ```
 
+For the standard all-full-council shadow attempt, include `openai` in
+`provider_data_allowlist` and `chatgpt-pro-web-asxst0rm` in
+`reviewer_access_profile_allowlist` only when this packet may be sent through
+that exact ChatGPT Pro account. Omitting either grant records the Oracle lane as
+skipped and never fails or shrinks the qualified Task council.
+
 The declared class, named assets and invariants, credible adversary, caps, recovery contract, result-validity conditions, and non-goals are binding review scope. Review invocation does not promote the artifact class or create a future consumer. Critics may report an omitted risk only when they show a concrete in-scope consequence after current controls. General hardening and speculative future-proofing are not findings.
 
 Use concise facts and primary anchors. Include the decision record, not hidden
@@ -363,7 +369,7 @@ For an initial council, run exactly:
   --manifest ~/.omp/agent/critical-review/<review-id>/panel-selection.json \
   --repo <repository-root> --commit <40-hex-commit-equal-to-HEAD> \
   --file <repository-relative-path> [--file <repository-relative-path> ...] \
-  --lead-family <gpt|claude|gemini|grok> --review-class initial \
+  --lead-family <gpt|claude> --review-class initial \
   --subject ~/.omp/agent/critical-review/<review-id>/frozen-subject.json \
   --receipt ~/.omp/agent/critical-review/<review-id>/resolver-receipt.json \
   --out ~/.omp/agent/critical-review/<review-id>/review-dispatch-envelope.json
@@ -471,6 +477,21 @@ concurrent or completed replay in the same session, and opens the one
 byte-identical transport retry only after the Task tool returns a terminal
 error. This state follows the protected Task lifecycle rather than the enclosing
 eval lifecycle, so an outer nonterminal transition cannot authorize redispatch.
+
+After the same final verifier approves the canonical Task input, the policy reads
+the envelope's resolver-derived `oracleShadow` state. A selected lane submits
+once through pi-oracle from a hook-free detached worktree at `subject_commit`.
+Before preflight or provider submission, it persists a launch-phase pointer and
+starts a detached collector. Restarts retain the pointer's original six-hour
+deadline; an interrupted or uncertain submission becomes finite evidence and is
+never resubmitted. The immutable result artifact is canonical, and collectors or
+later launches repair the run-keyed dataset row from it rather than contradicting
+it. Request, dispatch, and result artifacts remain beside the review record;
+every council keeps a separate row under `lrhe-data/oracle-shadow/`. Selected,
+skipped, disabled, launch-failed, launch-outcome-unknown, collector-timeout,
+schema-invalid, and terminal job outcomes are evidence for later evaluation only.
+The launch is not awaited by Task, receives no reviewer output, cannot authorize
+a retry, and an identical Task transport retry reuses the durable request or job.
 
 The extension treats every Task item whose agent name starts with `review-` as
 protected. A protected or mixed call without the exact

@@ -2,503 +2,175 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "lrhe/panel-selection.schema.json",
   "title": "Critical Review Panel Selection",
-  "description": "One resolver-owned council roster, written once before any provider dispatch. The dispatcher consumes `selected` exactly and never adds, removes, reorders, or substitutes a member. Every row is joined by `reviewer_id`, never by `model_family`: two reviewers may deliberately share one lineage. Rows carry the exact native Task agent, model selector, authorization profile, evidence standing, and delivery contract so callers do not infer them from reviewer names.",
+  "description": "One resolver-owned council roster with one strong critic, always-on supplements, and record-selected architecture specialists.",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schemaVersion",
-    "panelId",
-    "mode",
-    "leadFamily",
-    "reviewRecordPath",
-    "reviewRecordSha256",
-    "subjectDigest",
-    "packetPath",
-    "packetSha256",
-    "qualificationPath",
-    "qualificationSha256",
-    "authorityPath",
-    "authoritySha256",
-    "selected",
-    "skipped"
+    "schemaVersion", "panelId", "mode", "leadFamily", "reviewRecordPath",
+    "reviewRecordSha256", "subjectDigest", "packetPath", "packetSha256",
+    "qualificationPath", "qualificationSha256", "authorityPath",
+    "authoritySha256", "selected", "skipped"
   ],
   "properties": {
-    "schemaVersion": {
-      "const": 7,
-      "description": "Pins this manifest contract; a consumer that accepts an unknown version is guessing at what was dispatched. v2 replaced the `family` join key with `reviewer_id` and added lineage, transport, role, independence, and authority metadata. v3 added the authoritative resolver binding and the per-row vendor-rights token. v4 retired the qualification-canary roster. v5 removed isolated-profile anchors and requires every selected reviewer to use native Task dispatch. v6 binds the exact qualification-authority bytes that selected the roster. v7 binds the accountable main-session model family whose profile derived every selected row's standing."
-    },
-    "panelId": {
-      "type": "string",
-      "minLength": 1,
-      "description": "The live panel definition this roster came from, so a manifest resolved under a superseded panel is visible rather than silent."
-    },
-    "mode": {
-      "enum": [
-        "initial",
-        "targeted-refuter"
-      ],
-      "description": "Which resolution produced this manifest, not the record's review mode: `initial` is the full council for any record the gate answers `full-council` for (design, initial, or material-redesign), and `targeted-refuter` is the separate single-claim falsification roster."
-    },
-    "leadFamily": {
-      "type": "string",
-      "minLength": 1,
-      "description": "The accountable main-session model family supplied to the resolver. It selects one `byLeadFamily` profile and makes every row's cross-family or same-lineage standing auditable from this immutable manifest."
-    },
-    "reviewRecordPath": {
-      "type": "string",
-      "pattern": "^/",
-      "description": "Absolute path of the frozen record that authorized this roster; a relative path cannot identify one epoch across working directories."
-    },
-    "reviewRecordSha256": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$",
-      "description": "Digest of those exact record bytes, so a record edited after resolution no longer matches the roster it produced."
-    },
-    "subjectDigest": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$",
-      "description": "The record's proof-subject digest, joining this roster to the same frozen artifact and changed-file identity every receipt and reviewer result binds."
-    },
-    "packetPath": {
-      "type": "string",
-      "pattern": "^/",
-      "description": "Absolute path of the immutable packet whose record binding was verified; deliberate hardening beyond the packet's recommended shape."
-    },
-    "packetSha256": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$",
-      "description": "Digest of those exact packet bytes, so a packet mutated between resolution and dispatch is detectable rather than assumed unchanged."
-    },
-    "qualificationPath": {
-      "const": "lrhe/qualification.py",
-      "description": "Skill-relative POSIX path of the resolver that produced this roster. Fixed rather than reported, because a manifest free to name whichever copy resolved it could authenticate a forgery against itself. It is a cross-check and never a signature: a consumer holds this literal against the canonical installed authority directory it was already configured with before it reads the file."
-    },
-    "qualificationSha256": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$",
-      "description": "Digest of the exact resolver bytes that emitted this manifest, so a later audit can verify which deterministic selection code produced the roster."
-    },
-    "authorityPath": {
-      "type": "string",
-      "pattern": "^/",
-      "description": "Absolute path of the qualification authority whose retained bytes selected this roster."
-    },
-    "authoritySha256": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$",
-      "description": "Digest of the exact qualification authority bytes parsed for this resolution, distinct from the resolver-code digest."
-    },
+    "schemaVersion": { "const": 8 },
+    "panelId": { "const": "critical-review-primary-v6" },
+    "mode": { "enum": ["initial", "targeted-refuter"] },
+    "leadFamily": { "enum": ["gpt", "claude"] },
+    "reviewRecordPath": { "type": "string", "pattern": "^/" },
+    "reviewRecordSha256": { "$ref": "#/$defs/sha256" },
+    "subjectDigest": { "$ref": "#/$defs/sha256" },
+    "packetPath": { "type": "string", "pattern": "^/" },
+    "packetSha256": { "$ref": "#/$defs/sha256" },
+    "qualificationPath": { "const": "lrhe/qualification.py" },
+    "qualificationSha256": { "$ref": "#/$defs/sha256" },
+    "authorityPath": { "type": "string", "pattern": "^/" },
+    "authoritySha256": { "$ref": "#/$defs/sha256" },
     "selected": {
-      "type": "array",
-      "uniqueItems": true,
-      "minItems": 1,
-      "items": {
-        "$ref": "#/$defs/selectedReviewer"
-      },
-      "description": "Every reviewer this resolution authorizes, in resolver order: independent critics first, then any always-on specialist, then any eligible conditional critic. An empty roster is never a valid dispatch."
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "$ref": "#/$defs/selectedReviewer" }
     },
     "skipped": {
-      "type": "array",
-      "uniqueItems": true,
-      "items": {
-        "$ref": "#/$defs/skippedReviewer"
-      },
-      "description": "Every conditional critic that was considered and not selected, with all of its reasons. Skipped is not missing: it never becomes a failed member and never blocks the unconditional council."
+      "type": "array", "uniqueItems": true,
+      "items": { "$ref": "#/$defs/skippedReviewer" }
     }
   },
   "allOf": [
     {
-      "if": {
-        "properties": {
-          "mode": {
-            "const": "initial"
-          }
-        },
-        "required": [
-          "mode"
-        ]
-      },
+      "if": { "properties": { "mode": { "const": "initial" } }, "required": ["mode"] },
       "then": {
         "properties": {
           "selected": {
             "contains": {
-              "properties": {
-                "selectionClass": {
-                  "const": "unconditional"
-                }
-              },
-              "required": [
-                "selectionClass"
-              ]
-            },
-            "items": {
-              "properties": {
-                "authority": {
-                  "enum": [
-                    "independent_evidence",
-                    "supplemental_evidence"
-                  ]
-                }
-              }
+              "properties": { "role": { "const": "strong_critic" } },
+              "required": ["role"]
             }
           }
-        },
-        "description": "A full council always contains at least one unconditional critic, so neither a conditional skip nor a supplemental specialist can shrink the panel to a lane with no independent evidence in it. `no_live_authority` is excluded outright: a lane still held out of live dispatch cannot ride along on a council roster."
+        }
       }
     },
     {
-      "if": {
-        "properties": {
-          "mode": {
-            "const": "targeted-refuter"
-          }
-        },
-        "required": [
-          "mode"
-        ]
-      },
+      "if": { "properties": { "mode": { "const": "targeted-refuter" } }, "required": ["mode"] },
       "then": {
         "properties": {
           "selected": {
             "items": {
               "properties": {
-                "selectionClass": {
-                  "const": "unconditional"
-                }
+                "role": { "const": "targeted_refuter" },
+                "selectionClass": { "const": "targeted" }
               }
             }
           },
-          "skipped": {
-            "maxItems": 0
-          }
-        },
-        "description": "Targeted refutation is a distinct fixed roster: no conditional critic and no specialist is ever selected or considered for it."
+          "skipped": { "maxItems": 0 }
+        }
       }
     }
   ],
   "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "reasonCode": {
       "enum": [
         "access-profile-not-authorized",
+        "architecture-design-council",
+        "architecture-material",
+        "architecture-material-redesign",
+        "architecture-scope-absent",
         "authorization-proof-applicable",
-        "configured-primary-critic",
-        "configured-security-specialist",
+        "configured-strong-critic",
+        "configured-supplement",
         "configured-targeted-refuter",
-        "fable-non-security-architecture-v1",
         "provider-data-rights-not-authorized",
         "review-mode-ineligible",
-        "risk-domain-outside-allowlist",
         "risk-domains-empty",
+        "security-risk-domain",
         "security-sensitive-path"
-      ],
-      "description": "Closed on purpose. A selection or skip reason nobody declared is not auditable, so a new reason costs a schema change -- which is the moment anyone decides whether it is a real routing fact."
+      ]
     },
     "selectedReviewer": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "reviewer_id",
-        "model_family",
-        "correlation_group",
-        "provider_route",
-        "access_profile",
-        "data_allowlist_key",
-        "execution_mode",
-        "role",
-        "independence_class",
-        "authority",
-        "agent",
-        "lens",
-        "model",
-        "evidence_delivery",
-        "selectionClass",
-        "reasonCodes"
+        "reviewer_id", "model_family", "correlation_group", "provider_route",
+        "access_profile", "data_allowlist_key", "execution_mode", "role",
+        "independence_class", "authority", "agent", "lens", "model",
+        "evidence_delivery", "selectionClass", "reasonCodes"
       ],
       "properties": {
-        "reviewer_id": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The stable reviewer identity as keyed by the live panel definition, and the only join key for its result, receipt, and ledger rows. Distinct from `model_family` on purpose: a reviewer is a configured lane, not a model lineage."
-        },
-        "model_family": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Which model lineage answers for this reviewer. Descriptive, never a join key: two reviewer ids may share one family, and when they do the second is a blind sample rather than a second independent opinion."
-        },
-        "correlation_group": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The finer lineage bucket whose members' errors are expected to correlate. Two rows sharing this are not two independent observations however differently their lanes are configured."
-        },
-        "provider_route": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The transport this reviewer is reached through, recorded so a later audit can tell a route outage from a reviewer disagreement. Never sufficient for authorization on its own: several lanes with different entitlements can share one route."
-        },
-        "access_profile": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Which entitlement lane authorized the call. Named apart from `provider_route` because one route can be reached under different access terms, and the terms are what a rights review and an entitlement gate need. Authorization for one access profile never implies authorization for another on the same route. The packet's `reviewer_access_profile_allowlist` must name this value exactly, or the member is not selected."
-        },
-        "data_allowlist_key": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The vendor-rights token the packet's `provider_data_allowlist` must contain for this member. A third name for a third question: the route is per account (`openai-codex`), the access profile is per entitlement lane (`daybreak-blue`), and this is per vendor (`openai`), because a licence decision is about who receives the material rather than which billing path carried it or what the lane was entitled to read."
-        },
-        "execution_mode": {
-          "const": "task_agent",
-          "description": "Every selected reviewer is dispatched through its named native Task agent. The resolved field prevents reviewer-id-specific transport branches."
-        },
+        "reviewer_id": { "type": "string", "minLength": 1 },
+        "model_family": { "type": "string", "minLength": 1 },
+        "correlation_group": { "type": "string", "minLength": 1 },
+        "provider_route": { "type": "string", "minLength": 1 },
+        "access_profile": { "type": "string", "minLength": 1 },
+        "data_allowlist_key": { "type": "string", "minLength": 1 },
+        "execution_mode": { "const": "task_agent" },
         "role": {
-          "enum": [
-            "primary_critic",
-            "conditional_critic",
-            "security_specialist",
-            "targeted_refuter"
-          ],
-          "description": "The dispatch role this reviewer holds. Closed to the roles a resolution can actually emit: an `evaluation_only` lane is never resolved into a roster at all, and a lane still held in `disabled` holds no live role, so neither can appear on one."
+          "enum": ["strong_critic", "supplement", "architecture_specialist", "targeted_refuter"]
         },
-        "independence_class": {
-          "enum": [
-            "cross_family",
-            "same_lineage_blind_sample",
-            "not_applicable"
-          ],
-          "description": "Why this reviewer's opinion is or is not independent evidence. `same_lineage_blind_sample` states plainly that the lane duplicates a lineage already on the panel and is valuable only as an additional blind sample of it."
-        },
-        "authority": {
-          "enum": [
-            "independent_evidence",
-            "supplemental_evidence",
-            "no_live_authority"
-          ],
-          "description": "What this member's result is worth. `supplemental_evidence` never counts toward the independent critic floor. Derived by the resolver from lead family, reviewer family, and selected role rather than declared per lane, so same-family conditional evidence cannot self-promote."
-        },
-        "agent": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The exact agent definition to dispatch, so the roster cannot be satisfied by a similarly named reviewer."
-        },
-        "lens": {
-          "type": "string",
-          "description": "The configured primary lens. Independent lenses are what make several results evidence rather than repeated votes."
-        },
-        "model": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The exact provider/model[:effort] selector, including effort: a served model that differs from this is a mismatch, never an acceptable substitution."
-        },
-        "evidence_delivery": {
-          "enum": [
-            "inline",
-            "repository"
-          ],
-          "description": "Whether this member verifies claims through its own read-only repository tools or only from evidence pasted into its assignment."
-        },
-        "selectionClass": {
-          "enum": [
-            "unconditional",
-            "conditional",
-            "specialist"
-          ],
-          "description": "`unconditional` members run on every full council and carry the independent evidence. A `conditional` member is additive and record-selected. A `specialist` member is additive and always on once qualified, but it is a same-lineage blind sample: it never replaces, falls back to, or stands in for an independent critic."
-        },
+        "independence_class": { "enum": ["cross_family", "same_lineage_blind_sample"] },
+        "authority": { "enum": ["independent_evidence", "supplemental_evidence"] },
+        "agent": { "type": "string", "minLength": 1 },
+        "lens": { "type": "string" },
+        "model": { "type": "string", "minLength": 1 },
+        "evidence_delivery": { "enum": ["inline", "repository"] },
+        "selectionClass": { "enum": ["strong", "supplement", "conditional", "targeted"] },
         "reasonCodes": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/reasonCode"
-          },
-          "description": "Why this member is on the roster, recorded so selection is reconstructable from the manifest alone."
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/reasonCode" }
         }
       },
       "allOf": [
         {
-          "if": {
-            "properties": {
-              "role": {
-                "const": "primary_critic"
-              }
-            },
-            "required": [
-              "role"
-            ]
-          },
+          "if": { "properties": { "role": { "enum": ["strong_critic", "targeted_refuter"] } }, "required": ["role"] },
           "then": {
             "properties": {
-              "independence_class": {
-                "const": "cross_family"
-              },
-              "authority": {
-                "const": "independent_evidence"
+              "independence_class": { "const": "cross_family" },
+              "authority": { "const": "independent_evidence" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "role": { "const": "supplement" } }, "required": ["role"] },
+          "then": {
+            "properties": {
+              "independence_class": { "const": "cross_family" },
+              "authority": { "const": "supplemental_evidence" },
+              "selectionClass": { "const": "supplement" },
+              "reasonCodes": { "items": { "const": "configured-supplement" } }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "role": { "const": "architecture_specialist" } }, "required": ["role"] },
+          "then": {
+            "properties": {
+              "authority": { "const": "supplemental_evidence" },
+              "selectionClass": { "const": "conditional" },
+              "reasonCodes": {
+                "items": {
+                  "enum": [
+                    "architecture-design-council", "architecture-material",
+                    "architecture-material-redesign"
+                  ]
+                }
               }
             }
           }
         },
         {
-          "if": {
-            "properties": {
-              "role": {
-                "const": "conditional_critic"
-              }
-            },
-            "required": [
-              "role"
-            ]
-          },
-          "then": {
-            "oneOf": [
-              {
-                "properties": {
-                  "independence_class": {
-                    "const": "cross_family"
-                  },
-                  "authority": {
-                    "const": "independent_evidence"
-                  }
-                }
-              },
-              {
-                "properties": {
-                  "independence_class": {
-                    "const": "same_lineage_blind_sample"
-                  },
-                  "authority": {
-                    "const": "supplemental_evidence"
-                  }
-                }
-              }
-            ]
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "role": {
-                "const": "security_specialist"
-              }
-            },
-            "required": [
-              "role"
-            ]
-          },
+          "if": { "properties": { "selectionClass": { "const": "strong" } }, "required": ["selectionClass"] },
           "then": {
             "properties": {
-              "independence_class": {
-                "const": "same_lineage_blind_sample"
-              },
-              "authority": {
-                "const": "supplemental_evidence"
-              }
+              "role": { "const": "strong_critic" },
+              "reasonCodes": { "items": { "const": "configured-strong-critic" } }
             }
           }
         },
         {
-          "if": {
-            "properties": {
-              "role": {
-                "const": "targeted_refuter"
-              }
-            },
-            "required": [
-              "role"
-            ]
-          },
+          "if": { "properties": { "selectionClass": { "const": "targeted" } }, "required": ["selectionClass"] },
           "then": {
             "properties": {
-              "independence_class": {
-                "const": "cross_family"
-              },
-              "authority": {
-                "const": "independent_evidence"
-              }
+              "role": { "const": "targeted_refuter" },
+              "reasonCodes": { "items": { "const": "configured-targeted-refuter" } }
             }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "selectionClass": {
-                "const": "unconditional"
-              }
-            },
-            "required": [
-              "selectionClass"
-            ]
-          },
-          "then": {
-            "properties": {
-              "role": {
-                "enum": [
-                  "primary_critic",
-                  "targeted_refuter"
-                ]
-              },
-              "reasonCodes": {
-                "items": {
-                  "enum": [
-                    "configured-primary-critic",
-                    "configured-targeted-refuter"
-                  ]
-                }
-              }
-            },
-            "description": "The unconditional lanes are the configured rosters, and they are the only members the independent critic floor counts."
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "selectionClass": {
-                "const": "conditional"
-              }
-            },
-            "required": [
-              "selectionClass"
-            ]
-          },
-          "then": {
-            "properties": {
-              "role": {
-                "const": "conditional_critic"
-              },
-              "reasonCodes": {
-                "items": {
-                  "enum": [
-                    "fable-non-security-architecture-v1"
-                  ]
-                }
-              }
-            },
-            "description": "A conditional member is selected by a named eligibility policy, never by a configured-roster reason."
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "selectionClass": {
-                "const": "specialist"
-              }
-            },
-            "required": [
-              "selectionClass"
-            ]
-          },
-          "then": {
-            "properties": {
-              "role": {
-                "const": "security_specialist"
-              },
-              "reasonCodes": {
-                "items": {
-                  "enum": [
-                    "configured-security-specialist"
-                  ]
-                }
-              }
-            },
-            "description": "A specialist is on the configured roster. It is never selected by an eligibility policy, because it has none: it is always on once qualified, and its limit is what its evidence is worth rather than which records it may read."
           }
         }
       ]
@@ -506,37 +178,20 @@
     "skippedReviewer": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "reviewer_id",
-        "selectionClass",
-        "reasonCodes"
-      ],
+      "required": ["reviewer_id", "selectionClass", "reasonCodes"],
       "properties": {
-        "reviewer_id": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The conditional critic that was considered and not selected."
-        },
-        "selectionClass": {
-          "const": "conditional",
-          "description": "Only a conditional critic can be skipped. An absent unconditional critic is a resolution failure, and a specialist is never record-selected in the first place, so neither can appear here -- including when the packet withholds a grant: an unauthorized unconditional lane fails the resolution rather than quietly leaving the roster."
-        },
+        "reviewer_id": { "type": "string", "minLength": 1 },
+        "selectionClass": { "const": "conditional" },
         "reasonCodes": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
+          "type": "array", "minItems": 1, "uniqueItems": true,
           "items": {
             "enum": [
-              "access-profile-not-authorized",
-              "authorization-proof-applicable",
-              "provider-data-rights-not-authorized",
-              "review-mode-ineligible",
-              "risk-domain-outside-allowlist",
-              "risk-domains-empty",
+              "access-profile-not-authorized", "architecture-scope-absent",
+              "authorization-proof-applicable", "provider-data-rights-not-authorized",
+              "review-mode-ineligible", "risk-domains-empty", "security-risk-domain",
               "security-sensitive-path"
             ]
-          },
-          "description": "Every independent reason this conditional critic was not selected, sorted -- packet ineligibility and withheld authorization alike. All of them are recorded because a packet ineligible on three grounds is a different fact from one ineligible on a single ground."
+          }
         }
       }
     }

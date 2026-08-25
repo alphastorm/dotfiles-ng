@@ -27,270 +27,76 @@ import review_dispatch as rd  # noqa: E402
 from test_review_sequence import _ready_record  # noqa: E402
 
 # (lead_family, review_class, reviewer_id) -> (agent, selectionClass, role,
-# independence_class, authority). Standing is lead-relative and never
-# reviewer-intrinsic: `daybreak-blue` is an independent primary critic under a
-# Claude lead and a supplemental same-lineage specialist under a GPT lead, and
-# `claude` is independent conditional evidence everywhere except under its own
-# lineage, where it is supplemental.
+# independence_class, authority).
 EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
     ("gpt", "focused", "claude-opus"): (
-        "review-claude-opus",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
+        "review-claude-opus", "focused", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
     ("gpt", "focused", "gemini"): (
-        "review-gemini",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("gpt", "focused", "grok"): (
-        "review-grok",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
+        "review-gemini", "focused", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
     ("gpt", "initial", "claude-opus"): (
-        "review-claude-opus",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
+        "review-claude-opus", "strong", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
     ("gpt", "initial", "gemini"): (
-        "review-gemini",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
+        "review-gemini", "supplement", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
     ("gpt", "initial", "grok"): (
-        "review-grok",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("gpt", "initial", "daybreak-blue"): (
-        "review-daybreak-blue",
-        "specialist",
-        "security_specialist",
-        "same_lineage_blind_sample",
-        "supplemental_evidence",
+        "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
     ("gpt", "initial", "claude"): (
-        "review-claude-fable",
-        "conditional",
-        "conditional_critic",
-        "cross_family",
-        "independent_evidence",
+        "review-claude-fable", "conditional", qualification.ARCHITECTURE_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
     ("gpt", "targeted-refuter", "glm"): (
-        "review-glm-floor",
-        "unconditional",
-        "targeted_refuter",
-        "cross_family",
-        "independent_evidence",
+        "review-glm-floor", "targeted", "targeted_refuter",
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
     ("claude", "focused", "daybreak-blue"): (
-        "review-daybreak-blue",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
+        "review-daybreak-blue", "focused", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
     ("claude", "focused", "gemini"): (
-        "review-gemini",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("claude", "focused", "grok"): (
-        "review-grok",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
+        "review-gemini", "focused", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
     ("claude", "initial", "daybreak-blue"): (
-        "review-daybreak-blue",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
+        "review-daybreak-blue", "strong", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
     ("claude", "initial", "gemini"): (
-        "review-gemini",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
+        "review-gemini", "supplement", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
     ("claude", "initial", "grok"): (
-        "review-grok",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("claude", "initial", "claude-opus"): (
-        "review-claude-opus",
-        "specialist",
-        "security_specialist",
-        "same_lineage_blind_sample",
-        "supplemental_evidence",
+        "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
     ("claude", "initial", "claude"): (
-        "review-claude-fable",
-        "conditional",
-        "conditional_critic",
-        "same_lineage_blind_sample",
-        "supplemental_evidence",
+        "review-claude-fable", "conditional", qualification.ARCHITECTURE_ROLE,
+        qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
     ("claude", "targeted-refuter", "glm"): (
-        "review-glm-floor",
-        "unconditional",
-        "targeted_refuter",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("gemini", "focused", "claude-opus"): (
-        "review-claude-opus",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("gemini", "focused", "daybreak-blue"): (
-        "review-daybreak-blue",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("gemini", "focused", "grok"): (
-        "review-grok",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("gemini", "initial", "claude-opus"): (
-        "review-claude-opus",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("gemini", "initial", "daybreak-blue"): (
-        "review-daybreak-blue",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("gemini", "initial", "grok"): (
-        "review-grok",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("gemini", "initial", "claude"): (
-        "review-claude-fable",
-        "conditional",
-        "conditional_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("gemini", "targeted-refuter", "glm"): (
-        "review-glm-floor",
-        "unconditional",
-        "targeted_refuter",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("grok", "focused", "claude-opus"): (
-        "review-claude-opus",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("grok", "focused", "daybreak-blue"): (
-        "review-daybreak-blue",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("grok", "focused", "gemini"): (
-        "review-gemini",
-        "focused",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("grok", "initial", "claude-opus"): (
-        "review-claude-opus",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("grok", "initial", "daybreak-blue"): (
-        "review-daybreak-blue",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("grok", "initial", "gemini"): (
-        "review-gemini",
-        "unconditional",
-        "primary_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("grok", "initial", "claude"): (
-        "review-claude-fable",
-        "conditional",
-        "conditional_critic",
-        "cross_family",
-        "independent_evidence",
-    ),
-    ("grok", "targeted-refuter", "glm"): (
-        "review-glm-floor",
-        "unconditional",
-        "targeted_refuter",
-        "cross_family",
-        "independent_evidence",
+        "review-glm-floor", "targeted", "targeted_refuter",
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
 }
 
-# How many reviewers each class dispatches, at least and at most. Only `initial`
-# has a range, and only by the number of conditional lanes that may be skipped.
 EXPECTED_ARITY: dict[tuple[str, str], tuple[int, int]] = {
     ("gpt", "focused"): (1, 1),
-    ("gpt", "initial"): (4, 5),
+    ("gpt", "initial"): (3, 4),
     ("gpt", "targeted-refuter"): (1, 1),
     ("claude", "focused"): (1, 1),
-    ("claude", "initial"): (4, 5),
+    ("claude", "initial"): (3, 4),
     ("claude", "targeted-refuter"): (1, 1),
-    ("gemini", "focused"): (1, 1),
-    ("gemini", "initial"): (3, 4),
-    ("gemini", "targeted-refuter"): (1, 1),
-    ("grok", "focused"): (1, 1),
-    ("grok", "initial"): (3, 4),
-    ("grok", "targeted-refuter"): (1, 1),
 }
 
-EXPECTED_LEAD_FAMILIES = ("claude", "gemini", "gpt", "grok")
+EXPECTED_LEAD_FAMILIES = ("claude", "gpt")
 
 
 def _live_document() -> dict:
@@ -339,6 +145,11 @@ def _packet_text(document: dict, *, record_path: str, record_sha256: str, diff: 
         ),
         "reviewer_access_profile_allowlist": sorted(
             {entry["access_profile"] for entry in reviewers.values()}
+            | (
+                {document["oracleShadow"]["access_profile"]}
+                if document.get("oracleShadow", {}).get("enabled") is True
+                else set()
+            )
         ),
     }
     return "# Packet\n\n```yaml\n" + yaml.safe_dump(body, sort_keys=True) + "```\n"
@@ -554,7 +365,7 @@ def _assignment(reviewer_id: str, tuple_row: tuple[str, str, str, str, str]) -> 
         "role": role,
         "independence_class": independence_class,
         "authority": authority,
-        "reasonCodes": ["configured-primary-critic"],
+        "reasonCodes": ["configured-strong-critic"],
     }
 
 
@@ -629,7 +440,7 @@ def test_receipt_schema_refuses_a_wrong_role(receipt_validator, packet_only_subj
         assignments=[
             _assignment(
                 "claude-opus",
-                (agent, selection_class, "security_specialist", independence_class, authority),
+                (agent, selection_class, "supplement", independence_class, authority),
             )
         ],
     )
@@ -637,15 +448,8 @@ def test_receipt_schema_refuses_a_wrong_role(receipt_validator, packet_only_subj
 
 
 def test_receipt_schema_refuses_a_wrong_authority(receipt_validator, packet_only_subject):
-    """A supplemental seat cannot promote itself to independent evidence.
-
-    This is the substitution the whole lead-relative model exists to prevent: a
-    same-lineage blind sample counted as independent evidence would let a council
-    satisfy its independence floor with a sample of the lead.
-    """
-
     agent, selection_class, role, independence_class, _authority = EXPECTED_TUPLES[
-        ("claude", "initial", "claude-opus")
+        ("claude", "initial", "gemini")
     ]
     document = _receipt_document(
         packet_only_subject,
@@ -653,12 +457,11 @@ def test_receipt_schema_refuses_a_wrong_authority(receipt_validator, packet_only
         review_class="initial",
         assignments=[
             _assignment("daybreak-blue", EXPECTED_TUPLES[("claude", "initial", "daybreak-blue")]),
-            _assignment("gemini", EXPECTED_TUPLES[("claude", "initial", "gemini")]),
-            _assignment("grok", EXPECTED_TUPLES[("claude", "initial", "grok")]),
             _assignment(
-                "claude-opus",
-                (agent, selection_class, role, independence_class, "independent_evidence"),
+                "gemini",
+                (agent, selection_class, role, independence_class, qualification.INDEPENDENT_EVIDENCE),
             ),
+            _assignment("grok", EXPECTED_TUPLES[("claude", "initial", "grok")]),
         ],
     )
     assert not receipt_validator.is_valid(document)
@@ -669,7 +472,7 @@ def test_receipt_schema_refuses_an_incomplete_council(receipt_validator, packet_
 
     complete = [
         _assignment(reviewer_id, EXPECTED_TUPLES[("gpt", "initial", reviewer_id)])
-        for reviewer_id in ("claude-opus", "gemini", "grok", "daybreak-blue")
+        for reviewer_id in ("claude-opus", "gemini", "grok")
     ]
     assert receipt_validator.is_valid(
         _receipt_document(
@@ -890,6 +693,29 @@ def test_prepare_builds_the_verified_initial_dispatch_atomically(
     manifest_text = paths["manifest"].read_text(encoding="utf-8")
     manifest = json.loads(manifest_text)
     assert len(emitted["tasks"]) == len(manifest["selected"])
+    envelope = json.loads(paths["envelope"].read_text(encoding="utf-8"))
+    shadow = envelope["oracleShadow"]
+    assert envelope["schemaVersion"] == 2
+    assert shadow["selection"] == qualification.ORACLE_SHADOW_SELECTED
+    assert shadow["reasonCodes"] == []
+    assert shadow["standing"] == "none"
+    assert shadow["blocksClosure"] is False
+    assert shadow["receivesPeerOutput"] is False
+    assert shadow["request"]["subjectCommit"] == repository["commit"]
+    assert shadow["request"]["files"] == ["src/dispatch.py"]
+    assert shadow["request"]["prompt"].startswith(rd.ORACLE_SHADOW_MARKER + "\n")
+    assert _digest(shadow["request"]["prompt"]) == shadow["request"]["promptSha256"]
+    assert shadow["requestPath"].startswith(str(council_material["record"].parent))
+    record = json.loads(council_material["record"].read_text(encoding="utf-8"))
+    run_digest = hashlib.sha256(
+        f"{record['review_id']}\0{envelope['receiptSha256']}".encode("utf-8")
+    ).hexdigest()[:16]
+    assert Path(shadow["requestPath"]).name == (
+        f"oracle-shadow-{envelope['subjectDigest'][:16]}-{run_digest}-request.json"
+    )
+    assert Path(shadow["datasetRecordPath"]).name == (
+        f"{envelope['subjectDigest']}-{run_digest}.json"
+    )
 
     envelope_sha256 = _digest(paths["envelope"].read_text(encoding="utf-8"))
     paths["manifest"].chmod(0o644)
@@ -1235,7 +1061,7 @@ def test_focused_refuses_a_same_lineage_or_unconfigured_critic(material, authori
     document = qualification.validate_qualification(authority)
     verified = rd.freeze_subject(scope_path=material["scope"], packet_path=material["packet"])
     for reviewer_id in ("daybreak-blue", "kimi", "minimax"):
-        with pytest.raises(rd.DispatchError, match="not a configured initial critic"):
+        with pytest.raises(rd.DispatchError, match="not a configured focused reviewer"):
             rd.resolve_assignments(
                 document,
                 verified,
@@ -1245,7 +1071,7 @@ def test_focused_refuses_a_same_lineage_or_unconfigured_critic(material, authori
                 authority_path=rd.LIVE_AUTHORITY,
                 authority_sha256="0" * 64,
             )
-    with pytest.raises(rd.DispatchError, match="exactly one configured initial critic"):
+    with pytest.raises(rd.DispatchError, match="exactly one configured focused reviewer"):
         rd.resolve_assignments(
             document,
             verified,
@@ -1255,6 +1081,36 @@ def test_focused_refuses_a_same_lineage_or_unconfigured_critic(material, authori
             authority_path=rd.LIVE_AUTHORITY,
             authority_sha256="0" * 64,
         )
+
+
+@pytest.mark.parametrize(
+    ("reviewer_id", "reason_code"),
+    (
+        ("claude-opus", qualification.STRONG_REASON_CODE),
+        ("gemini", qualification.SUPPLEMENT_REASON_CODE),
+    ),
+)
+def test_focused_assignment_records_the_reviewer_selection_basis(
+    material, authority, repository, reviewer_id: str, reason_code: str
+):
+    document = qualification.validate_qualification(authority)
+    verified = rd.freeze_subject(
+        scope_path=material["scope"],
+        packet_path=material["packet"],
+        repository_path=repository["path"],
+        subject_commit=repository["commit"],
+        files=["src/dispatch.py"],
+    )
+    assignment = rd.resolve_assignments(
+        document,
+        verified,
+        lead_family="gpt",
+        review_class="focused",
+        reviewer_ids=[reviewer_id],
+        authority_path=rd.LIVE_AUTHORITY,
+        authority_sha256="0" * 64,
+    )[0]
+    assert assignment.reason_codes == (reason_code,)
 
 
 def test_record_bound_classes_refuse_a_subject_without_a_record(material, authority):
@@ -1456,7 +1312,7 @@ def test_targeted_refuter_prepare_infers_the_fixed_pool(tmp_path, authority, rep
     receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
     expected = [
         reviewer.reviewer_id
-        for reviewer in qualification.live_reviewers(authority, "targeted-refuter", "gpt")
+        for reviewer in qualification.global_reviewers(authority, "targetedRefuters", "gpt")
     ]
     assert [row["reviewer_id"] for row in receipt["assignments"]] == expected
     assert len(emitted["tasks"]) == len(expected)
