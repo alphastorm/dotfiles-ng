@@ -13,6 +13,15 @@
 - On explicit simplification reviews, classify findings as `delete` | `stdlib` | `native` | `yagni` | `shrink`; each finding names the exact location, replacement, preserved behavior, and evidence. Never use net line count as the objective.
 - Mechanize recurring steering-correction classes in config, tools, or tests; remove duplicate prompt prose instead of relying on reminders.
 
+## RepoPrompt MCP planning lane
+
+- Use RepoPrompt only through the native `RepoPromptCE` MCP tools; never route RepoPrompt work through `rpce-cli`, shell wrappers, or Computer Use.
+- Keep the lane bounded to an explicit RepoPrompt skill or user request, or repository workflow guidance that requests Context Builder. RepoPrompt does not replace OMP's implementation, authority, or acceptance paths.
+- OMP may announce late-loaded RepoPrompt tools as `xd://mcp__repopromptce_*` devices. Read the device URI for its schema, then write the JSON arguments object to the same URI; an absent key in `Object.keys(tool)` does not mean the announced XDev device is unavailable.
+- Before a RepoPrompt call, check `bind_context op="status"`; if routing is ambiguous, use `bind_context op="list"` then bind the intended `context_id`. Confirm the target root with `get_file_tree` rather than inferring it from a window title.
+- For preparation, call `context_builder` with `response_type="plan"` and `export_response=true`. Describe the objective and uncertainty, then use the returned `chat_id`, `oracle_export_path`, and `oracle_export_instruction` as the handoff contract.
+- If the native tool is unavailable, retry once only after checking server health and routing. Then mark the lane unavailable and continue without it; never fall back to the CLI or rerun an unresolved long request.
+
 ### Diagnostic discovery before freeze
 
 - A subject remains **mutable discovery work** until the complete named state-faithful diagnostic reaches its intended operator-visible outcome.

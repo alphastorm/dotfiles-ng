@@ -1,5 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
-  "mcpServers": {},
+  "mcpServers": {
+    "RepoPromptCE": {
+      "type": "stdio",
+      "command": "/Users/srs/RepoPrompt/repoprompt_ce_cli",
+      "args": ["--backend", "app"],
+      "timeout": 1200000
+    }
+  },
   "disabledServers": ["computer-use"]
 }
