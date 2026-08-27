@@ -27,10 +27,20 @@ CORPUS_SCHEMA = "critical-review-selector-corpus-v1"
 RUN_SCHEMA = "critical-review-selector-run-v1"
 REPORT_SCHEMA = "critical-review-selector-score-v1"
 SELECTION_SCHEMA = "critical-review-selector-selection-v1"
-ROLES = frozenset({"required", "allowed_support", "decoy"})
+ROLES = frozenset({"provided", "required", "allowed_support", "decoy"})
 EXPECTED_ARMS = (
-    ("gpt-5.6-sol-low", "codexExec", "gpt-5.6-sol-low"),
-    ("kimi-k3", "openCode", "opencode-go/kimi-k3"),
+    (
+        "gpt-5.6-sol-low",
+        "codexExec",
+        "gpt-5.6-sol-low",
+        "repoprompt-selection-summary-v1:codexExec",
+    ),
+    (
+        "kimi-k3",
+        "openCode",
+        "opencode-go/kimi-k3",
+        "repoprompt-selection-summary-v1:openCode",
+    ),
 )
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 IDENTIFIER_RE = re.compile(r"[a-z0-9]+(?:[.-][a-z0-9]+)*")
@@ -45,12 +55,13 @@ CORPUS_KEYS = {
     "workspace",
     "workspaceSha256",
 }
-ARM_KEYS = {"agent", "id", "model"}
+ARM_KEYS = {"agent", "id", "model", "tokenSource"}
 CASE_KEYS = {"design", "id"}
 FILE_KEYS = {"bytes", "caseId", "path", "role", "sha256"}
 RUN_KEYS = {
     "armId",
     "caseId",
+    "corpusManifestSha256",
     "corpusId",
     "durationMs",
     "exportResponse",
@@ -64,10 +75,14 @@ RUN_KEYS = {
     "selectedByteTotal",
     "selectedPathTokens",
     "selectedPaths",
+    "selectedRanges",
     "selectedTokenTotal",
+    "tokenSource",
     "workspaceSha256",
 }
 PATH_TOKEN_KEYS = {"path", "tokens"}
+PATH_RANGE_KEYS = {"path", "ranges"}
+LINE_RANGE_KEYS = {"startLine", "endLine"}
 
 
 class SelectorCanaryError(ValueError):
@@ -83,6 +98,7 @@ class Arm:
     id: str
     agent: str
     model: str
+    token_source: str
 
 
 @dataclass(frozen=True)
@@ -122,10 +138,12 @@ class Run:
     replicate: int
     selected_paths: tuple[str, ...]
     path_tokens: dict[str, int]
+    path_bytes: dict[str, int]
     selected_bytes: int
     selected_tokens: int
     duration_ms: int
     oracle_selection_changed: bool
+    token_source: str
 
 
 def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -189,9 +207,22 @@ def _sha256(value: object, label: str) -> str:
     return value
 
 
-def _integer(value: object, label: str, *, minimum: int = 0) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        raise SelectorCanaryError(f"{label} must be an integer >= {minimum}")
+def _integer(
+    value: object,
+    label: str,
+    *,
+    minimum: int = 0,
+    maximum: int = (1 << 63) - 1,
+) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < minimum
+        or value > maximum
+    ):
+        raise SelectorCanaryError(
+            f"{label} must be an integer between {minimum} and {maximum}"
+        )
     return value
 
 
@@ -252,7 +283,10 @@ def prompt_sha256(case: Case) -> str:
 
 def load_corpus(root: Path) -> Corpus:
     root = root.resolve()
-    manifest_path = root / "control/corpus-manifest.v1.json"
+    control = root / "control"
+    if control.is_symlink() or not control.is_dir():
+        raise SelectorCanaryError(f"control is not a regular directory: {control}")
+    manifest_path = control / "corpus-manifest.v1.json"
     raw = _read_bytes(manifest_path, "corpus manifest")
     manifest = _expect_keys(_decode_json(raw, "corpus manifest"), CORPUS_KEYS, "corpus")
 
@@ -279,10 +313,22 @@ def load_corpus(root: Path) -> Corpus:
         arm_id = _identifier(row["id"], f"arms[{index}].id")
         agent = row["agent"]
         model = row["model"]
-        if not isinstance(agent, str) or not agent or not isinstance(model, str) or not model:
-            raise SelectorCanaryError(f"arms[{index}] agent and model must be nonempty strings")
-        arms.append(Arm(arm_id, agent, model))
-    if tuple((arm.id, arm.agent, arm.model) for arm in arms) != EXPECTED_ARMS:
+        token_source = row["tokenSource"]
+        if (
+            not isinstance(agent, str)
+            or not agent
+            or not isinstance(model, str)
+            or not model
+            or not isinstance(token_source, str)
+            or not token_source
+        ):
+            raise SelectorCanaryError(
+                f"arms[{index}] agent, model, and tokenSource must be nonempty strings"
+            )
+        arms.append(Arm(arm_id, agent, model, token_source))
+    if tuple(
+        (arm.id, arm.agent, arm.model, arm.token_source) for arm in arms
+    ) != EXPECTED_ARMS:
         raise SelectorCanaryError("selector-canary-v1 arm order or identity changed")
 
     cases_value = manifest["cases"]
@@ -338,8 +384,8 @@ def load_corpus(root: Path) -> Corpus:
 
     for case in cases:
         fact = files.get(case.design)
-        if fact is None or fact.case_id != case.id or fact.role != "required":
-            raise SelectorCanaryError(f"case design is not required and owned by its case: {case.id}")
+        if fact is None or fact.case_id != case.id or fact.role != "provided":
+            raise SelectorCanaryError(f"case design is not provided and owned by its case: {case.id}")
         if not any(item.case_id == case.id and item.role == "required" for item in files.values()):
             raise SelectorCanaryError(f"case has no required files: {case.id}")
 
@@ -361,10 +407,44 @@ def load_corpus(root: Path) -> Corpus:
     )
 
 
-def _selection_sha(paths: tuple[str, ...]) -> str:
+def _selection_sha(
+    paths: tuple[str, ...], ranges: dict[str, tuple[tuple[int, int], ...]]
+) -> str:
+    selection = [
+        {
+            "path": path,
+            "ranges": [
+                {"startLine": start, "endLine": end} for start, end in ranges[path]
+            ],
+        }
+        for path in paths
+    ]
     return _digest(
-        _canonical_json({"schema": SELECTION_SCHEMA, "selectedPaths": list(paths)})
+        _canonical_json({"schema": SELECTION_SCHEMA, "selection": selection})
     )
+
+
+def _selected_path_bytes(
+    corpus: Corpus,
+    path: str,
+    ranges: tuple[tuple[int, int], ...],
+    label: str,
+) -> int:
+    data = _read_bytes(corpus.workspace / path, label)
+    if not ranges:
+        return len(data)
+    try:
+        lines = data.decode("utf-8").splitlines(keepends=True)
+    except UnicodeDecodeError as exc:
+        raise SelectorCanaryError(f"{label} is not UTF-8 and cannot be sliced") from exc
+    total = 0
+    previous_end = 0
+    for start, end in ranges:
+        if start <= previous_end or end < start or end > len(lines):
+            raise SelectorCanaryError(f"{label} ranges overlap or exceed the file")
+        total += len("".join(lines[start - 1:end]).encode("utf-8"))
+        previous_end = end
+    return total
 
 
 def _load_jsonl(path: Path) -> tuple[list[dict[str, Any]], str]:
@@ -394,6 +474,8 @@ def load_runs(corpus: Corpus, path: Path) -> tuple[dict[tuple[str, str, int], Ru
             raise SelectorCanaryError(f"runs[{index}] has unsupported schema")
         if row["corpusId"] != corpus.corpus_id:
             raise SelectorCanaryError(f"runs[{index}] corpusId mismatch")
+        if row["corpusManifestSha256"] != corpus.manifest_sha256:
+            raise SelectorCanaryError(f"runs[{index}] corpusManifestSha256 mismatch")
         if row["workspaceSha256"] != corpus.workspace_sha256:
             raise SelectorCanaryError(f"runs[{index}] workspaceSha256 mismatch")
         arm_id = _identifier(row["armId"], f"runs[{index}].armId")
@@ -401,6 +483,8 @@ def load_runs(corpus: Corpus, path: Path) -> tuple[dict[tuple[str, str, int], Ru
         replicate = _integer(row["replicate"], f"runs[{index}].replicate", minimum=1)
         if arm_id not in arms or case_id not in cases or replicate > corpus.replicates:
             raise SelectorCanaryError(f"runs[{index}] names an unknown matrix cell")
+        if row["tokenSource"] != arms[arm_id].token_source:
+            raise SelectorCanaryError(f"runs[{index}] tokenSource mismatch")
         run_id = row["runId"]
         expected_run_id = f"{arm_id}:{case_id}:r{replicate}"
         if run_id != expected_run_id:
@@ -422,6 +506,37 @@ def load_runs(corpus: Corpus, path: Path) -> tuple[dict[tuple[str, str, int], Ru
         if unknown:
             raise SelectorCanaryError(f"runs[{index}] selected unmanifested paths: {unknown}")
 
+        range_rows = row["selectedRanges"]
+        if not isinstance(range_rows, list):
+            raise SelectorCanaryError(f"runs[{index}].selectedRanges must be an array")
+        ranges: dict[str, tuple[tuple[int, int], ...]] = {}
+        range_order: list[str] = []
+        for range_index, range_value in enumerate(range_rows):
+            range_row = _expect_keys(
+                range_value, PATH_RANGE_KEYS, f"runs[{index}].selectedRanges[{range_index}]"
+            )
+            range_path = _relative_path(range_row["path"], "selectedRanges.path")
+            if range_path in ranges:
+                raise SelectorCanaryError(f"runs[{index}] repeats range path {range_path}")
+            raw_ranges = range_row["ranges"]
+            if not isinstance(raw_ranges, list):
+                raise SelectorCanaryError(f"runs[{index}] ranges must be an array")
+            parsed_ranges = []
+            for line_index, line_value in enumerate(raw_ranges):
+                line_row = _expect_keys(
+                    line_value,
+                    LINE_RANGE_KEYS,
+                    f"runs[{index}].selectedRanges[{range_index}].ranges[{line_index}]",
+                )
+                parsed_ranges.append((
+                    _integer(line_row["startLine"], "startLine", minimum=1),
+                    _integer(line_row["endLine"], "endLine", minimum=1),
+                ))
+            ranges[range_path] = tuple(parsed_ranges)
+            range_order.append(range_path)
+        if tuple(range_order) != selected:
+            raise SelectorCanaryError(f"runs[{index}] range rows must match selectedPaths order")
+
         token_rows = row["selectedPathTokens"]
         if not isinstance(token_rows, list):
             raise SelectorCanaryError(f"runs[{index}].selectedPathTokens must be an array")
@@ -440,14 +555,20 @@ def load_runs(corpus: Corpus, path: Path) -> tuple[dict[tuple[str, str, int], Ru
             raise SelectorCanaryError(f"runs[{index}] token rows must match selectedPaths order")
 
         selected_bytes = _integer(row["selectedByteTotal"], "selectedByteTotal")
-        expected_bytes = sum(corpus.files[item].bytes for item in selected)
+        path_bytes = {
+            item: _selected_path_bytes(
+                corpus, item, ranges[item], f"runs[{index}] selected path {item}"
+            )
+            for item in selected
+        }
+        expected_bytes = sum(path_bytes.values())
         if selected_bytes != expected_bytes:
             raise SelectorCanaryError(f"runs[{index}] selectedByteTotal mismatch")
         selected_tokens = _integer(row["selectedTokenTotal"], "selectedTokenTotal")
         if selected_tokens != sum(tokens.values()):
             raise SelectorCanaryError(f"runs[{index}] selectedTokenTotal mismatch")
         duration_ms = _integer(row["durationMs"], "durationMs")
-        expected_selection_sha = _selection_sha(selected)
+        expected_selection_sha = _selection_sha(selected, ranges)
         pre_sha = _sha256(row["preOracleSelectionSha256"], "preOracleSelectionSha256")
         final_sha = _sha256(row["finalSelectionSha256"], "finalSelectionSha256")
         if pre_sha != expected_selection_sha:
@@ -463,10 +584,12 @@ def load_runs(corpus: Corpus, path: Path) -> tuple[dict[tuple[str, str, int], Ru
             replicate=replicate,
             selected_paths=selected,
             path_tokens=tokens,
+            path_bytes=path_bytes,
             selected_bytes=selected_bytes,
             selected_tokens=selected_tokens,
             duration_ms=duration_ms,
             oracle_selection_changed=pre_sha != final_sha,
+            token_source=arms[arm_id].token_source,
         )
 
     expected = {
@@ -492,8 +615,8 @@ def _rate(numerator: int, denominator: int) -> float | None:
 def _subset_totals(paths: set[str], corpus: Corpus, run: Run) -> dict[str, int]:
     return {
         "files": len(paths),
-        "bytes": sum(corpus.files[path].bytes for path in paths),
-        "tokens": sum(run.path_tokens[path] for path in paths),
+        "bytes": sum(run.path_bytes[path] for path in paths),
+        "reportedTokens": sum(run.path_tokens[path] for path in paths),
     }
 
 
@@ -506,6 +629,10 @@ def score(corpus: Corpus, matrix: dict[tuple[str, str, int], Run], runs_sha: str
     for key in sorted(matrix, key=lambda item: (arm_order[item[0]], case_order[item[1]], item[2])):
         run = matrix[key]
         selected = set(run.selected_paths)
+        provided = {
+            path for path, fact in corpus.files.items()
+            if fact.case_id == run.case_id and fact.role == "provided"
+        }
         required = {
             path for path, fact in corpus.files.items()
             if fact.case_id == run.case_id and fact.role == "required"
@@ -520,6 +647,7 @@ def score(corpus: Corpus, matrix: dict[tuple[str, str, int], Run], runs_sha: str
         }
         foreign = {path for path in all_paths if corpus.files[path].case_id != run.case_id}
         selected_required = selected & required
+        selected_provided = selected & provided
         selected_support = selected & support
         selected_decoy = selected & decoy
         selected_foreign = selected & foreign
@@ -530,6 +658,7 @@ def score(corpus: Corpus, matrix: dict[tuple[str, str, int], Run], runs_sha: str
             "replicate": run.replicate,
             "runId": run.run_id,
             "selectedPaths": list(run.selected_paths),
+            "selectedProvidedPaths": sorted(selected_provided),
             "selectedRequiredPaths": sorted(selected_required),
             "missedRequiredPaths": sorted(required - selected),
             "selectedAllowedSupportPaths": sorted(selected_support),
@@ -545,7 +674,7 @@ def score(corpus: Corpus, matrix: dict[tuple[str, str, int], Run], runs_sha: str
             "crossCase": _subset_totals(selected_foreign, corpus, run),
             "falseInclusion": _subset_totals(false_inclusions, corpus, run),
             "durationMs": run.duration_ms,
-            "oracleSelectionChanged": run.oracle_selection_changed,
+            "reportedOracleSelectionChanged": run.oracle_selection_changed,
         })
 
     stability: list[dict[str, Any]] = []
@@ -604,12 +733,16 @@ def score(corpus: Corpus, matrix: dict[tuple[str, str, int], Run], runs_sha: str
             "scoredCells": len(arm_cells),
             "selectedFiles": selected_total,
             "selectedBytes": sum(cell["selected"]["bytes"] for cell in arm_cells),
-            "selectedTokens": sum(cell["selected"]["tokens"] for cell in arm_cells),
+            "reportedSelectedTokens": sum(
+                cell["selected"]["reportedTokens"] for cell in arm_cells
+            ),
             "meanSelectedBytes": round(
                 sum(cell["selected"]["bytes"] for cell in arm_cells) / len(arm_cells), 6
             ),
-            "meanSelectedTokens": round(
-                sum(cell["selected"]["tokens"] for cell in arm_cells) / len(arm_cells), 6
+            "meanReportedSelectedTokens": round(
+                sum(cell["selected"]["reportedTokens"] for cell in arm_cells)
+                / len(arm_cells),
+                6,
             ),
             "microCriticalRecall": _rate(required_hits, required_total),
             "pooledAllowedSupportInclusionRate": _rate(support_selected, support_total),
@@ -619,15 +752,15 @@ def score(corpus: Corpus, matrix: dict[tuple[str, str, int], Run], runs_sha: str
             "selectedAllowedSupportBytes": sum(
                 cell["allowedSupport"]["bytes"] for cell in arm_cells
             ),
-            "selectedAllowedSupportTokens": sum(
-                cell["allowedSupport"]["tokens"] for cell in arm_cells
+            "selectedAllowedSupportReportedTokens": sum(
+                cell["allowedSupport"]["reportedTokens"] for cell in arm_cells
             ),
             "falseInclusionFiles": false_total,
             "falseInclusionBytes": sum(
                 cell["falseInclusion"]["bytes"] for cell in arm_cells
             ),
-            "falseInclusionTokens": sum(
-                cell["falseInclusion"]["tokens"] for cell in arm_cells
+            "falseInclusionReportedTokens": sum(
+                cell["falseInclusion"]["reportedTokens"] for cell in arm_cells
             ),
             "meanCaseStability": round(float(stability_mean), 6),
             "meanDurationMs": round(
@@ -644,11 +777,22 @@ def score(corpus: Corpus, matrix: dict[tuple[str, str, int], Run], runs_sha: str
         "runsSha256": runs_sha,
         "matrix": {"expectedCells": 24, "scoredCells": len(cells)},
         "arms": [
-            {"id": arm.id, "agent": arm.agent, "model": arm.model} for arm in corpus.arms
+            {
+                "id": arm.id,
+                "agent": arm.agent,
+                "model": arm.model,
+                "tokenSource": arm.token_source,
+            }
+            for arm in corpus.arms
         ],
         "cells": cells,
         "stability": stability,
         "armAggregates": aggregates,
+        "selectionEvidence": "collector-attested",
+        "tokenTelemetry": {
+            "status": "collector-attested-unverified",
+            "crossArmComparable": False,
+        },
     }
 
 
@@ -657,16 +801,23 @@ def _write_new(path: Path, content: str) -> None:
     if path.exists() or path.is_symlink():
         raise OutputRefusal(f"refusing to overwrite output: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
+    staging = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    if staging.exists() or staging.is_symlink():
+        raise OutputRefusal(f"refusing stale output staging path: {staging}")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     fd: int | None = None
     try:
-        fd = os.open(path, flags, 0o600)
+        fd = os.open(staging, flags, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             fd = None
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
             os.fchmod(handle.fileno(), 0o444)
+        try:
+            os.link(staging, path)
+        except FileExistsError as exc:
+            raise OutputRefusal(f"refusing to overwrite output: {path}") from exc
         parent_fd = os.open(path.parent, os.O_RDONLY)
         try:
             os.fsync(parent_fd)
@@ -675,17 +826,19 @@ def _write_new(path: Path, content: str) -> None:
     except BaseException:
         if fd is not None:
             os.close(fd)
+        raise
+    finally:
         try:
-            path.unlink()
+            staging.unlink()
         except FileNotFoundError:
             pass
-        raise
 
 
 def _validate_output_path(corpus: Corpus, path: Path) -> Path:
     resolved = path.resolve()
+    control = (corpus.root / "control").resolve()
     if _is_within(resolved, corpus.workspace) or _is_within(
-        resolved, corpus.root / "control"
+        resolved, control
     ):
         raise OutputRefusal("run and score artifacts must remain outside workspace/ and control/")
     return resolved
