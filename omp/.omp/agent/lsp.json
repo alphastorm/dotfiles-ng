@@ -4,13 +4,59 @@
       "command": "/opt/homebrew/bin/tsc",
       "args": ["--lsp", "--stdio"],
       "fileTypes": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
-      "rootMarkers": ["package.json", "tsconfig.json", "jsconfig.json"]
+      "rootMarkers": [".git", "package.json", "tsconfig.json", "jsconfig.json"]
     },
     "typescript-language-server": {
       "disabled": true
     },
     "pyright": {
-      "disabled": true
+      "command": "/opt/homebrew/bin/pyright-langserver",
+      "args": ["--stdio"],
+      "fileTypes": [".py", ".pyi"],
+      "rootMarkers": [".git", "pyproject.toml", "pyrightconfig.json", "setup.py", "setup.cfg", "requirements.txt"],
+      "disabled": false
+    },
+    "clangd": {
+      "command": "clangd",
+      "args": ["--background-index", "--clang-tidy", "--header-insertion=iwyu"],
+      "fileTypes": [".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx", ".m", ".mm", ".cu", ".cuh"],
+      "rootMarkers": [".git", "compile_commands.json", "CMakeLists.txt", ".clangd", ".clang-format", "Makefile"]
+    },
+    "cmake-language-server": {
+      "command": "/opt/homebrew/bin/cmake-language-server",
+      "args": [],
+      "fileTypes": ["CMakeLists.txt", ".cmake"],
+      "rootMarkers": [".git", "CMakeLists.txt"]
+    },
+    "ruby-lsp": {
+      "command": "/opt/homebrew/bin/ruby-lsp",
+      "args": [],
+      "fileTypes": [".rb", ".rake", ".gemspec", ".erb"],
+      "rootMarkers": [".git", "Gemfile", ".ruby-version", ".ruby-gemset"]
+    },
+    "vscode-json-language-server": {
+      "command": "/opt/homebrew/bin/vscode-json-language-server",
+      "args": ["--stdio"],
+      "fileTypes": [".json", ".jsonc"],
+      "rootMarkers": [".git", "package.json"]
+    },
+    "vscode-html-language-server": {
+      "command": "/opt/homebrew/bin/vscode-html-language-server",
+      "args": ["--stdio"],
+      "fileTypes": [".html", ".htm"],
+      "rootMarkers": [".git", "package.json"]
+    },
+    "vscode-css-language-server": {
+      "command": "/opt/homebrew/bin/vscode-css-language-server",
+      "args": ["--stdio"],
+      "fileTypes": [".css", ".scss", ".sass", ".less"],
+      "rootMarkers": [".git", "package.json"]
+    },
+    "dockerls": {
+      "command": "/opt/homebrew/bin/docker-langserver",
+      "args": ["--stdio"],
+      "fileTypes": [".dockerfile", "Dockerfile"],
+      "rootMarkers": [".git", "Dockerfile", "docker-compose.yml", "docker-compose.yaml", ".dockerignore"]
     }
   }
 }
