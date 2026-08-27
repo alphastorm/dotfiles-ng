@@ -393,6 +393,12 @@ function stow_private_dotfiles() {
   # of them dangling and silently not loading. The public package above already
   # unstows first; do the same here so a rerun repairs rather than jams.
   stow -R -d "$private_dir" -t "$HOME" omp-private
+  # Code Mode rejects optional extension targets that group or other users may
+  # rewrite. Normalize the source package after stow because the live entries are
+  # symlinks into this checkout and therefore inherit its modes.
+  if [ -d "$private_dir/omp-private/.omp/agent/extensions" ]; then
+    chmod -R go-w "$private_dir/omp-private/.omp/agent/extensions"
+  fi
   if [ "$OS" == "Darwin" ]; then
     stow -R -d "$private_dir" -t "$HOME" zsh-private
   fi
