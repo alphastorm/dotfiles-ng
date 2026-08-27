@@ -16,6 +16,7 @@ VENV_PYTHON = HERE / ".venv/bin/python"
 VENV_RUFF = HERE / ".venv/bin/ruff"
 QUICK_TESTS = (
     "test_review_sequence.py",
+    "test_selector_canary.py",
     "test_runner.py",
     "test_consistency.py",
     "test_invariants.py::test_evaluation_agents_are_hidden_unless_the_lrhe_overlay_is_loaded",
