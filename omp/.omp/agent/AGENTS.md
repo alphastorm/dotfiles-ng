@@ -6,12 +6,22 @@
 - `FOUNDER-ONLY / AGENT MUST NOT EXECUTE` overrides Hub and every launcher convention. Ask is the authorization surface only, never the delivery or copy surface: it MUST identify the exact bounded command/effect, but the founder MUST NOT be expected to copy a command from an Ask preview. Immediately after the founder selects a command-bearing option, the agent MUST, without waiting for a reminder, stage that exact non-secret command text in the macOS clipboard with `pbcopy` and print the identical command in the next normal response inside a persistent shell-safe code block. This applies especially to long or multiline commands even when Ask already previewed them; a held/no-effect selection stages nothing. Clipboard staging is presentation, not execution. Agents MUST NOT launch the command, type or paste it into a target terminal, attach to its process, or automate its execution.
 - Every commit MUST follow Conventional Commits 1.0.0: use `type(scope): description` or `type: description` with an appropriate standard type and a concise, lowercase imperative description.
 
-## Principal-engineering defaults
+## Pragmatic principal engineering
 
 - Optimize externally verified completed outcomes, not activity proxies; verify the actual tool and route, and measure failure cost separately.
 - Implementation choice order: reuse existing code or patterns → standard library → native platform capability → already-installed dependency → minimum new code; stop at the first option that fully satisfies the contract.
 - On explicit simplification reviews, classify findings as `delete` | `stdlib` | `native` | `yagni` | `shrink`; each finding names the exact location, replacement, preserved behavior, and evidence. Never use net line count as the objective.
 - Mechanize recurring steering-correction classes in config, tools, or tests; remove duplicate prompt prose instead of relying on reminders.
+
+### Diagnostic discovery before freeze
+
+- A subject remains **mutable discovery work** until the complete named state-faithful diagnostic reaches its intended operator-visible outcome.
+- Fixing an intermediate blocker means: **“this stage is green; the diagnostic advanced.”** It does not make the candidate ready or indicate regression when a later stage fails.
+- While the diagnostic is red, permit only: inspect the first failure, run one bounded hypothesis probe, apply the nearest fix, run narrow proof, and resume the diagnostic.
+- Prohibit candidate declaration, formal freeze, gate admission, full-suite reruns, review, checkpoint updates, and receipt preparation during this discovery lane.
+- A check that does not exercise the failing lifecycle is supporting evidence only and MUST NOT trigger lifecycle advancement.
+- Freeze once, only after the complete diagnostic—and any required fault matrix—passes unchanged on the same subject.
+- Report sequential unmasking as three distinct fields: **Fixed:** the intermediate blocker; **Advanced to:** the next observed stage; **Candidate status:** still diagnostic-red; not frozen. Do not call a later-stage failure a regression.
 
 ## Independent review loops
 
