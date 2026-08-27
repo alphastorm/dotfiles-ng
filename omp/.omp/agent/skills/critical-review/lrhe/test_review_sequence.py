@@ -823,6 +823,7 @@ def test_triage_cli_never_emits_a_dispatch_action(tmp_path: Path, capsys) -> Non
 def test_stable_quick_and_full_check_tiers() -> None:
     assert review_checks.QUICK_TESTS == (
         "test_review_sequence.py",
+        "test_selector_canary.py",
         "test_runner.py",
         "test_consistency.py",
         "test_invariants.py::test_evaluation_agents_are_hidden_unless_the_lrhe_overlay_is_loaded",
