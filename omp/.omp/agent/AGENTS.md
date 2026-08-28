@@ -22,14 +22,15 @@
 - For preparation, call `context_builder` with `response_type="plan"` and `export_response=true`. Describe the objective and uncertainty, then use the returned `chat_id`, `oracle_export_path`, and `oracle_export_instruction` as the handoff contract.
 - If the native tool is unavailable, retry once only after checking server health and routing. Then mark the lane unavailable and continue without it; never fall back to the CLI or rerun an unresolved long request.
 
-### Diagnostic discovery before freeze
+### Runtime discovery before final acceptance
 
-- A subject remains **mutable discovery work** until the complete named state-faithful diagnostic reaches its intended operator-visible outcome.
-- Fixing an intermediate blocker means: **“this stage is green; the diagnostic advanced.”** It does not make the candidate ready or indicate regression when a later stage fails.
-- While the diagnostic is red, permit only: inspect the first failure, run one bounded hypothesis probe, apply the nearest fix, run narrow proof, and resume the diagnostic.
-- Prohibit candidate declaration, formal freeze, gate admission, full-suite reruns, review, checkpoint updates, and receipt preparation during this discovery lane.
-- A check that does not exercise the failing lifecycle is supporting evidence only and MUST NOT trigger lifecycle advancement.
-- Freeze once, only after the complete diagnostic—and any required fault matrix—passes unchanged on the same subject.
+- Treat qualification, golden/E2E, managed install/start/rollback, promotion, and release gates as **final acceptance**. NEVER use them as the iterative runtime defect-discovery loop.
+- Obtain first green through the smallest state-faithful path that exercises the failing boundary: prefer direct foreground component invocation with the exact candidate argv/config/credential path while its manager or controller is inactive; otherwise use the repository's bounded probe exception. Reach the next operator-visible outcome, not the whole acceptance chain.
+- On the first final-acceptance failure, the subject becomes **mutable diagnostic-red discovery work**. Fixing an intermediate blocker means: **“this stage is green; the diagnostic advanced.”** It does not make the candidate ready or make a later-stage failure a regression.
+- While diagnostic-red, permit only: inspect the first failure, run one bounded hypothesis probe, apply the nearest fix, prove that transition red → green, then run one corrected acceptance path in the same class.
+- Prohibit candidate declaration, formal freeze, gate admission, full-suite reruns, review, checkpoint updates, receipt preparation, and repeated acceptance-chain attempts while the failing boundary is unproved.
+- A check that does not exercise the failing boundary is supporting evidence only and MUST NOT trigger lifecycle advancement.
+- Freeze/review only after the state-faithful diagnostic path is green. Run final acceptance once at the repository-defined release point. An explicit repository order may place acceptance before review, but a failure still returns to bounded discovery rather than turning the full chain into the diagnosis harness.
 - Report sequential unmasking as three distinct fields: **Fixed:** the intermediate blocker; **Advanced to:** the next observed stage; **Candidate status:** still diagnostic-red; not frozen. Do not call a later-stage failure a regression.
 
 ## Independent review loops

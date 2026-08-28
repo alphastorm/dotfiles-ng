@@ -93,6 +93,20 @@ Reviewer enablement, packet data grants, and access-profile matching for a full 
 
 These bind every dispatch, focused or full council. Reviewers render verdicts; they are never the primary defect-discovery loop for defects a checklist, grep, or meta-test could find.
 
+### Runtime discovery boundary
+
+A council never owns the iterations that make a qualification, golden/E2E, or
+managed lifecycle path green. Before freeze or dispatch, apply the global
+**Runtime discovery before final acceptance** rule: exercise the smallest
+state-faithful direct path, use a repository's bounded probe exception when it
+exists, and close the first failing boundary with focused red → green evidence.
+Only then freeze and review the complete candidate. Unless an explicit
+repository contract orders otherwise, disposition the frozen review before one
+final acceptance run. If that run fails, return to mutable diagnostic-red work;
+if the nearest fix changes reviewed bytes or boundaries, use the normal
+remediation rules after focused proof. Never turn council rounds, freeze
+artifacts, or proof receipts into the runtime diagnosis harness.
+
 1. Self-execute the review's scrutiny checklist against the diff before any dispatch and close what it finds. Any instruction you would hand a reviewer is one you must already have run against your own change.
 2. Close classes, not instances. When a finding names one instance of a mechanical class — an invocation pattern, a predicate shape, a fixture convention — sweep the whole subject for the class in the same remediation and encode the class as an executable invariant (a meta-test that fails the suite). Policy prose alone never closes a class.
 3. Stop-rule: if a round confirms the same defect class as the previous round, halt remediation and land the executable invariant before any re-dispatch.
