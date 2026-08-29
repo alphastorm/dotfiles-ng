@@ -93,6 +93,29 @@ Reviewer enablement, packet data grants, and access-profile matching for a full 
 
 These bind every dispatch, focused or full council. Reviewers render verdicts; they are never the primary defect-discovery loop for defects a checklist, grep, or meta-test could find.
 
+### RepoPrompt context preparation
+
+Before every design review and every full-council subject freeze, run exactly one
+lead-only RepoPrompt Context Builder preparation for the current work package.
+For focused review and implementation work, default to the same preparation when
+the subject is technically complex, cross-cutting, multi-repository,
+predecessor-state-sensitive, dynamically dispatched, or expensive to qualify.
+Skip only for explicit `NO_CLOUD` material, an already-frozen subject,
+diagnostic-red discovery, a narrow reproduced fix, mechanical work, or when the
+same work package already has a successful preparation. This is context
+discovery, not another review seat.
+
+Use only the native RepoPromptCE MCP route. Bind the intended repository context,
+confirm its root with `get_file_tree`, then call `context_builder` once with
+`response_type=plan` and `export_response=true`. Cite the returned `chat_id` or
+`oracle_export_path` before mutation, packet construction, or freeze. Treat its
+selection and plan as a preservation baseline for the accountable lead to check
+against current evidence. RepoPrompt prose is never a reviewer verdict, standing,
+authorization, frozen evidence, or acceptance proof, and reviewers do not receive
+it as an independent finding. If the native route is unavailable, retry once after
+checking health and binding, then continue without it; never rerun an unresolved
+long request or invoke `rpce-cli`.
+
 ### Runtime discovery boundary
 
 A council never owns the iterations that make a qualification, golden/E2E, or
