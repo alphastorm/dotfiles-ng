@@ -8,30 +8,16 @@
 
 ## Pragmatic principal engineering
 
-- Optimize externally verified completed outcomes, not activity proxies; verify the actual tool and route, and measure failure cost separately.
+- The canonical decision defaults (safety floor, decision hierarchy, readiness, validation, acceptance-vs-discovery, class closure, evidence discipline, proportional assurance) live in `APPEND_SYSTEM.md`; this file carries only protocols and facts that are not decision philosophy.
 - Implementation choice order: reuse existing code or patterns → standard library → native platform capability → already-installed dependency → minimum new code; stop at the first option that fully satisfies the contract.
 - On explicit simplification reviews, classify findings as `delete` | `stdlib` | `native` | `yagni` | `shrink`; each finding names the exact location, replacement, preserved behavior, and evidence. Never use net line count as the objective.
-- Mechanize recurring steering-correction classes in config, tools, or tests; remove duplicate prompt prose instead of relying on reminders.
 
 ## RepoPrompt MCP planning lane
 
 - Use RepoPrompt only through the native `RepoPromptCE` MCP tools; never route RepoPrompt work through `rpce-cli`, shell wrappers, or Computer Use.
-- Keep the lane bounded to an explicit RepoPrompt skill or user request, or repository workflow guidance that requests Context Builder. RepoPrompt does not replace OMP's implementation, authority, or acceptance paths.
 - OMP may announce late-loaded RepoPrompt tools as `xd://mcp__repopromptce_*` devices. Read the device URI for its schema, then write the JSON arguments object to the same URI; an absent key in `Object.keys(tool)` does not mean the announced XDev device is unavailable.
 - Before a RepoPrompt call, check `bind_context op="status"`; if routing is ambiguous, use `bind_context op="list"` then bind the intended `context_id`. Confirm the target root with `get_file_tree` rather than inferring it from a window title.
 - For preparation, call `context_builder` with `response_type="plan"` and `export_response=true`. Describe the objective and uncertainty, then use the returned `chat_id`, `oracle_export_path`, and `oracle_export_instruction` as the handoff contract.
-- If the native tool is unavailable, retry once only after checking server health and routing. Then mark the lane unavailable and continue without it; never fall back to the CLI or rerun an unresolved long request.
-
-### Runtime discovery before final acceptance
-
-- Treat qualification, golden/E2E, managed install/start/rollback, promotion, and release gates as **final acceptance**. NEVER use them as the iterative runtime defect-discovery loop.
-- Obtain first green through the smallest state-faithful path that exercises the failing boundary: prefer direct foreground component invocation with the exact candidate argv/config/credential path while its manager or controller is inactive; otherwise use the repository's bounded probe exception. Reach the next operator-visible outcome, not the whole acceptance chain.
-- On the first final-acceptance failure, the subject becomes **mutable diagnostic-red discovery work**. Fixing an intermediate blocker means: **“this stage is green; the diagnostic advanced.”** It does not make the candidate ready or make a later-stage failure a regression.
-- While diagnostic-red, permit only: inspect the first failure, run one bounded hypothesis probe, apply the nearest fix, prove that transition red → green, then run one corrected acceptance path in the same class.
-- Prohibit candidate declaration, formal freeze, gate admission, full-suite reruns, review, checkpoint updates, receipt preparation, and repeated acceptance-chain attempts while the failing boundary is unproved.
-- A check that does not exercise the failing boundary is supporting evidence only and MUST NOT trigger lifecycle advancement.
-- Freeze/review only after the state-faithful diagnostic path is green. Run final acceptance once at the repository-defined release point. An explicit repository order may place acceptance before review, but a failure still returns to bounded discovery rather than turning the full chain into the diagnosis harness.
-- Report sequential unmasking as three distinct fields: **Fixed:** the intermediate blocker; **Advanced to:** the next observed stage; **Candidate status:** still diagnostic-red; not frozen. Do not call a later-stage failure a regression.
 
 ## Independent review loops
 
