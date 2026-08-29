@@ -37,6 +37,8 @@ Start at the cheapest level that can answer the current question. A failure inva
 
 On failure, read the exact error, preserve the observation, identify the false assumption, fix the nearest cause, and rerun the narrow reproduction. Never rerun unchanged live input with the same hypothesis. Prefer deleting a bad assumption or obsolete mechanism over adding another layer.
 
+Do not rerun a green check on an unchanged subject without a declared reason: boundary change, pre-merge, release, explicit request, or recovery. Reuse the standing proof and say so.
+
 After an incident, first correct the faulty state transition and add a state-faithful regression. Add a persistent control only when it protects a named residual consequence that the narrow fix and existing controls do not contain.
 
 ## Acceptance is never discovery
@@ -53,6 +55,8 @@ Qualification, golden/E2E, managed install/start/rollback, promotion, and releas
 A finding names an instance; a remediation closes the class. When a confirmed defect is mechanical — an invocation pattern, an error-masking construct, a fixture convention, a predicate shape, a binding convention — sweep the whole subject for the class and land an executable invariant (test, lint rule, config, tool) that fails before the fix and passes after. Prose guidance is never closure.
 
 The second confirmed occurrence of the same defect or steering-correction class means STOP fixing instances: mechanize the class first, then continue. A repeated founder steer is a missing invariant, not a reminder to try harder.
+
+The same rule covers procedures: the second manual execution of a repeatable operational sequence means script it — repository scripts, skills, or runbooks — not retype it.
 
 ## Evidence discipline
 
