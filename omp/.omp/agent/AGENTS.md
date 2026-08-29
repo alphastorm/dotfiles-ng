@@ -17,7 +17,7 @@
 
 - Use RepoPrompt only through the native `RepoPromptCE` MCP tools; never route RepoPrompt work through `rpce-cli`, shell wrappers, or Computer Use.
 - OMP may announce late-loaded RepoPrompt tools as `xd://mcp__repopromptce_*` devices. Read the device URI for its schema, then write the JSON arguments object to the same URI; an absent key in `Object.keys(tool)` does not mean the announced XDev device is unavailable.
-- Before a RepoPrompt call, check `bind_context op="status"`; if routing is ambiguous, use `bind_context op="list"` then bind the intended `context_id`. Confirm the target root with `get_file_tree` rather than inferring it from a window title.
+- Before a RepoPrompt call, check `bind_context op="status"`; if routing is ambiguous, use `bind_context op="list"` then bind the intended `context_id`. If the repository has no context, bind its absolute `working_dirs` with `create_if_missing=true`. Confirm the target root with `get_file_tree` rather than inferring it from a window title.
 - For preparation, call `context_builder` with `response_type="plan"` and `export_response=true`. Describe the objective and uncertainty, then use the returned `chat_id`, `oracle_export_path`, and `oracle_export_instruction` as the handoff contract.
 
 ## Independent review loops

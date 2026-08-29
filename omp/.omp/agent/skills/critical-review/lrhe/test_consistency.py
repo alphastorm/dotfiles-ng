@@ -70,6 +70,7 @@ SKILL_OWNED_CONTROLS = (
     "### repoprompt context preparation",
     "before every design review and every full-council subject freeze",
     "repoprompt prose is never a reviewer verdict",
+    "create_if_missing=true",
     "a design-stage council is optional",
     "an enclosing eval call may auto-background",
     "# state fidelity",

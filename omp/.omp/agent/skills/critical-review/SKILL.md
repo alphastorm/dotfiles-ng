@@ -105,8 +105,9 @@ diagnostic-red discovery, a narrow reproduced fix, mechanical work, or when the
 same work package already has a successful preparation. This is context
 discovery, not another review seat.
 
-Use only the native RepoPromptCE MCP route. Bind the intended repository context,
-confirm its root with `get_file_tree`, then call `context_builder` once with
+Use only the native RepoPromptCE MCP route. Bind the intended repository context;
+if it is absent, bind its absolute `working_dirs` with `create_if_missing=true`.
+Confirm its root with `get_file_tree`, then call `context_builder` once with
 `response_type=plan` and `export_response=true`. Cite the returned `chat_id` or
 `oracle_export_path` before mutation, packet construction, or freeze. Treat its
 selection and plan as a preservation baseline for the accountable lead to check
