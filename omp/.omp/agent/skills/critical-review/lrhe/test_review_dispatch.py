@@ -33,10 +33,6 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-claude-opus", "focused", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
-    ("gpt", "focused", "gemini"): (
-        "review-gemini", "focused", qualification.SUPPLEMENT_ROLE,
-        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
-    ),
     ("gpt", "initial", "claude-opus"): (
         "review-claude-opus", "strong", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
@@ -60,10 +56,6 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
     ("claude", "focused", "daybreak-blue"): (
         "review-daybreak-blue", "focused", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
-    ),
-    ("claude", "focused", "gemini"): (
-        "review-gemini", "focused", qualification.SUPPLEMENT_ROLE,
-        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
     ("claude", "initial", "daybreak-blue"): (
         "review-daybreak-blue", "strong", qualification.STRONG_ROLE,
@@ -809,8 +801,6 @@ def test_prepare_enforces_packet_only_evidence_end_to_end(tmp_path, material, au
             "gpt",
             "--review-class",
             "focused",
-            "--reviewer",
-            "claude-opus",
             "--subject",
             str(paths["subject"]),
             "--receipt",
@@ -1057,41 +1047,28 @@ def test_verify_subject_refuses_a_scope_or_packet_edited_after_freezing(material
 # resolving
 
 
-def test_focused_refuses_a_same_lineage_or_unconfigured_critic(material, authority):
+def test_focused_refuses_every_caller_selected_alternative(material, authority):
     document = qualification.validate_qualification(authority)
     verified = rd.freeze_subject(scope_path=material["scope"], packet_path=material["packet"])
-    for reviewer_id in ("daybreak-blue", "kimi", "minimax"):
-        with pytest.raises(rd.DispatchError, match="not a configured focused reviewer"):
+    for reviewer_ids in (["gemini"], ["daybreak-blue"], ["claude-opus", "gemini"]):
+        with pytest.raises(rd.DispatchError, match="complete resolved roster"):
             rd.resolve_assignments(
                 document,
                 verified,
                 lead_family="gpt",
                 review_class="focused",
-                reviewer_ids=[reviewer_id],
+                reviewer_ids=reviewer_ids,
                 authority_path=rd.LIVE_AUTHORITY,
                 authority_sha256="0" * 64,
             )
-    with pytest.raises(rd.DispatchError, match="exactly one configured focused reviewer"):
-        rd.resolve_assignments(
-            document,
-            verified,
-            lead_family="gpt",
-            review_class="focused",
-            reviewer_ids=["claude-opus", "gemini"],
-            authority_path=rd.LIVE_AUTHORITY,
-            authority_sha256="0" * 64,
-        )
 
 
 @pytest.mark.parametrize(
-    ("reviewer_id", "reason_code"),
-    (
-        ("claude-opus", qualification.STRONG_REASON_CODE),
-        ("gemini", qualification.SUPPLEMENT_REASON_CODE),
-    ),
+    ("lead_family", "reviewer_id"),
+    (("gpt", "claude-opus"), ("claude", "daybreak-blue")),
 )
-def test_focused_assignment_records_the_reviewer_selection_basis(
-    material, authority, repository, reviewer_id: str, reason_code: str
+def test_focused_assignment_is_the_reciprocal_strong_critic(
+    material, authority, repository, lead_family: str, reviewer_id: str
 ):
     document = qualification.validate_qualification(authority)
     verified = rd.freeze_subject(
@@ -1104,13 +1081,14 @@ def test_focused_assignment_records_the_reviewer_selection_basis(
     assignment = rd.resolve_assignments(
         document,
         verified,
-        lead_family="gpt",
+        lead_family=lead_family,
         review_class="focused",
         reviewer_ids=[reviewer_id],
         authority_path=rd.LIVE_AUTHORITY,
         authority_sha256="0" * 64,
     )[0]
-    assert assignment.reason_codes == (reason_code,)
+    assert assignment.reason_codes == (qualification.STRONG_REASON_CODE,)
+    assert assignment.role == qualification.STRONG_ROLE
 
 
 def test_record_bound_classes_refuse_a_subject_without_a_record(material, authority):
@@ -1170,8 +1148,6 @@ def _focused_prepare_args(tmp_path, material, repository):
         "gpt",
         "--review-class",
         "focused",
-        "--reviewer",
-        "claude-opus",
         "--subject",
         str(paths["subject"]),
         "--receipt",
@@ -1179,6 +1155,16 @@ def _focused_prepare_args(tmp_path, material, repository):
         "--out",
         str(paths["envelope"]),
     ]
+
+
+def test_focused_prepare_rejects_every_reviewer_override(
+    tmp_path, material, repository
+):
+    paths, argv = _focused_prepare_args(tmp_path, material, repository)
+    with pytest.raises(SystemExit) as refusal:
+        rd.main([*argv, "--reviewer", "gemini"])
+    assert refusal.value.code == 2
+    assert not any(path.exists() for path in paths.values())
 
 
 def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):

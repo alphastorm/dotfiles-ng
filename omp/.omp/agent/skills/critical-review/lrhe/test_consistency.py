@@ -64,14 +64,15 @@ SKILL_OWNED_CONTROLS = (
     "stop before review ceremony",
     "#### focused review routing",
     "only gpt/chatgpt and claude are qualified accountable leads",
-    "use exactly one cross-family reviewer outside a council",
-    "do not route focused review to grok by default",
+    "always uses exactly one reciprocal cross-family strong critic",
+    "the caller cannot name, replace, reorder, or add a reviewer",
     "this routing does not modify the full council roster",
+    "never invoke ask to choose an assurance class",
     "### repoprompt context preparation",
     "before every design review and every full-council subject freeze",
     "repoprompt prose is never a reviewer verdict",
     "create_if_missing=true",
-    "a design-stage council is optional",
+    "a design-stage council is selected only when",
     "an enclosing eval call may auto-background",
     "# state fidelity",
     STATE_FIDELITY_REQUIREMENT,
@@ -94,8 +95,8 @@ SKILL_OWNED_CONTROLS = (
 LIVE_PROTOCOL_OWNED_MECHANICS = (
     "`livedispatch` is the sole authoritative live panel definition",
     "strongcritic selects exactly one reciprocal cross-family assurance anchor",
-    "authorize by access_profile, not provider_route",
-    "reviewer_access_profile_allowlist must contain its exact access_profile",
+    "match access_profile, not provider_route",
+    "`provider_data_allowlist` and `reviewer_access_profile_allowlist` from the complete deterministic candidate set",
     "is missing, never approved",
     "not_selected/ineligible",
     "never pass an internal url glob to `glob`",
@@ -203,17 +204,24 @@ def test_proportional_assurance_policy_contract():
     assert "assurance selection — before ceremony" in skill
     assert "perform it before `epoch.py scaffold`" in skill
     assert "every change admitted to the full council has one `review_sequence_id`" in skill
-    assert "a design-stage council is optional" in skill
+    assert "a design-stage council is selected only when" in skill
 
     focused_routing = skill.split("#### focused review routing", 1)[1]
     focused_routing = focused_routing.split("when a full council is justified", 1)[0]
     assert "review-daybreak-blue for a claude lead" in focused_routing
     assert "review-claude-opus under cvp for" in focused_routing
-    assert "use review-gemini" in focused_routing
-    assert "do not route focused review to grok by default" in focused_routing
+    assert "gemini and grok remain full-council supplements" in focused_routing
     assert "review-claude-fable remains resolver-qualified architecture synthesis" in focused_routing
-    assert "use exactly one cross-family reviewer outside a council" in focused_routing
+    assert "always uses exactly one reciprocal cross-family strong critic" in focused_routing
+    assert "the caller cannot name, replace, reorder, or add a reviewer" in focused_routing
     assert "this routing does not modify the full council roster" in focused_routing
+
+    hosted_policy = skill.split("### hosted material policy", 1)[1]
+    hosted_policy = hosted_policy.split("## lead pre-dispatch obligations", 1)[0]
+    assert "standing unattended authorization" in hosted_policy
+    assert "never invoke ask merely to authorize" in hosted_policy
+    assert "invoke ask before transmitting" not in hosted_policy
+    assert "if hosted-provider authorization is absent" not in hosted_policy
 
     assignment = skill.split("this is the shape the generated assignment takes:", 1)[1]
     assignment = assignment.split("```text", 1)[1]
@@ -295,7 +303,7 @@ def test_a_bounded_case_stops_before_the_live_protocol():
     for control in (
         "bounded experiment",
         "stop before review ceremony",
-        "use exactly one cross-family reviewer outside a council",
+        "always uses exactly one reciprocal cross-family strong critic",
         "review-claude-opus under cvp",
         "no_cloud",
     ):

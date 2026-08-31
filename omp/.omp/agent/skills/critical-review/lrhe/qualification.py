@@ -638,11 +638,6 @@ def _identity(
             f"got {execution_mode!r}"
         )
     identity["execution_mode"] = execution_mode
-    focused_eligible = entry.get("focusedEligible")
-    if focused_eligible is not None and not isinstance(focused_eligible, bool):
-        raise QualificationError(
-            f"reviewers.{reviewer_id}.focusedEligible must be boolean when present"
-        )
     if entry.get("fallbackAllowed") is True:
         raise QualificationError(
             f"reviewers.{reviewer_id}.fallbackAllowed must not be true; a reviewer "
@@ -901,10 +896,6 @@ def validate_qualification(document: object) -> Mapping[str, object]:
                 f"reviewers.{reviewer_id} is an architecture specialist in one profile and "
                 "carries another live role; scoped eligibility cannot change by lead family"
             )
-        if entry.get("focusedEligible") is True and SUPPLEMENT_ROLE not in roles:
-            raise QualificationError(
-                f"reviewers.{reviewer_id}.focusedEligible requires the supplement role"
-            )
         expected_dispatch = any(LIVE_GROUPS[group][1] for group in groups)
         if entry.get("dispatchEnabled") is not expected_dispatch:
             raise QualificationError(
@@ -1079,22 +1070,18 @@ def strong_reviewers(
     return profile_reviewers(document, lead_family, "strongCritic")
 
 
-def focused_reviewers(
+def focused_reviewer(
     document: Mapping[str, object], lead_family: str
-) -> tuple[LiveReviewer, ...]:
-    supplements = profile_reviewers(document, lead_family, "supplements")
-    entries = reviewers(document)
-    return (
-        *strong_reviewers(document, lead_family),
-        *(
-            reviewer
-            for reviewer in supplements
-            if _mapping(
-                entries.get(reviewer.reviewer_id), f"reviewers.{reviewer.reviewer_id}"
-            ).get("focusedEligible")
-            is True
-        ),
-    )
+) -> LiveReviewer:
+    """Return the one reciprocal strong critic for unattended focused review."""
+
+    candidates = strong_reviewers(document, lead_family)
+    if len(candidates) != 1:
+        raise QualificationError(
+            f"liveDispatch.byLeadFamily.{lead_family}.strongCritic must resolve exactly one "
+            f"focused reviewer, got {[reviewer.reviewer_id for reviewer in candidates]}"
+        )
+    return candidates[0]
 
 
 def global_reviewers(

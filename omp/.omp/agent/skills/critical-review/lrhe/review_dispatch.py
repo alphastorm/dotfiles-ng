@@ -1025,10 +1025,8 @@ def class_candidates(
     """Return every reviewer one class may ever dispatch under one lead family."""
 
     if review_class == FOCUSED:
-        return tuple(
-            _standing(lead_family, FOCUSED, reviewer, FOCUSED_SELECTION_CLASS)
-            for reviewer in qualification.focused_reviewers(document, lead_family)
-        )
+        reviewer = qualification.focused_reviewer(document, lead_family)
+        return (_standing(lead_family, FOCUSED, reviewer, FOCUSED_SELECTION_CLASS),)
     if review_class == TARGETED_REFUTER:
         return tuple(
             _standing(lead_family, TARGETED_REFUTER, reviewer, "targeted")
@@ -1203,34 +1201,13 @@ def resolve_assignments(
         )
 
     if review_class == FOCUSED:
-        critics = {
-            reviewer.reviewer_id: reviewer
-            for reviewer in qualification.focused_reviewers(document, lead_family)
-        }
-        if len(requested) != 1:
-            raise DispatchError(
-                f"a focused review dispatches exactly one configured focused reviewer, not "
-                f"{list(requested)}; escalating by naming more reviewers is a council nobody "
-                "resolved"
-            )
-        reviewer = critics.get(requested[0])
-        if reviewer is None:
-            raise DispatchError(
-                f"{requested[0]!r} is not a configured focused reviewer for lead family "
-                f"{lead_family!r}; the configured reviewers are {sorted(critics)}"
-            )
+        reviewer = qualification.focused_reviewer(document, lead_family)
+        _require_exact_roster(review_class, requested, (reviewer.reviewer_id,))
         _require_grants(reviewer, verified.packet)
-        reason_code = {
-            qualification.STRONG_ROLE: qualification.STRONG_REASON_CODE,
-            qualification.SUPPLEMENT_ROLE: qualification.SUPPLEMENT_REASON_CODE,
-        }.get(reviewer.role)
-        if reason_code is None:
-            raise DispatchError(
-                f"focused reviewer {reviewer.reviewer_id!r} resolved unsupported role "
-                f"{reviewer.role!r}"
-            )
         assignments = (
-            _assignment(reviewer, FOCUSED_SELECTION_CLASS, (reason_code,)),
+            _assignment(
+                reviewer, FOCUSED_SELECTION_CLASS, (qualification.STRONG_REASON_CODE,)
+            ),
         )
         validate_evidence_compatibility(
             subject, verified.packet, [item.evidence_delivery for item in assignments]
@@ -2180,14 +2157,12 @@ def command_prepare(args: argparse.Namespace) -> str:
     envelope_path = _resolved(args.out, "review dispatch envelope output")
     manifest_binding: BoundManifest | None = None
     manifest_text: str | None = None
-    reviewers = tuple(args.reviewers)
+    reviewers: tuple[str, ...] = ()
 
     authority_path, authority_sha256, authority = bind_live_authority()
     if args.review_class == INITIAL:
         if args.record is None or args.manifest is None:
             raise DispatchError("an initial council preparation requires --record and --manifest")
-        if reviewers:
-            raise DispatchError("prepare resolves the initial roster; do not supply --reviewer")
         record_path, record_sha256, record = qualification.bind_record(args.record)
         packet_path, packet_sha256, packet = qualification.bind_packet(
             args.packet, record_path, record_sha256
@@ -2222,15 +2197,12 @@ def command_prepare(args: argparse.Namespace) -> str:
         if args.manifest is not None:
             raise DispatchError("only an initial council has a panel manifest")
         if args.review_class == FOCUSED:
-            if len(reviewers) != 1:
-                raise DispatchError("a focused preparation requires exactly one --reviewer")
+            reviewers = (
+                qualification.focused_reviewer(authority, args.lead_family).reviewer_id,
+            )
         else:
             if args.record is None:
                 raise DispatchError("a targeted-refuter preparation requires --record")
-            if reviewers:
-                raise DispatchError(
-                    "prepare resolves the targeted-refuter pool; do not supply --reviewer"
-                )
             reviewers = tuple(
                 reviewer.reviewer_id
                 for reviewer in qualification.global_reviewers(
@@ -2387,13 +2359,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     prepare.add_argument(
         "--review-class", required=True, help=f"one of {', '.join(REVIEW_CLASSES)}"
-    )
-    prepare.add_argument(
-        "--reviewer",
-        action="append",
-        default=[],
-        dest="reviewers",
-        help="exactly one for focused; inferred and prohibited for roster-owned classes",
     )
     verify = commands.add_parser(
         "verify-task",

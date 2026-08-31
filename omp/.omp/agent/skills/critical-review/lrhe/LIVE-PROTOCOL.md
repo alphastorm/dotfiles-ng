@@ -10,7 +10,7 @@ Every command below runs from the critical-review skill root, the parent of this
 file's `lrhe/` directory. Where prose and code could drift, the executable tools
 in this directory and the JSON schemas beside them are authoritative.
 
-## Live roster and provider authorization
+## Live roster and unattended provider policy
 
 Live reviewer membership and standing are configuration plus lead lineage, not
 reviewer prose:
@@ -61,10 +61,10 @@ reviewer prose:
 
 Before dispatch, in addition to the hosted-material floor in `SKILL.md`:
 
-1. Read skill://critical-review/qualification.yml. A reviewer is enabled only when its reviewer_id is in the selected profile or required global group, dispatchEnabled is true, its canary and read-only gates pass, its exact selector resolves, and the packet authorizes its provider. Fable additionally needs a passed scope receipt for the requested architecture domain.
-2. Authorize by access_profile, not provider_route. provider_data_allowlist must contain the reviewer's data_allowlist_key and reviewer_access_profile_allowlist must contain its exact access_profile. A missing grant on the strong critic or an always-on supplement fails resolution; a record-selected architecture specialist is skipped with every reason recorded.
+1. Read skill://critical-review/qualification.yml. A reviewer is enabled only when its reviewer_id is in the selected profile or required global group, dispatchEnabled is true, its canary and read-only gates pass, and its exact selector resolves. Fable additionally needs a passed scope receipt for the requested architecture domain.
+2. For ordinary cloud-permitted work, populate `provider_data_allowlist` and `reviewer_access_profile_allowlist` from the complete deterministic candidate set for the selected class and lead-family profile. Match access_profile, not provider_route. An explicit provider restriction may only narrow those generated grants; it never triggers Ask or model substitution. A missing generated grant on the strong critic or an always-on supplement fails resolution; a record-selected architecture specialist is skipped with every reason recorded.
 
-A missing, disabled, timed-out, schema-invalid, or unauthorized reviewer is missing, never approved. Do not substitute another model. An architecture specialist the resolver did not select is not_selected/ineligible. Any selected supplemental_evidence row remains additive: it cannot rescue the independent floor, break a disagreement, or earn a retry that the strong critic would not get.
+A missing, disabled, timed-out, schema-invalid, restricted, or unqualified reviewer is missing, never approved. Do not substitute another model or ask the user to pick one. An architecture specialist the resolver did not select is not_selected/ineligible. Any selected supplemental_evidence row remains additive: it cannot rescue the independent floor, break a disagreement, or earn a retry that the strong critic would not get.
 
 ## Internal resource compatibility
 
@@ -152,8 +152,8 @@ dispositions:
 - exit `0` (`lead-close`): the epoch cannot dispatch; take the lightweight
   lead-only close below and skip the freeze, receipts, matrix, and packet
   entirely;
-- exit `20` (`ceremony-required`): a dispatching action is projected; confirm
-  provider authorization and panel resolvability, then freeze;
+- exit `20` (`ceremony-required`): a dispatching action is projected; materialize
+  the deterministic packet grants, confirm panel resolvability, then freeze;
 - exit `10`: return to implementation audit/repair or human disposition.
 
 Triage output carries `projected_action`, never `action`; no triage result
@@ -236,9 +236,7 @@ every named finding — and iterate with unbound fast or repository-default chec
 until direct verification passes, then freeze once. A subject frozen before the
 work settles only drifts stale and wastes the ceremony.
 
-Reviewers must inspect one stable epoch. Prefer a no-effect digest checkpoint; a
-temporary commit or any history mutation requires authorization already present
-in the current request or an Ask gate.
+Reviewers must inspect one stable epoch. Prefer a no-effect digest checkpoint. When repository evidence requires a commit, use the workflow's already-authorized normal Conventional Commit after verification; never mutate history or invoke Ask solely to manufacture a review subject.
 
 1. Choose a review ID such as `CR-<UTC timestamp>-<short digest>` and create
    durable storage at `~/.omp/agent/critical-review/<review-id>/`. Never use
@@ -324,11 +322,7 @@ provider_data_allowlist:
 reviewer_access_profile_allowlist:
 ```
 
-For the standard all-full-council shadow attempt, include `openai` in
-`provider_data_allowlist` and `chatgpt-pro-web-asxst0rm` in
-`reviewer_access_profile_allowlist` only when this packet may be sent through
-that exact ChatGPT Pro account. Omitting either grant records the Oracle lane as
-skipped and never fails or shrinks the qualified Task council.
+For ordinary cloud-permitted full councils, the generated grants include `openai` in `provider_data_allowlist` and `chatgpt-pro-web-asxst0rm` in `reviewer_access_profile_allowlist`, so the standard Oracle shadow is attempted without a user prompt. An explicit provider restriction may omit either grant; that records the Oracle lane as skipped and never fails or shrinks the qualified Task council.
 
 The declared class, named assets and invariants, credible adversary, caps, recovery contract, result-validity conditions, and non-goals are binding review scope. Review invocation does not promote the artifact class or create a future consumer. Critics may report an omitted risk only when they show a concrete in-scope consequence after current controls. General hardening and speculative future-proofing are not findings.
 
@@ -413,8 +407,7 @@ Evidence compatibility is executable policy:
   must carry the same complete bundle for that member, while every repository
   member still requires the bound commit and files.
 
-A focused preparation uses the same command with `--review-class focused` and
-exactly one `--reviewer`; it has no panel manifest. A targeted-refuter
+A focused preparation uses the same command with `--review-class focused`; the resolver infers the profile's reciprocal strong critic and rejects any caller-supplied reviewer choice. It has no panel manifest. A targeted-refuter
 preparation uses `--review-class targeted-refuter`, requires the remediation
 record, and infers the complete fixed pool; callers do not name or filter it.
 Packet, scope, repository, subject, receipt, and envelope arguments retain the

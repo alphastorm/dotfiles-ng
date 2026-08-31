@@ -5,19 +5,19 @@ description: Run independent cross-family review for production-grade, materiall
 
 # Critical Review Council
 
-Run an opt-in, evidence-driven council. The active main-session model remains the accountable lead and integrator; the resolver selects a lead-family profile before assigning reviewer standing. Critics inspect independently; they do not vote, rewrite the solution, edit the repository, or see one another's first-round output.
+Run automatic, evidence-driven review. The active main-session model remains the accountable lead and integrator; deterministic policy selects the assurance class and the resolver selects the lead-family profile and reviewer standing. Critics inspect independently; they do not vote, rewrite the solution, edit the repository, or see one another's first-round output.
 
-This document is the whole admission decision. Most invocations end inside it: choose the assurance depth, take direct lead verification or one focused reviewer, and stop. Full-council mechanics are not here and are not needed to decide against a council.
+This document is the whole admission decision. Most invocations end inside it with direct lead verification or one resolver-selected focused reviewer. Full-council mechanics are not here and are not needed to decide against a council. No review-class, provider, roster, or reviewer choice is a user authorization gate.
 
 ## Scope and authorization
 
-Use this skill when independent cross-family evidence is worth its cost because the change is production/customer/public-facing, materially unbounded, shared across operators or consumers, persistent or irreversible, supply-chain or public-compatibility sensitive, or has weak or costly rollback. Typical cases include broad authorization boundaries, production data or state, asset movement without a tight credible-loss cap, persistent migrations or deletion, public protocol compatibility, distributed coordination, releases, route promotion, and hard-to-reverse cross-system boundaries.
+Use this skill automatically when independent cross-family evidence is worth its cost because the change is production/customer/public-facing, materially unbounded, shared across operators or consumers, persistent or irreversible, supply-chain or public-compatibility sensitive, or has weak or costly rollback. Typical cases include broad authorization boundaries, production data or state, asset movement without a tight credible-loss cap, persistent migrations or deletion, public protocol compatibility, distributed coordination, releases, route promotion, and hard-to-reverse cross-system boundaries.
 
-Do not invoke a full council merely because work is P0, mentions security, uses a credential, makes provider calls, spends a bounded amount, crosses a reversible internal boundary, or is a one-off experiment. Bounded experiments default to lead verification and, when independent evidence is useful, may add one focused read-only reviewer outside this council. Ordinary reusable internal paths default to lead verification plus one focused independent review of changed boundaries. An explicit user request for a full council still applies.
+Do not select a full council merely because work is P0, mentions security, uses a credential, makes provider calls, spends a bounded amount, crosses a reversible internal boundary, or is a one-off experiment. Bounded experiments receive lead verification. Ordinary reusable internal paths receive lead verification plus one deterministic focused review of changed boundaries. An explicit user request for a full council selects the full-council path when hosted review is permitted.
 
-### Assurance selection — before ceremony
+### Automatic assurance selection — before ceremony
 
-This is lead judgment, not a new artifact, schema, service, or authorization gate. Perform it before `epoch.py scaffold`, record creation, provider authorization, freeze, receipts, or packet construction.
+This is deterministic lead operation, not a new artifact, schema, service, user choice, or authorization gate. Perform it before `epoch.py scaffold`, record creation, freeze, receipts, or packet construction.
 
 State concisely:
 
@@ -29,39 +29,24 @@ State concisely:
 6. result-validity conditions; and
 7. non-goals and the reasonable engineering budget.
 
-Use the lowest class consistent with the credible residual consequence. Priority, credentials, provider calls, security vocabulary, or invoking this skill do not independently raise it. A reviewer may challenge the class only with a concrete omitted consequence that survives current controls.
+Apply the first matching class without asking the user to choose:
 
-If the full-council criteria are not met, stop before review ceremony. Complete direct lead verification and optionally use one ordinary focused read-only reviewer. Do not mint a review sequence, frozen epoch, receipt set, packet, panel manifest, or ledger solely to justify not running a council.
+1. explicit `NO_CLOUD` material: direct lead verification only; never dispatch hosted review;
+2. `production/hard-to-reverse`: one full council;
+3. `reusable internal path`: one focused review;
+4. `bounded experiment`: direct lead verification only.
+
+Use the lowest class consistent with the credible residual consequence. Priority, credentials, provider calls, security vocabulary, or invoking this skill do not independently raise it. A reviewer may challenge the class only with a concrete omitted consequence that survives current controls. An explicit full-council request overrides steps 2–4 but never overrides `NO_CLOUD`. Never invoke Ask to choose an assurance class, provider, reviewer, roster, or review depth.
+
+When the deterministic result is not a full council, stop before review ceremony. Perform the selected lead-only or focused path. Do not mint a review sequence, frozen epoch, receipt set, panel manifest, or ledger solely to justify not running a council.
 
 #### Focused review routing
 
-Only GPT/ChatGPT and Claude are qualified accountable leads. Use exactly one
-cross-family reviewer outside a council:
+Only GPT/ChatGPT and Claude are qualified accountable leads. A focused review always uses exactly one reciprocal cross-family strong critic: review-claude-opus under CVP for a GPT lead and review-daybreak-blue for a Claude lead. `qualification.yml` owns those profile entries, and `review_dispatch.py prepare --review-class focused` resolves the reviewer from the accountable lead family. The caller cannot name, replace, reorder, or add a reviewer.
 
-- for a bounded, reversible, low-consequence sanity check, use review-gemini;
-  this is the fast 30–60 second target and never substitutes for strong assurance;
-- for consequential architecture, production, security, credentials,
-  authorization, money/assets, persistent state, compatibility, or costly
-  rollback, use the reciprocal strong critic: review-claude-opus under CVP for
-  a GPT lead and review-daybreak-blue for a Claude lead;
-- do not route focused review to Grok by default. Grok is the full council's
-  cheap third-family supplement, not the owner of an adversarial assurance lens;
-- review-claude-fable remains resolver-qualified architecture synthesis for
-  full councils, not an unqualified focused shortcut.
+Gemini and Grok remain full-council supplements, never focused alternatives. Review-claude-fable remains resolver-qualified architecture synthesis for full councils, not a focused shortcut. This routing does not modify the full council roster.
 
-Do not escalate to multiple focused reviewers by fallback shopping. Routing
-chooses the reviewer; the resolver still owns selectionClass, role,
-independence_class, and authority. This routing does not modify the full council
-roster.
-
-Routing chooses the reviewer; it never states the reviewer's standing. A focused
-review is dispatched through the atomic preparation path,
-`review_dispatch.py prepare --review-class focused --reviewer <reviewer_id>`, and
-the emitted Task payload is submitted verbatim. The resolver emits
-`selectionClass`, `role`, `independence_class`, and
-`authority` from the live authority; the lead never writes, derives, or
-hand-copies a standing field, and a reviewer reached any other way is not a
-review.
+Routing selects the reviewer; it never states the reviewer's standing. The emitted Task payload is submitted verbatim. The resolver emits `selectionClass`, `role`, `independence_class`, and `authority` from the live authority; the lead never writes, derives, or hand-copies a standing field, and a reviewer reached any other way is not a review.
 
 Review execution is a blocking Task boundary. Every `review-*` agent declares
 `blocking: true`, so submit the resolver-emitted batch once and consume its
@@ -78,14 +63,15 @@ while that call is unresolved.
 
 When a full council is justified, encode the same brief using the existing packet fields rather than adding keys: `goal` carries outcome and class; `requirements` carries named assets, caps, and result-validity requirements; `non_goals` carries excluded adversaries and reuse; `trust_boundaries` carries credible actors and boundaries; `rollback_contract` carries containment, recovery, and residual effects; and `rejected_alternatives_and_reasons` records disproportionate mitigations rejected before review.
 
-### Hosted material authorization
+### Hosted material policy
 
-Both paths transmit reviewed material to a hosted reviewer, so this floor applies before any dispatch, focused or full council:
+Both independent paths transmit reviewed material to hosted reviewers, so this floor applies before any dispatch, focused or full council:
 
-1. Treat repository work and research as cloud-permitted by default. Block hosted review only when the user, repository, or applicable customer policy explicitly marks the task or material `NO_CLOUD`; do not infer a separate confidential or local-only category.
-2. Treat an explicit provider list in the user's current `/skill:critical-review` request as authorization for only those providers and this review epoch.
-3. If hosted-provider authorization is absent or unclear, invoke Ask before transmitting material. Recommend the safest qualified subset and include a no-effect/non-cloud option. Never send `NO_CLOUD` material to a hosted reviewer.
-4. Never include credential values, private keys, tokens, cookies, environment dumps, secret files, or generated credential stores in a packet. A source file containing secret-handling code may be reviewed only when the chosen providers are authorized for it; redact actual values without changing the reviewed semantics.
+1. Repository work and research are cloud-permitted by default. That default is standing unattended authorization for the exact live reviewers and access profiles selected by the resolver. Never invoke Ask merely to authorize a focused review, council, provider, access profile, or Oracle shadow.
+2. Block hosted review only when the user, repository, or applicable customer policy explicitly marks the task or material `NO_CLOUD`; do not infer a separate confidential or local-only category. Never send `NO_CLOUD` material to a hosted reviewer.
+3. An explicit provider list in the current request narrows the resolver to those providers for that review epoch. If the deterministic class cannot resolve its required roster under that restriction, do not ask, substitute, or shop fallbacks: use direct lead verification when the class permits it, otherwise report the explicit restriction as the blocker.
+4. Populate `provider_data_allowlist` and `reviewer_access_profile_allowlist` mechanically from the deterministic class, lead-family profile, and live authority. These packet fields record the standing policy decision; they are not user prompts or caller-selected reviewer definitions.
+5. Never include credential values, private keys, tokens, cookies, environment dumps, secret files, or generated credential stores in a packet. A source file containing secret-handling code may be reviewed under the standing cloud policy; redact actual values without changing the reviewed semantics.
 
 Reviewer enablement, packet data grants, and access-profile matching for a full council are resolver-owned and live in the on-demand protocol below.
 
@@ -136,7 +122,7 @@ artifacts, or proof receipts into the runtime diagnosis harness.
 3. Stop-rule: if a round confirms the same defect class as the previous round, halt remediation and land the executable invariant before any re-dispatch.
 4. Freeze the reviewed subject. Never edit the reviewed tree — including its policy and context files — while any reviewer is reading; queue such edits for the disposition commit. A verdict rendered over a moving target is discarded and the round is wasted.
 5. Remediation-scoped verification defaults to the focused-reviewer lane; the full council renders only the sequence's budgeted general passes and the final verdict. Target at most two council rounds per subject.
-6. Exit is by disposition, not zero findings: no in-scope residual P0/P1 and clean credential paths close the sequence, and remaining P2/P3 items receive explicit owner-accepted residual dispositions. A supplemental seat's credential-path claim blocks only after lead verification against the committed bytes.
+6. Exit is by disposition, not zero findings: no in-scope residual P0/P1 and clean credential paths close the sequence, and the accountable lead records explicit residual dispositions for every remaining P2/P3 item without a user prompt. A supplemental seat's credential-path claim blocks only after lead verification against the committed bytes.
 
 ### Pragmatic full-council composition
 
@@ -180,15 +166,9 @@ Read `./lrhe/LIVE-PROTOCOL.md` only after admission selects a full council, and 
 
 ## Design-stage council
 
-A design-stage council is optional. Use it when the design itself establishes a
-production/hard-to-reverse boundary and early cross-family review is likely
-cheaper than correcting implementation. Credentials or external effects alone
-do not require it. For bounded or reversible work, begin from the actual
-predecessor state and use direct lead verification or one focused reviewer.
+A design-stage council is selected only when the design itself establishes a production/hard-to-reverse boundary and correcting that boundary after implementation would be materially costlier than reviewing it now. Otherwise skip it. This rule is deterministic lead routing, not a user choice. Credentials or external effects alone do not select it. For bounded or reversible work, begin from the actual predecessor state and use the automatic lead-only or focused class above.
 
-A supplied lifecycle state machine or failure matrix is review evidence, not a
-universal prerequisite. Require one only when the named outcome or explicit
-production policy needs it.
+A supplied lifecycle state machine or failure matrix is review evidence, not a universal prerequisite. Require one only when the named outcome or explicit production policy needs it.
 
 Skip a design council for small or reversible changes, bounded experiments, ordinary internal tooling, or when one review of the frozen implementation is sufficient, and never run one merely because the implementation may later receive a council.
 
@@ -246,7 +226,7 @@ Every evidence item must identify the protected asset or invariant and the resid
 
 ## Lead verification and dispositions
 
-After an initial council, the lead directly verifies and dispositions every finding. Implement only confirmed, in-scope P0/P1 rows whose final disposition is `mitigate`, plus any lower-severity item explicitly selected by the human owner. `accept`, `defer`, and `reject` rows create no remediation implementation. Batch the complete selected mitigation set into one remediation epoch; never create one epoch per comment or fix iteration. One still-disputed P0/P1 may reach one targeted refuter; otherwise the lead records ledger dispositions and closes the sequence.
+After an initial council, the lead directly verifies and dispositions every finding. Implement confirmed, in-scope P0/P1 rows whose final disposition is `mitigate`; implement a lower-severity item only when the lead verifies that it violates the current contract or is the smallest proportional closure of the same defect class. `accept`, `defer`, and `reject` rows create no remediation implementation. Batch the complete selected mitigation set into one remediation epoch; never create one epoch per comment or fix iteration. One still-disputed P0/P1 may reach one targeted refuter; otherwise the lead records ledger dispositions and closes the sequence without a user prompt.
 
 There is no majority verdict. The accountable main-session lead owns the final evidence-based decision and coherent revision.
 

@@ -301,18 +301,10 @@ The strong critic and supplements are pairwise distinct by model family and
 correlation group; the conditional architecture specialist may share lineage
 because it remains supplemental.
 
-Gemini alone is focusedEligible among supplements, enabling the bounded quick
-sanity route without making Grok a second focused-review policy. Consequential
-focused review uses the reciprocal strong critic.
+Focused review always resolves the profile's reciprocal strong critic. The caller
+never chooses a reviewer, and supplements never become focused-review alternatives.
 
-ChatGPT Pro Web remains deliberately outside liveDispatch. The separate
-`oracleShadow` authority attempts pinned pi-oracle `pro_extended` on every full
-council only when the packet explicitly grants both `openai` data egress and the
-exact `chatgpt-pro-web-asxst0rm` access profile. Its output has no reviewer
-standing, never blocks closure, receives no peer output, and never substitutes for
-a qualified lane. Missing grants and every operational failure are persisted as
-nonblocking outcomes under `lrhe-data/oracle-shadow/`, so browser automation can
-accumulate evidence without becoming part of the council availability contract.
+ChatGPT Pro Web remains deliberately outside liveDispatch. For ordinary cloud-permitted full councils, the generated packet grants let the separate `oracleShadow` authority attempt pinned pi-oracle `pro_extended` without a user prompt. Explicit provider restrictions may omit `openai` data egress or the exact `chatgpt-pro-web-asxst0rm` access profile. Its output has no reviewer standing, never blocks closure, receives no peer output, and never substitutes for a qualified lane. Missing grants and every operational failure are persisted as nonblocking outcomes under `lrhe-data/oracle-shadow/`, so browser automation can accumulate evidence without becoming part of the council availability contract.
 
 Agent names are stable lane identifiers, not model-version aliases. Multiple
 qualified lanes in one family use durable variant names such as

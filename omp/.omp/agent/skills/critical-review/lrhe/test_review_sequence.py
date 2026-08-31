@@ -1172,16 +1172,13 @@ def _panel(with_conditional: bool = True) -> dict:
             correlation_group="claude-opus-5",
         ),
         "daybreak-blue": _daybreak_entry(enabled=True),
-        "gemini": {
-            **_unconditional_entry(
-                "review-gemini",
-                "google-antigravity/gemini-3.7-flash:high",
-                "whole_repo",
-                model_family="gemini",
-                correlation_group="gemini-3.7-flash",
-            ),
-            "focusedEligible": True,
-        },
+        "gemini": _unconditional_entry(
+            "review-gemini",
+            "google-antigravity/gemini-3.7-flash:high",
+            "whole_repo",
+            model_family="gemini",
+            correlation_group="gemini-3.7-flash",
+        ),
         "grok": _unconditional_entry(
             "review-grok",
             "xai-oauth/grok-4.6:max",
