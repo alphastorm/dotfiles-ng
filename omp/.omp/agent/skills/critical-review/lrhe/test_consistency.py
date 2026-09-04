@@ -1684,12 +1684,12 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
         "gpt": {
             "strongCritic": ["claude-opus"],
             "supplements": ["gemini", "grok"],
-            "architectureSpecialists": ["claude"],
+            "architectureSpecialists": [],
         },
         "claude": {
             "strongCritic": ["daybreak-blue"],
             "supplements": ["gemini", "grok"],
-            "architectureSpecialists": ["claude"],
+            "architectureSpecialists": [],
         },
     }
     for lead_family, profile in profiles.items():
