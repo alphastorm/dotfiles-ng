@@ -6,6 +6,7 @@
   pager = diff-so-fancy | less --tabs=4 -RFX
   fsmonitor = true
   untrackedCache = true
+	excludesfile = /Users/srs/.gitignore_global
 [alias]
   l = "!. ~/.githelpers && pretty_git_log"
   r = !GIT_NO_PAGER=1 git l -30
