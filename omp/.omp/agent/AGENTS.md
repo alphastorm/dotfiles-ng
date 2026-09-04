@@ -23,6 +23,9 @@
 ## Independent review loops
 
 - Every reviewer/council dispatch follows `skill://critical-review`: self-check, verdict-only review, executable class closure/stop-rule, round budget, disposition exit, and subject freeze—never edit while reviewers read.
+- A finding whose adversary, asset, or consequence lies outside the packet's declared adversary and non-goals is `reject: outside declared adversary` by default: one ledger row, no code.
+- A review round never adds a persistent control, ADR, invariant, or lifecycle artifact on its own; a confirmed in-scope P0/P1 gets the smallest sufficient code change instead.
+- A failure inside an authorized live window is fixed and rerun within that window's declared caps, and never spawns a packet, receipt, or ADR by itself.
 
 ## Post-implementation bounded cleanse
 

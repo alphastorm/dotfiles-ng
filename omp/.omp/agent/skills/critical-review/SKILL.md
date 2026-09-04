@@ -243,3 +243,5 @@ Decision rules:
 - One reproducible exploit outweighs repeated approval.
 - P2/P3 items receive explicit dispositions but do not trigger open-ended debate or implementation by default.
 - Every returned item receives a ledger row and final disposition. Not every item receives code.
+- A finding whose adversary, protected asset, or consequence falls outside the packet's declared adversary, assets, and non-goals gets the default disposition `reject: outside declared adversary` — one ledger row, no implementation. Widening the declared scope is an owner decision made before the review, never a review output.
+- A review round never adds a persistent control, ADR, invariant, or lifecycle artifact by itself. A confirmed in-scope P0/P1 gets the smallest sufficient code change; a new persistent control requires the owning repository's threat model to name the residual consequence it prevents.
