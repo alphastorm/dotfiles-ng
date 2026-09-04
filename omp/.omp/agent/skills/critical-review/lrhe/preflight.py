@@ -33,9 +33,11 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -704,6 +706,8 @@ CHARTER_AMENDMENT_KEYS = frozenset(
     }
 )
 MODEL_UPGRADE_AMENDMENT_KEYS = CHARTER_AMENDMENT_KEYS | {
+    "parent_amendment_path",
+    "parent_amendment_sha256",
     "parent_selector",
     "current_selector",
 }
@@ -711,6 +715,24 @@ MODEL_UPGRADE_AMENDMENT_KEYS = CHARTER_AMENDMENT_KEYS | {
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _rfc3339(value: object, field: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be a non-empty RFC 3339 timestamp")
+    if re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+        value,
+    ) is None:
+        raise ValueError(f"{field} must be an RFC 3339 timestamp")
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an RFC 3339 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{field} must include a UTC offset")
+    return parsed
 
 
 def _amendment_path(value: object, field: str, suffix: str) -> Path:
@@ -793,9 +815,14 @@ def _charter_amendment(
             problems.append(
                 f"{family}: charter amendment {key}={amendment.get(key)!r}, expected {expected!r}"
             )
-    for key in ("amendment_id", "observed_at"):
-        if not isinstance(amendment.get(key), str) or not amendment[key].strip():
-            problems.append(f"{family}: charter amendment {key} must be a non-empty string")
+    amendment_id = amendment.get("amendment_id")
+    if not isinstance(amendment_id, str) or not amendment_id.strip():
+        problems.append(f"{family}: charter amendment amendment_id must be a non-empty string")
+    try:
+        amendment_time = _rfc3339(amendment.get("observed_at"), "observed_at")
+    except ValueError as exc:
+        problems.append(f"{family}: charter amendment {exc}")
+        amendment_time = None
 
     if schema == MODEL_UPGRADE_AMENDMENT_SCHEMA:
         current_selector = amendment.get("current_selector")
@@ -833,6 +860,7 @@ def _charter_amendment(
                         f"{parent_selector!r} -> {selector!r}"
                     )
 
+    parent_amendment = None
     try:
         parent_definition = _amendment_path(
             amendment.get("parent_definition_path"), "parent_definition_path", ".md"
@@ -843,6 +871,10 @@ def _charter_amendment(
         current_trace = _amendment_path(
             amendment.get("current_trace_path"), "current_trace_path", ".json"
         )
+        if schema == MODEL_UPGRADE_AMENDMENT_SCHEMA:
+            parent_amendment = _amendment_path(
+                amendment.get("parent_amendment_path"), "parent_amendment_path", ".json"
+            )
     except ValueError as exc:
         problems.append(f"{family}: charter amendment {exc}")
         return problems, None, None
@@ -851,12 +883,17 @@ def _charter_amendment(
             f"{family}: charter amendment parent evidence {parent_evidence} is not "
             f"{parent_evidence_path}"
         )
-    for label, file_path, declared in (
+    bound_files = [
         ("parent definition", parent_definition, amendment.get("parent_definition_sha256")),
         ("parent evidence", parent_evidence, amendment.get("parent_evidence_sha256")),
         ("current definition", definition, amendment.get("current_definition_sha256")),
         ("current trace", current_trace, amendment.get("current_trace_sha256")),
-    ):
+    ]
+    if parent_amendment is not None:
+        bound_files.append(
+            ("parent amendment", parent_amendment, amendment.get("parent_amendment_sha256"))
+        )
+    for label, file_path, declared in bound_files:
         if not file_path.is_file():
             problems.append(f"{family}: charter amendment {label} is missing: {file_path}")
             continue
@@ -876,11 +913,50 @@ def _charter_amendment(
                     f"{family}: parent definition model {parent_front.get('model')!r} != "
                     f"amendment [{parent_selector!r}]"
                 )
+    bound_parent_definition = parent_definition
+    bound_parent_selector = parent_selector
+    parent_amendment_document = None
+    if not problems and parent_amendment is not None and isinstance(parent_selector, str):
+        try:
+            parent_amendment_document = json.loads(parent_amendment.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            problems.append(f"{family}: parent charter amendment is unreadable: {exc}")
+        else:
+            if (
+                not isinstance(parent_amendment_document, dict)
+                or parent_amendment_document.get("schema") != CHARTER_AMENDMENT_SCHEMA
+            ):
+                problems.append(
+                    f"{family}: model-upgrade parent amendment must use "
+                    f"{CHARTER_AMENDMENT_SCHEMA!r}"
+                )
+            else:
+                parent_problems, cohort_definition, cohort_selector = _charter_amendment(
+                    family,
+                    parent_amendment,
+                    parent_definition,
+                    parent_evidence_path,
+                    agent=agent,
+                    selector=parent_selector,
+                    delivery=delivery,
+                )
+                problems.extend(parent_problems)
+                if cohort_definition is not None and cohort_selector is not None:
+                    bound_parent_definition = cohort_definition
+                    bound_parent_selector = cohort_selector
     if problems:
         return problems, None, None
 
     parent_text = parent_definition.read_text(encoding="utf-8")
     current_text = definition.read_text(encoding="utf-8")
+    if schema == MODEL_UPGRADE_AMENDMENT_SCHEMA and isinstance(parent_selector, str):
+        if (
+            parent_text.count(parent_selector) != 1
+            or current_text != parent_text.replace(parent_selector, selector, 1)
+        ):
+            problems.append(
+                f"{family}: model upgrade may change only the exact model selector"
+            )
     expected_diff = _unified_diff_sha256(parent_text, current_text)
     if amendment.get("unified_diff_sha256") != expected_diff:
         problems.append(
@@ -888,7 +964,7 @@ def _charter_amendment(
             f"{amendment.get('unified_diff_sha256')!r}, expected {expected_diff}"
         )
     try:
-        canary.validate_trace_receipt(
+        current_receipt = canary.validate_trace_receipt(
             current_trace,
             definition,
             agent,
@@ -897,9 +973,37 @@ def _charter_amendment(
         )
     except canary.TraceCanaryError as exc:
         problems.append(f"{family}: current-charter trace is not passed: {exc}")
+    else:
+        trace_observed_at = current_receipt.get("observed_at")
+        if amendment.get("observed_at") != trace_observed_at:
+            problems.append(
+                f"{family}: charter amendment observed_at={amendment.get('observed_at')!r}, "
+                f"expected current trace {trace_observed_at!r}"
+            )
+        try:
+            _rfc3339(trace_observed_at, "current trace observed_at")
+        except ValueError as exc:
+            problems.append(f"{family}: charter amendment {exc}")
+    if schema == MODEL_UPGRADE_AMENDMENT_SCHEMA and amendment_time is not None:
+        for label, document in (
+            ("parent evidence", json.loads(parent_evidence.read_text(encoding="utf-8"))),
+            ("parent amendment", parent_amendment_document),
+        ):
+            try:
+                parent_time = _rfc3339(
+                    document.get("observed_at") if isinstance(document, dict) else None,
+                    f"{label} observed_at",
+                )
+            except ValueError as exc:
+                problems.append(f"{family}: charter amendment {exc}")
+            else:
+                if amendment_time <= parent_time:
+                    problems.append(
+                        f"{family}: charter amendment observed_at must postdate {label}"
+                    )
     if problems:
         return problems, None, None
-    return [], parent_definition, parent_selector
+    return [], bound_parent_definition, bound_parent_selector
 
 
 def _cohort_problems(

@@ -989,6 +989,12 @@ def test_live_evidence_contract_matches_active_config_and_receipt():
     assert result.state == preflight.PASS, result.detail
 
 
+@needs_agents
+def test_live_conditional_scope_evidence_contract_is_current():
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.PASS, result.detail
+
+
 def test_probe_pins_bind_version_fixture_and_role(tmp_path):
     """qualification.yml's probe pins are assertions until preflight re-checks them.
 
@@ -1328,6 +1334,7 @@ def test_an_agent_edited_after_its_cohort_makes_the_receipt_stale(tmp_path, monk
     assert result.state == preflight.FAIL
     assert "agent_definition_sha256" in result.detail
 
+
 def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
     tmp_path, monkeypatch
 ):
@@ -1341,18 +1348,51 @@ def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
         tmp_path, parent_definition, selector=FABLE_PARENT_SELECTOR
     )
 
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    parent_trace = data / "parent.trace-receipt.json"
+    parent_receipt = _trace_receipt(
+        parent_definition,
+        "review-claude-fable",
+        FABLE_PARENT_SELECTOR,
+        "repository",
+    )
+    parent_trace.write_text(
+        json.dumps(parent_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    parent_text = parent_definition.read_text(encoding="utf-8")
+    parent_amendment = {
+        "schema": "lrhe-charter-standing-amendment-v1",
+        "result": "passed",
+        "amendment_id": "fable-parent-charter-test",
+        "change_class": "resolver-receipt-standing-source-v1",
+        "agent": "review-claude-fable",
+        "parent_definition_path": str(parent_definition.relative_to(tmp_path)),
+        "parent_definition_sha256": digest(parent_definition),
+        "parent_evidence_path": str(cohort.relative_to(tmp_path)),
+        "parent_evidence_sha256": digest(cohort),
+        "current_definition_sha256": digest(parent_definition),
+        "current_trace_path": str(parent_trace.relative_to(tmp_path)),
+        "current_trace_sha256": digest(parent_trace),
+        "unified_diff_sha256": preflight._unified_diff_sha256(parent_text, parent_text),
+        "observed_at": parent_receipt["observed_at"],
+    }
+    parent_amendment_path = data / "parent.amendment.json"
+    parent_amendment_path.write_text(
+        json.dumps(parent_amendment, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
     current_trace = data / "current.trace-receipt.json"
     receipt = _trace_receipt(
         current_definition, "review-claude-fable", FABLE_SELECTOR, "repository"
     )
+    receipt["observed_at"] = "2026-09-04T00:00:00Z"
     current_trace.write_text(
         json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
-    def digest(path: Path) -> str:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-
-    parent_text = parent_definition.read_text(encoding="utf-8")
     current_text = current_definition.read_text(encoding="utf-8")
     amendment = {
         "schema": "lrhe-model-upgrade-standing-amendment-v1",
@@ -1364,6 +1404,8 @@ def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
         "parent_definition_sha256": digest(parent_definition),
         "parent_evidence_path": str(cohort.relative_to(tmp_path)),
         "parent_evidence_sha256": digest(cohort),
+        "parent_amendment_path": str(parent_amendment_path.relative_to(tmp_path)),
+        "parent_amendment_sha256": digest(parent_amendment_path),
         "parent_selector": FABLE_PARENT_SELECTOR,
         "current_definition_sha256": digest(current_definition),
         "current_selector": FABLE_SELECTOR,
@@ -1386,6 +1428,50 @@ def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
     result = preflight.check_conditional_critic_scope()
     assert result.state == preflight.PASS, result.detail
 
+    valid_amendment = amendment.copy()
+    current_definition.write_text(current_text + "\nBroaden the reviewer scope.\n", encoding="utf-8")
+    changed_receipt = _trace_receipt(
+        current_definition, "review-claude-fable", FABLE_SELECTOR, "repository"
+    )
+    changed_receipt["observed_at"] = receipt["observed_at"]
+    current_trace.write_text(
+        json.dumps(changed_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    amendment["current_definition_sha256"] = digest(current_definition)
+    amendment["current_trace_sha256"] = digest(current_trace)
+    amendment["unified_diff_sha256"] = preflight._unified_diff_sha256(
+        parent_text, current_definition.read_text(encoding="utf-8")
+    )
+    amendment_path.write_text(
+        json.dumps(amendment, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "may change only the exact model selector" in result.detail
+
+    current_definition.write_text(current_text, encoding="utf-8")
+    current_trace.write_text(
+        json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    amendment = valid_amendment.copy()
+    amendment["observed_at"] = "not-a-timestamp"
+    amendment_path.write_text(
+        json.dumps(amendment, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "RFC 3339 timestamp" in result.detail
+
+    amendment = valid_amendment.copy()
+    amendment["observed_at"] = parent_receipt["observed_at"]
+    amendment_path.write_text(
+        json.dumps(amendment, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "must postdate parent evidence" in result.detail
+
+    amendment = valid_amendment.copy()
     amendment["parent_selector"] = "anthropic/claude-opus-5:max"
     amendment_path.write_text(
         json.dumps(amendment, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -1792,6 +1878,9 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
         assert "authority" not in entry
         assert "blockers" not in entry
     assert document["reviewers"]["claude-opus"]["access_profile"] == ("anthropic-cvp-approved-org")
+    assert document["reviewers"]["claude"]["qualification"]["scopes"]["security"][
+        "boundaryEvidence"
+    ] == ["lrhe-data/fable-5-1-model-upgrade-v1/security-boundary-evidence.json"]
     qualification.validate_qualification(document)
 
 

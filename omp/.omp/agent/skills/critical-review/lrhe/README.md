@@ -314,9 +314,10 @@ receipt, and emitted manifest. This avoids identity churn on routine model
 upgrades while keeping the served version auditable at every dispatch. A passed
 parent quality cohort may cross only an explicitly allowlisted same-provider,
 same-effort point release through `lrhe-model-upgrade-standing-amendment-v1`:
-it pins both selectors and charters, validates every historical trace against
-the parent selector, and requires one fresh current-charter trace against the
-new selector. It never relabels an old run as the new model.
+it chains the previously qualified parent amendment, permits only the exact
+selector substitution in the live charter, validates every historical trace
+against the original parent selector, and requires one fresh current-charter
+trace against the new selector. It never relabels an old run as the new model.
 
 `access_profile` remains separate from `provider_route`: several entitlement
 lanes can share one native route, so authorization for one profile never implies
@@ -449,12 +450,21 @@ so served model, declared and executed tools, schema validity, and fallback are 
 judged by the one implementation that already judges them. A non-completed attempt may
 carry no receipt at all, which is why refusals cannot be hidden as passes. The cohort
 also pins `agent_definition_sha256`: an arbitrary edit after the cohort ran
-makes it stale and requires fresh qualification. The sole narrow exception is
-a `resolver-receipt-standing-source-v1` amendment. It preserves the parent
-charter and cohort bytes under their original hashes, pins the exact unified
-diff, and requires one fresh `lrhe-live-review-trace-v2` receipt against the
-current charter. Old attempts are still validated against the parent snapshot;
-they are never relabeled as current runs.
+makes it stale and requires fresh qualification. Two narrow amendments preserve
+standing without relabeling old evidence. A
+`resolver-receipt-standing-source-v1` amendment binds one reviewed charter-only
+change. An `lrhe-model-upgrade-standing-amendment-v1` additionally chains that
+qualified parent charter, permits only an explicitly allowlisted selector-only
+delta, and requires the current trace to postdate both the parent cohort and
+parent amendment. Both preserve the parent cohort bytes under their original
+hashes and require one fresh `lrhe-live-review-trace-v2` receipt against the
+current charter. Old attempts remain validated against the original parent
+snapshot and selector; they are never relabeled as current runs.
+
+The fresh trace proves only the changed execution boundary: exact served model,
+fallback, tools, read-only behavior, and output schema. The inherited cohort
+remains the scope-quality evidence. A model transition that needs new scope
+standing requires a new cohort rather than this amendment.
 
 `independent` is a real fourth lens, not a relabelling of the other three:
 reconstruct the system and its invariants from primary evidence instead of
