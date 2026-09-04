@@ -284,7 +284,7 @@ profiles exist, and each has three concepts:
 - strongCritic selects one reciprocal cross-family independent reviewer: Opus
   through the CVP-approved route for a GPT lead, or Daybreak Blue for a Claude
   lead;
-- supplements selects Gemini 3.7 Flash and Grok 4.6 on every full council. Both
+- supplements selects Gemini 3.8 Flash and Grok 4.6 on every full council. Both
   are cross-family supplemental evidence; Gemini supplies a fast sanity pass and
   Grok supplies cheap decorrelated coverage;
 - architectureSpecialists is record-selected. Fable is default-on for eligible
@@ -311,7 +311,12 @@ qualified lanes in one family use durable variant names such as
 `review-claude-opus` and `review-claude-fable`; a transient release such as
 Grok 4.6 remains in the exact `model` selector, active override, qualification
 receipt, and emitted manifest. This avoids identity churn on routine model
-upgrades while keeping the served version auditable at every dispatch.
+upgrades while keeping the served version auditable at every dispatch. A passed
+parent quality cohort may cross only an explicitly allowlisted same-provider,
+same-effort point release through `lrhe-model-upgrade-standing-amendment-v1`:
+it pins both selectors and charters, validates every historical trace against
+the parent selector, and requires one fresh current-charter trace against the
+new selector. It never relabels an old run as the new model.
 
 `access_profile` remains separate from `provider_route`: several entitlement
 lanes can share one native route, so authorization for one profile never implies
@@ -335,8 +340,8 @@ dispatch/evaluation flags, canary results, read-only proof, agents, and selector
 are internally consistent. Each profile rejects a same-family strong critic or
 supplement, duplicate memberships, and an unavailable strong floor. Fable proves
 the common schema/read-only gates and one passed non-security architecture scope
-with a fresh receipt. targeted-refuter returns only its separately configured
-global pool.
+with a current cohort or a validated model-upgrade standing amendment.
+targeted-refuter returns only its separately configured global pool.
 
 `initial` is the full-council resolution, not a record mode: it resolves any record the
 gate answers `full-council` for, which is `design`, `initial`, or `material-redesign`.

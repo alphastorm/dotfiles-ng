@@ -551,9 +551,10 @@ def check_reviewer_evidence_contracts() -> Result:
             continue
         receipt_path = SKILL / receipt_name
         receipt_definition = definition
+        receipt_selector = selector
         amendment_value = value.get("charterAmendment")
         if isinstance(amendment_value, str):
-            amendment_problems, parent_definition = _charter_amendment(
+            amendment_problems, parent_definition, parent_selector = _charter_amendment(
                 family,
                 SKILL / amendment_value,
                 definition,
@@ -563,14 +564,15 @@ def check_reviewer_evidence_contracts() -> Result:
                 delivery=evidence_delivery,
             )
             problems.extend(amendment_problems)
-            if parent_definition is not None:
+            if parent_definition is not None and parent_selector is not None:
                 receipt_definition = parent_definition
+                receipt_selector = parent_selector
         try:
             receipt = canary.validate_trace_receipt(
                 receipt_path,
                 receipt_definition,
                 agent,
-                selector,
+                receipt_selector,
                 evidence_delivery,
             )
         except canary.TraceCanaryError as exc:
@@ -673,6 +675,16 @@ def _required_read_only_marker(entry: dict) -> str:
 
 CHARTER_AMENDMENT_SCHEMA = "lrhe-charter-standing-amendment-v1"
 CHARTER_AMENDMENT_CHANGE_CLASS = "resolver-receipt-standing-source-v1"
+MODEL_UPGRADE_AMENDMENT_SCHEMA = "lrhe-model-upgrade-standing-amendment-v1"
+MODEL_UPGRADE_AMENDMENT_CHANGE_CLASS = "model-upgrade-standing-source-v1"
+ALLOWED_MODEL_UPGRADE_TRANSITIONS = frozenset(
+    {
+        (
+            "anthropic/claude-fable-5:max",
+            "anthropic/claude-fable-5-1:max",
+        )
+    }
+)
 CHARTER_AMENDMENT_KEYS = frozenset(
     {
         "schema",
@@ -691,6 +703,10 @@ CHARTER_AMENDMENT_KEYS = frozenset(
         "observed_at",
     }
 )
+MODEL_UPGRADE_AMENDMENT_KEYS = CHARTER_AMENDMENT_KEYS | {
+    "parent_selector",
+    "current_selector",
+}
 
 
 def _sha256(path: Path) -> str:
@@ -734,28 +750,43 @@ def _charter_amendment(
     agent: str,
     selector: str,
     delivery: str,
-) -> tuple[list[str], Path | None]:
-    """Validate one exact standing-source amendment without relabeling old evidence."""
+) -> tuple[list[str], Path | None, str | None]:
+    """Validate standing continuity without relabeling parent evidence."""
 
     try:
         amendment = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        return [f"{family}: charter amendment is unreadable: {exc}"], None
+        return [f"{family}: charter amendment is unreadable: {exc}"], None, None
     if not isinstance(amendment, dict):
-        return [f"{family}: charter amendment must be an object"], None
-    missing = CHARTER_AMENDMENT_KEYS - set(amendment)
-    extra = set(amendment) - CHARTER_AMENDMENT_KEYS
+        return [f"{family}: charter amendment must be an object"], None, None
+
+    schema = amendment.get("schema")
+    if schema == CHARTER_AMENDMENT_SCHEMA:
+        expected_keys = CHARTER_AMENDMENT_KEYS
+        expected_change_class = CHARTER_AMENDMENT_CHANGE_CLASS
+        parent_selector = selector
+    elif schema == MODEL_UPGRADE_AMENDMENT_SCHEMA:
+        expected_keys = MODEL_UPGRADE_AMENDMENT_KEYS
+        expected_change_class = MODEL_UPGRADE_AMENDMENT_CHANGE_CLASS
+        parent_selector = amendment.get("parent_selector")
+    else:
+        return [
+            f"{family}: charter amendment schema={schema!r}, expected one of "
+            f"{[CHARTER_AMENDMENT_SCHEMA, MODEL_UPGRADE_AMENDMENT_SCHEMA]!r}"
+        ], None, None
+
+    missing = expected_keys - set(amendment)
+    extra = set(amendment) - expected_keys
     if missing or extra:
         return [
             f"{family}: charter amendment shape mismatch: "
             f"missing={sorted(missing)}, extra={sorted(extra)}"
-        ], None
+        ], None, None
 
     problems: list[str] = []
     for key, expected in (
-        ("schema", CHARTER_AMENDMENT_SCHEMA),
         ("result", "passed"),
-        ("change_class", CHARTER_AMENDMENT_CHANGE_CLASS),
+        ("change_class", expected_change_class),
         ("agent", agent),
     ):
         if amendment.get(key) != expected:
@@ -765,6 +796,43 @@ def _charter_amendment(
     for key in ("amendment_id", "observed_at"):
         if not isinstance(amendment.get(key), str) or not amendment[key].strip():
             problems.append(f"{family}: charter amendment {key} must be a non-empty string")
+
+    if schema == MODEL_UPGRADE_AMENDMENT_SCHEMA:
+        current_selector = amendment.get("current_selector")
+        if current_selector != selector:
+            problems.append(
+                f"{family}: charter amendment current_selector={current_selector!r}, "
+                f"expected {selector!r}"
+            )
+        if not isinstance(parent_selector, str) or not parent_selector.strip():
+            problems.append(f"{family}: charter amendment parent_selector must be non-empty")
+        elif parent_selector == selector:
+            problems.append(
+                f"{family}: model-upgrade amendment must change selector {selector!r}"
+            )
+        else:
+            try:
+                _, parent_effort = canary._selector_parts(parent_selector)
+                _, current_effort = canary._selector_parts(selector)
+            except canary.TraceCanaryError as exc:
+                problems.append(f"{family}: charter amendment selector is invalid: {exc}")
+            else:
+                if parent_selector.split("/", 1)[0] != selector.split("/", 1)[0]:
+                    problems.append(
+                        f"{family}: model upgrade changes provider route from "
+                        f"{parent_selector!r} to {selector!r}"
+                    )
+                if parent_effort != current_effort:
+                    problems.append(
+                        f"{family}: model upgrade changes effort from {parent_effort!r} "
+                        f"to {current_effort!r}"
+                    )
+                if (parent_selector, selector) not in ALLOWED_MODEL_UPGRADE_TRANSITIONS:
+                    problems.append(
+                        f"{family}: unsupported model upgrade transition "
+                        f"{parent_selector!r} -> {selector!r}"
+                    )
+
     try:
         parent_definition = _amendment_path(
             amendment.get("parent_definition_path"), "parent_definition_path", ".md"
@@ -777,7 +845,7 @@ def _charter_amendment(
         )
     except ValueError as exc:
         problems.append(f"{family}: charter amendment {exc}")
-        return problems, None
+        return problems, None, None
     if parent_evidence.resolve() != parent_evidence_path.resolve():
         problems.append(
             f"{family}: charter amendment parent evidence {parent_evidence} is not "
@@ -797,8 +865,19 @@ def _charter_amendment(
             problems.append(
                 f"{family}: charter amendment {label} digest is {declared!r}, expected {measured}"
             )
+    if parent_definition.is_file() and isinstance(parent_selector, str):
+        try:
+            parent_front = canary._agent_frontmatter(parent_definition)
+        except canary.TraceCanaryError as exc:
+            problems.append(f"{family}: parent definition is invalid: {exc}")
+        else:
+            if parent_front.get("model") != [parent_selector]:
+                problems.append(
+                    f"{family}: parent definition model {parent_front.get('model')!r} != "
+                    f"amendment [{parent_selector!r}]"
+                )
     if problems:
-        return problems, None
+        return problems, None, None
 
     parent_text = parent_definition.read_text(encoding="utf-8")
     current_text = definition.read_text(encoding="utf-8")
@@ -818,7 +897,9 @@ def _charter_amendment(
         )
     except canary.TraceCanaryError as exc:
         problems.append(f"{family}: current-charter trace is not passed: {exc}")
-    return problems, parent_definition if not problems else None
+    if problems:
+        return problems, None, None
+    return [], parent_definition, parent_selector
 
 
 def _cohort_problems(
@@ -848,8 +929,9 @@ def _cohort_problems(
     delivery = critic.reviewer.evidence_delivery
     problems: list[str] = []
     cohort_definition = definition
+    cohort_selector = selector
     if amendment_path is not None:
-        amendment_problems, parent_definition = _charter_amendment(
+        amendment_problems, parent_definition, parent_selector = _charter_amendment(
             family,
             amendment_path,
             definition,
@@ -859,9 +941,10 @@ def _cohort_problems(
             delivery=delivery,
         )
         problems.extend(amendment_problems)
-        if parent_definition is not None:
+        if parent_definition is not None and parent_selector is not None:
             cohort_definition = parent_definition
-    # The cohort remains evidence about the exact parent charter. A standing-only
+            cohort_selector = parent_selector
+    # The cohort remains evidence about the exact parent charter and selector. A standing-only
     # amendment separately binds current bytes and one current execution trace.
     expected = {
         "schema": policy.cohort_schema,
@@ -869,8 +952,8 @@ def _cohort_problems(
         "policy": policy.policy,
         "scope": policy.required_scope,
         "agent": critic.reviewer.agent,
-        "requested_selector": selector,
-        "requested_model": selector_model(selector),
+        "requested_selector": cohort_selector,
+        "requested_model": selector_model(cohort_selector),
         "thinking_level": policy.thinking_level,
         "evidence_delivery": delivery,
         "read_only_marker": policy.read_only_marker,
@@ -951,7 +1034,7 @@ def _cohort_problems(
                 receipt_path,
                 cohort_definition,
                 critic.reviewer.agent,
-                selector,
+                cohort_selector,
                 delivery,
             )
         except canary.TraceCanaryError as exc:

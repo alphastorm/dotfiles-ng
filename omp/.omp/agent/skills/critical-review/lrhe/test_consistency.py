@@ -1113,7 +1113,8 @@ def test_receiptless_evaluation_lane_model_drift_fails_preflight(tmp_path, monke
 # ------------------------------------------------- conditional critic scope
 
 FABLE_POLICY = qualification.FABLE_POLICY
-FABLE_SELECTOR = "anthropic/claude-fable-5:max"
+FABLE_PARENT_SELECTOR = "anthropic/claude-fable-5:max"
+FABLE_SELECTOR = "anthropic/claude-fable-5-1:max"
 
 
 def _write_fable_agent(path: Path, selector: str = FABLE_SELECTOR) -> None:
@@ -1171,7 +1172,13 @@ def _trace_receipt(definition: Path, agent: str, selector: str, delivery: str) -
     }
 
 
-def _fable_cohort(skill: Path, definition: Path, attempts: int = 20) -> Path:
+def _fable_cohort(
+    skill: Path,
+    definition: Path,
+    attempts: int = 20,
+    *,
+    selector: str = FABLE_SELECTOR,
+) -> Path:
     """Mint one cohort receipt whose completed attempts cite real v2 receipts."""
     data = skill / "lrhe-data"
     cohort_dir = data / "fable-max-architecture"
@@ -1181,7 +1188,7 @@ def _fable_cohort(skill: Path, definition: Path, attempts: int = 20) -> Path:
         receipt_path = cohort_dir / f"attempt-{index:02d}.json"
         receipt_path.write_text(
             json.dumps(
-                _trace_receipt(definition, "review-claude-fable", FABLE_SELECTOR, "repository"),
+                _trace_receipt(definition, "review-claude-fable", selector, "repository"),
                 sort_keys=True,
             )
             + "\n",
@@ -1202,8 +1209,8 @@ def _fable_cohort(skill: Path, definition: Path, attempts: int = 20) -> Path:
         "policy": FABLE_POLICY.policy,
         "scope": FABLE_POLICY.required_scope,
         "agent": "review-claude-fable",
-        "requested_selector": FABLE_SELECTOR,
-        "requested_model": qualification.selector_model(FABLE_SELECTOR),
+        "requested_selector": selector,
+        "requested_model": qualification.selector_model(selector),
         "thinking_level": FABLE_POLICY.thinking_level,
         "evidence_delivery": "repository",
         "read_only_marker": FABLE_POLICY.read_only_marker,
@@ -1234,7 +1241,7 @@ def _conditional_scope_fixture(tmp_path, monkeypatch, attempts: int = 20) -> tup
         "dispatchEnabled": True,
         "evaluationEnabled": True,
         "model_family": "claude",
-        "correlation_group": "claude-fable-5",
+        "correlation_group": "claude-fable-5-1",
         "provider_route": "anthropic",
         "access_profile": "anthropic-subscription",
         "data_allowlist_key": "anthropic",
@@ -1320,6 +1327,80 @@ def test_an_agent_edited_after_its_cohort_makes_the_receipt_stale(tmp_path, monk
     result = preflight.check_conditional_critic_scope()
     assert result.state == preflight.FAIL
     assert "agent_definition_sha256" in result.detail
+
+def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
+    tmp_path, monkeypatch
+):
+    """A point release reuses quality evidence without relabeling old model traces."""
+    current_definition, _ = _conditional_scope_fixture(tmp_path, monkeypatch)
+    data = tmp_path / "lrhe-data" / "standing-amendment-v2"
+    data.mkdir(parents=True)
+    parent_definition = data / "review-claude-fable-parent.md"
+    _write_fable_agent(parent_definition, FABLE_PARENT_SELECTOR)
+    cohort = _fable_cohort(
+        tmp_path, parent_definition, selector=FABLE_PARENT_SELECTOR
+    )
+
+    current_trace = data / "current.trace-receipt.json"
+    receipt = _trace_receipt(
+        current_definition, "review-claude-fable", FABLE_SELECTOR, "repository"
+    )
+    current_trace.write_text(
+        json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    def digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    parent_text = parent_definition.read_text(encoding="utf-8")
+    current_text = current_definition.read_text(encoding="utf-8")
+    amendment = {
+        "schema": "lrhe-model-upgrade-standing-amendment-v1",
+        "result": "passed",
+        "amendment_id": "fable-5-1-model-upgrade-test",
+        "change_class": "model-upgrade-standing-source-v1",
+        "agent": "review-claude-fable",
+        "parent_definition_path": str(parent_definition.relative_to(tmp_path)),
+        "parent_definition_sha256": digest(parent_definition),
+        "parent_evidence_path": str(cohort.relative_to(tmp_path)),
+        "parent_evidence_sha256": digest(cohort),
+        "parent_selector": FABLE_PARENT_SELECTOR,
+        "current_definition_sha256": digest(current_definition),
+        "current_selector": FABLE_SELECTOR,
+        "current_trace_path": str(current_trace.relative_to(tmp_path)),
+        "current_trace_sha256": digest(current_trace),
+        "unified_diff_sha256": preflight._unified_diff_sha256(parent_text, current_text),
+        "observed_at": receipt["observed_at"],
+    }
+    amendment_path = data / "claude-fable-5-1.amendment.json"
+    amendment_path.write_text(
+        json.dumps(amendment, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    qualification_path = tmp_path / "qualification.yml"
+    document = yaml.safe_load(qualification_path.read_text(encoding="utf-8"))
+    document["reviewers"]["claude"]["charterAmendment"] = str(
+        amendment_path.relative_to(tmp_path)
+    )
+    qualification_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.PASS, result.detail
+
+    amendment["parent_selector"] = "anthropic/claude-opus-5:max"
+    amendment_path.write_text(
+        json.dumps(amendment, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "unsupported model upgrade transition" in result.detail
+
+    amendment["parent_selector"] = FABLE_SELECTOR
+    amendment_path.write_text(
+        json.dumps(amendment, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "parent definition model" in result.detail
 
 
 def test_a_short_cohort_cannot_promote_the_conditional_critic(tmp_path, monkeypatch):
@@ -1684,12 +1765,12 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
         "gpt": {
             "strongCritic": ["claude-opus"],
             "supplements": ["gemini", "grok"],
-            "architectureSpecialists": [],
+            "architectureSpecialists": ["claude"],
         },
         "claude": {
             "strongCritic": ["daybreak-blue"],
             "supplements": ["gemini", "grok"],
-            "architectureSpecialists": [],
+            "architectureSpecialists": ["claude"],
         },
     }
     for lead_family, profile in profiles.items():
@@ -2697,7 +2778,7 @@ def test_standing_amendment_preserves_parent_evidence_and_requires_current_trace
     )
     monkeypatch.setattr(preflight, "SKILL", skill)
 
-    problems, bound_parent = preflight._charter_amendment(
+    problems, bound_parent, bound_selector = preflight._charter_amendment(
         "grok",
         amendment_path,
         current,
@@ -2708,9 +2789,10 @@ def test_standing_amendment_preserves_parent_evidence_and_requires_current_trace
     )
     assert problems == []
     assert bound_parent == parent
+    assert bound_selector == selector
 
     current.write_text(current_text + "Unapproved charter change.\n", encoding="utf-8")
-    problems, _ = preflight._charter_amendment(
+    problems, _, _ = preflight._charter_amendment(
         "grok",
         amendment_path,
         current,
@@ -2728,7 +2810,7 @@ def test_standing_amendment_preserves_parent_evidence_and_requires_current_trace
         json.dumps(amendment, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    problems, _ = preflight._charter_amendment(
+    problems, _, _ = preflight._charter_amendment(
         "grok",
         amendment_path,
         current,

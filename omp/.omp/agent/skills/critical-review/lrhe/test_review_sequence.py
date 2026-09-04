@@ -1095,20 +1095,20 @@ def _conditional_entry() -> dict:
         "dispatchEnabled": True,
         "evaluationEnabled": True,
         "model_family": "claude",
-        "correlation_group": "claude-fable-5",
+        "correlation_group": "claude-fable-5-1",
         "provider_route": "anthropic",
         "access_profile": "anthropic-subscription",
         "data_allowlist_key": "anthropic",
         "execution_mode": "task_agent",
         "lens": "architecture",
         "agent": "review-claude-fable",
-        "model": "anthropic/claude-fable-5:max",
+        "model": "anthropic/claude-fable-5-1:max",
         "fallbackAllowed": False,
         "qualification": {
             "common": {
                 "schemaValid": True,
                 "readOnlyBoundary": "passed",
-                "exactServedModelRequired": "anthropic/claude-fable-5",
+                "exactServedModelRequired": "anthropic/claude-fable-5-1",
             },
             "scopes": {
                 "non-security-architecture": {
@@ -2073,7 +2073,7 @@ def test_a_refused_scope_keeps_its_boundary_evidence() -> None:
 
 def test_conditional_selector_and_eligibility_config_are_exact() -> None:
     downgraded = _panel()
-    downgraded["reviewers"]["claude"]["model"] = "anthropic/claude-fable-5:high"
+    downgraded["reviewers"]["claude"]["model"] = "anthropic/claude-fable-5-1:high"
     with pytest.raises(QualificationError, match="thinking level 'max'"):
         validate_qualification(downgraded)
 

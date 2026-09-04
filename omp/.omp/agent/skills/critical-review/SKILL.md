@@ -131,8 +131,8 @@ The resolver uses three profile groups, not one role per model:
 | Group | GPT lead | Claude lead | Standing |
 |---|---|---|---|
 | strongCritic | Opus 5 through the CVP-approved route | Daybreak Blue | reciprocal cross-family independent evidence |
-| supplements | Gemini 3.7 Flash and Grok 4.6 | Gemini 3.7 Flash and Grok 4.6 | always-on cross-family supplemental evidence |
-| architectureSpecialists | Fable 5 when eligible | Fable 5 when eligible | record-selected supplemental architecture synthesis |
+| supplements | Gemini 3.8 Flash and Grok 4.6 | Gemini 3.8 Flash and Grok 4.6 | always-on cross-family supplemental evidence |
+| architectureSpecialists | Fable 5.1 when eligible | Fable 5.1 when eligible | record-selected supplemental architecture synthesis |
 
 The strong critic and supplements must be pairwise distinct by model family and
 correlation group. Fable may intentionally share a lineage because its standing
