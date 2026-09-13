@@ -94,13 +94,16 @@ The selector's modes are:
 - `material-redesign`: a second general council only after the initial council's
   named P0/P1 findings are directly verified as resolved and the correction
   changes architecture, a trust boundary, public compatibility, persistent state,
-  migration/rollback, or production effects.
+  migration/rollback, or production effects;
+- `founder-requested`: exactly one third implementation council, requested by
+  the founder through a bound explicit decision after the two ordinary passes.
 
 The frozen machine record must contain exactly these fields; any additional key fails closed:
 
 1. `review_sequence_id`, a unique `review_id`, `review_mode`, `parent_review_id`,
    and ordered `sequence_history` whose rows bind each prior epoch record by
-   path and SHA-256, plus history-derived `general_review_pass_count` (design
+   path and SHA-256; each bound record must match the row identity, sequence, and
+   exact preceding history prefix. Plus history-derived `general_review_pass_count` (design
    epochs never count) and `targeted_refutation_used`;
 2. `artifact_path` and SHA-256, every `changed_file` and its current SHA-256
    (`DELETED` for a deletion), and proof-receipt paths and SHA-256 values;
@@ -114,7 +117,9 @@ The frozen machine record must contain exactly these fields; any additional key 
 6. mode-specific fields. Initial mode rejects remediation metadata. Remediation
    requires an exact finding/scope/verification disposition. Material redesign
    additionally requires one named material category and proof that all named
-   parent findings are resolved;
+   parent findings are resolved. Founder-requested mode needs no invented
+   material change or finding, but any named corrections require the same exact
+   scope, lead verification, and fully resolved dispositions;
 7. `lifecycle_design_artifacts` only when the epoch intentionally supplies them:
    distinct, digest-bound state-machine and failure-matrix JSON artifacts.
    Absent, `null`, or `{}` is valid and raises no lifecycle error, and no touched
@@ -123,7 +128,10 @@ The frozen machine record must contain exactly these fields; any additional key 
    executable gate checks their schemas, transition/failure-state coverage, and
    inclusion in the reviewed `changed_files`, and when `sequence_history` already
    carries a design epoch it additionally requires that epoch's exact binding.
-   Historical records holding valid artifacts stay readable and verifiable.
+   Historical records holding valid artifacts stay readable and verifiable;
+8. `founder_followup_authorization`: absent or `null` in ordinary modes; required
+   only in `founder-requested`, as the exact binding object `{ "path": "...",
+   "sha256": "..." }` described below. Prior founder records retain their binding.
 
 Every proof receipt is JSON with `schemaVersion: 1`, `result: passed`,
 `exit_code: 0`, and the `subject_digest` computed from the frozen artifact digest
@@ -172,6 +180,46 @@ New risk classes, two or more cross-subsystem omissions, or incomplete invariant
 proof are systemic evidence that the implementation audit was incomplete. Mark
 the sequence `not-council-ready`, return to implementation audit/repair, and do
 not automatically redispatch.
+
+### Explicit founder-requested follow-up
+
+The autonomous two-pass limit does not change. Only an existing founder decision
+selecting `Allow one additional council` permits one additional full council,
+after exactly two implementation passes in the same sequence. Do not solicit
+this exception to extend autonomous remediation. `NO_CLOUD` still prohibits
+hosted review, and the complete required roster and readiness gates still apply.
+
+Bind the authorization artifact with `founder_followup_authorization.path` and
+its SHA-256 in `founder_followup_authorization.sha256`. It must be durable JSON
+outside session-local storage, with `requested_by: founder`, integer
+`additional_full_councils: 1`, and `selection: Allow one additional council`. Its
+`review_sequence_id` must match the record, and its `after_review_id` must equal
+`parent_review_id`, the latest row of the complete ordered history. Other
+artifact fields may preserve the original request and constraints; never rewrite
+the recorded decision or historical reviews to make the gate pass.
+
+Start with the ordinary commands, using the same sequence and a new review id:
+
+```bash
+./lrhe/epoch.py scaffold --mode founder-requested --sequence-id <same-sequence> \
+  --review-id <new-review-id> --out draft-record.json
+./lrhe/epoch.py bind --record <latest-prior-record> --action <actual-prior-action>
+./lrhe/review_sequence.py --triage draft-record.json
+```
+
+Before triage, append the emitted row to the prior record's unchanged
+`sequence_history`; set the latest parent, history-derived pass count (`2`) and
+refutation flag, bind the authorization, and record any verified corrections.
+Triage exit `20` projects a full council but does not authorize dispatch. Freeze
+the complete latest corrected subject, bind its proof, and pass the full gate
+as usual. No new material-redesign claim is necessary.
+
+After this third full pass, preserve its bound record in history. An ordinary
+`remediation` record with count `3` can close through verified dispositions or
+use the still-unspent single targeted refutation. It carries no new authorization
+field: the historical founder record retains and revalidates the grant. Neither
+another grant, a mode relabel, a truncated history, nor a counter reset permits a
+fourth pass. Design councils remain outside the implementation count.
 
 ## Lightweight lead-only close
 
@@ -676,8 +724,9 @@ reason to trim the resolved pool.
 Do not provide the original reviews, reviewer identities, vote counts, or
 rhetoric. Ask the refuter to falsify the single normalized claim, not to conduct
 another general review. Record `confirmed`, `falsified`, or `unresolved/human
-decision`, update the ledger, and stop. Never start another refutation or a third
-general council pass.
+decision`, update the ledger, and stop. Never start another refutation or an
+autonomous third general council pass; only the bound founder-requested exception
+above permits that additional full council.
 
 ## Close and report
 
@@ -692,7 +741,7 @@ Recheck epoch digests once more before final disposition. Mark the review stale 
 - accepted implementation/design changes and verification evidence;
 - explicit residual risks and human waivers.
 
-Close the frozen epoch before modifying reviewed files. Then apply the sequence gate: close verified localized remediation directly; use the single targeted-refuter path only for a still-disputed P0/P1; return systemic omissions to implementation audit; and open another full council only for a readiness-complete material redesign within the two-pass limit.
+Close the frozen epoch before modifying reviewed files. Then apply the sequence gate: close verified localized remediation directly; use the single targeted-refuter path only for a still-disputed P0/P1; return systemic omissions to implementation audit; and open another full council only for a readiness-complete material redesign within the autonomous two-pass limit or the single bound founder-requested third pass.
 
 ## Proving changes to this skill
 

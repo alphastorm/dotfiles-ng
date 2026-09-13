@@ -81,7 +81,15 @@ def _proof_classes() -> dict[str, dict[str, str]]:
 def _history_row(tmp_path: Path, review_id: str, mode: str, action: str) -> dict[str, str]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     record_path = tmp_path / f"{review_id}.json"
-    _write_json(record_path, {"review_id": review_id, "action": action})
+    _write_json(
+        record_path,
+        {
+            "review_sequence_id": "CRS-20260729-example",
+            "review_id": review_id,
+            "review_mode": mode,
+            "sequence_history": [] if mode in {"design", "initial"} else _history(tmp_path),
+        },
+    )
     return {
         "review_id": review_id,
         "review_mode": mode,
@@ -674,6 +682,213 @@ def test_sequence_history_derives_parent_and_pass_limits(tmp_path: Path) -> None
     history_path = Path(record["sequence_history"][0]["record_path"])
     history_path.write_text("changed history\n", encoding="utf-8")
     assert "invalid-history-row:0:record-binding" in readiness_errors(record)
+
+
+def _record_history_row(tmp_path: Path, record: dict[str, object]) -> dict[str, str]:
+    path = tmp_path / f"{record['review_id']}.json"
+    _write_json(path, record)
+    return {
+        "review_id": record["review_id"],
+        "review_mode": record["review_mode"],
+        "action": "full-council",
+        "record_path": str(path),
+        "record_sha256": _sha256(path),
+    }
+
+
+def _founder_record(tmp_path: Path) -> dict[str, object]:
+    record = _ready_record(tmp_path, "founder-requested")
+    prior = _ready_record(tmp_path / "prior", "material-redesign")
+    prior["review_id"] = "CR-redesign"
+    record.update(
+        parent_review_id=prior["review_id"],
+        sequence_history=[*prior["sequence_history"], _record_history_row(tmp_path, prior)],
+        general_review_pass_count=2,
+    )
+    authorization = tmp_path / "founder-authorization.json"
+    _write_json(
+        authorization,
+        {
+            "review_sequence_id": record["review_sequence_id"],
+            "after_review_id": prior["review_id"],
+            "requested_by": "founder",
+            "additional_full_councils": 1,
+            "selection": "Allow one additional council",
+        },
+    )
+    record["founder_followup_authorization"] = {
+        "path": str(authorization),
+        "sha256": _sha256(authorization),
+    }
+    return record
+
+
+def test_founder_third_pass_and_verified_remediation_close(tmp_path: Path) -> None:
+    record = _founder_record(tmp_path)
+    assert select_triage_action(record).projected_action == "full-council"
+    assert select_review_action(record).action == "full-council"
+
+    closure = _ready_record(tmp_path / "close", "remediation")
+    closure.update(
+        parent_review_id=record["review_id"],
+        sequence_history=[*record["sequence_history"], _record_history_row(tmp_path, record)],
+        general_review_pass_count=3,
+    )
+    closure["review_id"] = "CR-closure"
+    assert select_triage_action(closure).status == "lead-close"
+    assert select_review_action(closure).status == "closed"
+
+    # Even a new bound decision after the third pass cannot buy a fourth.
+    fourth = {**closure, "review_mode": "founder-requested"}
+    authorization = tmp_path / "fourth-authorization.json"
+    grant = json.loads(Path(record["founder_followup_authorization"]["path"]).read_text())
+    grant["after_review_id"] = record["review_id"]
+    _write_json(authorization, grant)
+    fourth["founder_followup_authorization"] = {
+        "path": str(authorization),
+        "sha256": _sha256(authorization),
+    }
+    assert "founder-followup-limit-reached" in select_triage_action(fourth).reason_codes
+    assert not select_review_action(fourth).permits_provider_dispatch
+
+    # The historical grant remains bound during ordinary closure.
+    Path(record["founder_followup_authorization"]["path"]).write_text("{}\n")
+    assert select_triage_action(closure).status == "not-triage-ready"
+    assert not select_review_action(closure).permits_provider_dispatch
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("review_sequence_id", "another-sequence", "founder-followup-sequence-mismatch"),
+        ("after_review_id", "CR-initial", "founder-followup-prior-review-mismatch"),
+        ("requested_by", "agent", "invalid-founder-followup-authorization:decision"),
+        ("additional_full_councils", True, "invalid-founder-followup-authorization:decision"),
+        ("additional_full_councils", 2, "invalid-founder-followup-authorization:decision"),
+        ("selection", "Hold", "invalid-founder-followup-authorization:decision"),
+    ],
+)
+def test_founder_authorization_must_match_bound_decision(
+    tmp_path: Path, field: str, value: object, reason: str
+) -> None:
+    record = _founder_record(tmp_path)
+    binding = record["founder_followup_authorization"]
+    path = Path(binding["path"])
+    grant = json.loads(path.read_text())
+    grant[field] = value
+    _write_json(path, grant)
+    binding["sha256"] = _sha256(path)
+    assert reason in select_triage_action(record).reason_codes
+    assert reason in select_review_action(record).reason_codes
+
+
+@pytest.mark.parametrize(
+    "failure", ["absent", "missing-file", "tampered", "malformed", "ephemeral"]
+)
+def test_founder_authorization_requires_durable_intact_json(tmp_path: Path, failure: str) -> None:
+    record = _founder_record(tmp_path)
+    binding = record["founder_followup_authorization"]
+    path = Path(binding["path"])
+    if failure == "absent":
+        record.pop("founder_followup_authorization")
+    elif failure == "missing-file":
+        path.unlink()
+    elif failure == "tampered":
+        path.write_text("{}\n")
+    elif failure == "malformed":
+        path.write_bytes(b"\xff")
+        binding["sha256"] = _sha256(path)
+    else:
+        binding["path"] = str(SESSION_LOCAL_ROOT / "grant.json")
+    assert select_triage_action(record).status == "not-triage-ready"
+    assert not select_review_action(record).permits_provider_dispatch
+
+
+@pytest.mark.parametrize("failure", ["omit", "relabel", "reset", "counter", "wrong-sequence"])
+def test_founder_followup_cannot_rewrite_bound_history(tmp_path: Path, failure: str) -> None:
+    record = _founder_record(tmp_path)
+    if failure == "omit":
+        record["sequence_history"].pop(0)
+        record["general_review_pass_count"] = 1
+    elif failure == "relabel":
+        record["sequence_history"][-1]["review_mode"] = "remediation"
+    elif failure == "reset":
+        record["sequence_history"] = []
+        record["general_review_pass_count"] = 0
+        record["parent_review_id"] = None
+    elif failure == "counter":
+        record["general_review_pass_count"] = 1
+    else:
+        record["review_sequence_id"] = "new-sequence"
+    assert select_triage_action(record).status == "not-triage-ready"
+    assert not select_review_action(record).permits_provider_dispatch
+
+
+def test_founder_followup_does_not_extend_autonomous_or_refutation_limits(tmp_path: Path) -> None:
+    record = _founder_record(tmp_path)
+    ordinary = {**record, "review_mode": "material-redesign"}
+    ordinary.pop("founder_followup_authorization")
+    assert "general-review-pass-limit-reached" in select_triage_action(ordinary).reason_codes
+    assert not select_review_action(ordinary).permits_provider_dispatch
+
+    closure = _ready_record(tmp_path / "close", "remediation")
+    closure.update(
+        review_id="CR-dispute",
+        parent_review_id=record["review_id"],
+        sequence_history=[*record["sequence_history"], _record_history_row(tmp_path, record)],
+        general_review_pass_count=3,
+        resolved_finding_ids=[],
+        disputed_or_unresolved_p01=["P1-001"],
+        lead_verification=[
+            {"finding_id": "P1-001", "result": "disputed", "evidence": "inconclusive repro"}
+        ],
+    )
+    assert select_review_action(closure).action == "targeted-refuter"
+    refuter = _record_history_row(tmp_path, closure)
+    refuter["action"] = "targeted-refuter"
+    closure.update(
+        review_id="CR-after-refuter",
+        sequence_history=[*closure["sequence_history"], refuter],
+        parent_review_id="CR-dispute",
+        targeted_refutation_used=True,
+    )
+    assert select_review_action(closure).reason_codes == ("targeted-refutation-limit-reached",)
+
+
+def test_founder_grant_cannot_replace_the_second_ordinary_pass(tmp_path: Path) -> None:
+    record = _founder_record(tmp_path)
+    record["sequence_history"].pop()
+    record["parent_review_id"] = "CR-initial"
+    record["general_review_pass_count"] = 1
+    binding = record["founder_followup_authorization"]
+    path = Path(binding["path"])
+    grant = json.loads(path.read_text())
+    grant["after_review_id"] = "CR-initial"
+    _write_json(path, grant)
+    binding["sha256"] = _sha256(path)
+    assert "founder-followup-requires-two-prior-passes" in select_triage_action(record).reason_codes
+    assert not select_review_action(record).permits_provider_dispatch
+
+
+def test_founder_followup_requires_named_corrections_resolved(tmp_path: Path) -> None:
+    record = _founder_record(tmp_path)
+    corrections = _ready_record(tmp_path / "corrections", "remediation")
+    for field in (
+        "remediated_finding_ids",
+        "resolved_finding_ids",
+        "remediation_scope",
+        "lead_verification",
+    ):
+        record[field] = corrections[field]
+    assert select_review_action(record).action == "full-council"
+    record["resolved_finding_ids"] = []
+    record["disputed_or_unresolved_p01"] = ["P1-001"]
+    record["lead_verification"][0]["result"] = "disputed"
+    assert (
+        "founder-requested-parent-findings-not-resolved"
+        in select_triage_action(record).reason_codes
+    )
+    assert not select_review_action(record).permits_provider_dispatch
 
 
 def test_unknown_record_fields_fail_closed(tmp_path: Path) -> None:
@@ -1681,6 +1896,12 @@ def test_safe_architecture_record_selects_the_full_pragmatic_council(tmp_path: P
     assert architecture["role"] == qualification.ARCHITECTURE_ROLE
     assert architecture["authority"] == qualification.SUPPLEMENTAL_EVIDENCE
     assert architecture["reasonCodes"] == [qualification.ARCHITECTURE_INITIAL_REASON_CODE]
+
+
+def test_founder_followup_resolves_the_complete_council(tmp_path: Path) -> None:
+    manifest = _resolve(tmp_path, _founder_record(tmp_path / "followup"))
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "daybreak-blue", "claude"]
+    assert manifest["skipped"] == []
 
 
 def test_safe_design_record_defaults_to_fable_synthesis(tmp_path: Path) -> None:

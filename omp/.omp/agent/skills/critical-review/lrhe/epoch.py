@@ -58,6 +58,7 @@ DRAFT_TEMPLATE: dict[str, object] = {
     "sequence_history": [],
     "general_review_pass_count": 0,
     "targeted_refutation_used": False,
+    "founder_followup_authorization": None,
     "known_deterministic_failures": [],
     "new_risk_classes": [],
     "cross_subsystem_omissions": [],

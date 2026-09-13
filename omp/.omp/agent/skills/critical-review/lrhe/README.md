@@ -291,7 +291,7 @@ profiles exist, and each has four explicit groups:
   councils only, as same_lineage_blind_sample and supplemental_evidence. It reuses
   the existing qualified scope and exact model/access contract, not a new canary;
 - architectureSpecialists is record-selected. Fable is default-on for eligible
-  design, architecture-heavy initial, and material-redesign councils, but always
+  design, architecture-heavy initial, material-redesign, and founder-requested councils, but always
   carries supplemental authority. Its independence_class still records whether
   its Claude lineage matches the lead.
 
@@ -351,7 +351,10 @@ with a current cohort or a validated model-upgrade standing amendment.
 targeted-refuter returns only its separately configured global pool.
 
 `initial` is the full-council resolution, not a record mode: it resolves any record the
-gate answers `full-council` for, which is `design`, `initial`, or `material-redesign`.
+gate answers `full-council` for: `design`, `initial`, `material-redesign`, or the
+single bound `founder-requested` third implementation pass. The autonomous
+two-pass limit is unchanged; the follow-up records an existing explicit founder
+decision, never creates a new approval service or resets sequence history.
 It requires `--lead-family`, `--record`, `--packet`, and a durable `--out`, reuses
 `review_sequence.py` for readiness rather than reimplementing a weaker parser, verifies
 that the packet names exactly that record path and digest, and writes one manifest

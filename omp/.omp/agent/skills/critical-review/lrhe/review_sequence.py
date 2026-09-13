@@ -16,7 +16,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Mapping, Sequence, cast
 
-REVIEW_MODES = frozenset({"design", "initial", "remediation", "material-redesign"})
+REVIEW_MODES = frozenset(
+    {"design", "initial", "remediation", "material-redesign", "founder-requested"}
+)
 ACTIONS = frozenset({"full-council", "targeted-refuter", "none"})
 CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN = "credentialed-external-lifecycle"
 RISK_DOMAINS = frozenset(
@@ -65,6 +67,7 @@ RECORD_FIELDS = frozenset(
         "sequence_history",
         "general_review_pass_count",
         "targeted_refutation_used",
+        "founder_followup_authorization",
         "artifact_path",
         "artifact_digest",
         "changed_files",
@@ -197,9 +200,10 @@ def _bound_json_artifact(
     *,
     name: str,
     errors: list[str],
+    kind: str = "lifecycle-design-artifact",
 ) -> tuple[Mapping[str, object] | None, str | None]:
     reference = _mapping(value)
-    prefix = f"invalid-lifecycle-design-artifact:{name}"
+    prefix = f"invalid-{kind}:{name}"
     if reference is None or set(reference) != {"path", "sha256"}:
         errors.append(prefix)
         return None, None
@@ -215,14 +219,15 @@ def _bound_json_artifact(
         return None, None
     path = Path(path_value)
     if _is_session_local(path):
-        errors.append(f"ephemeral-lifecycle-design-artifact:{name}")
-        return None, path_value
-    if not path.is_file() or _sha256(path) != digest:
-        errors.append(prefix)
+        errors.append(f"ephemeral-{kind}:{name}")
         return None, path_value
     try:
-        payload_value: object = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        contents = path.read_bytes()
+        if hashlib.sha256(contents).hexdigest() != digest:
+            errors.append(prefix)
+            return None, path_value
+        payload_value: object = json.loads(contents)
+    except (OSError, UnicodeError, json.JSONDecodeError):
         errors.append(prefix)
         return None, path_value
     payload = _mapping(payload_value)
@@ -591,6 +596,31 @@ def _binding_errors(record: Mapping[str, object]) -> tuple[str, ...]:
     return tuple(errors)
 
 
+def _founder_authorization_errors(record: Mapping[str, object]) -> tuple[str, ...]:
+    """Verify the recorded founder decision, not a new source of approval."""
+    errors: list[str] = []
+    authorization, _ = _bound_json_artifact(
+        record.get("founder_followup_authorization"),
+        name="binding",
+        kind="founder-followup-authorization",
+        errors=errors,
+    )
+    if authorization is None:
+        return tuple(errors)
+    if (
+        authorization.get("requested_by") != "founder"
+        or type(authorization.get("additional_full_councils")) is not int
+        or authorization.get("additional_full_councils") != 1
+        or authorization.get("selection") != "Allow one additional council"
+    ):
+        errors.append("invalid-founder-followup-authorization:decision")
+    if authorization.get("review_sequence_id") != record.get("review_sequence_id"):
+        errors.append("founder-followup-sequence-mismatch")
+    if authorization.get("after_review_id") != record.get("parent_review_id"):
+        errors.append("founder-followup-prior-review-mismatch")
+    return tuple(errors)
+
+
 def _history_errors(record: Mapping[str, object], mode: object) -> tuple[str, ...]:
     errors: list[str] = []
     history_values = _sequence(record.get("sequence_history"))
@@ -602,6 +632,7 @@ def _history_errors(record: Mapping[str, object], mode: object) -> tuple[str, ..
     general_passes = 0
     refutations = 0
     design_rows = 0
+    founder_passes = 0
     for index, value in enumerate(history_values):
         prefix = f"invalid-history-row:{index}"
         row = _mapping(value)
@@ -645,8 +676,35 @@ def _history_errors(record: Mapping[str, object], mode: object) -> tuple[str, ..
             if _is_session_local(record_path):
                 errors.append(f"{prefix}:ephemeral-record-path")
                 continue
-            if not record_path.is_file() or _sha256(record_path) != record_digest:
+            try:
+                contents = record_path.read_bytes()
+                if hashlib.sha256(contents).hexdigest() != record_digest:
+                    errors.append(f"{prefix}:record-binding")
+                    continue
+                prior = _mapping(json.loads(contents))
+            except (OSError, UnicodeError, json.JSONDecodeError):
                 errors.append(f"{prefix}:record-binding")
+                continue
+            if prior is None or any(
+                prior.get(field) != expected
+                for field, expected in (
+                    ("review_sequence_id", record.get("review_sequence_id")),
+                    ("review_id", review_id),
+                    ("review_mode", review_mode),
+                    ("sequence_history", list(history_values[:index])),
+                )
+            ):
+                errors.append(f"{prefix}:record-history-mismatch")
+                continue
+            if review_mode == "founder-requested":
+                founder_passes += 1
+                if action != "full-council" or general_passes != 3:
+                    errors.append("founder-followup-requires-two-prior-passes")
+                if prior.get("parent_review_id") != (
+                    history_ids[-2] if len(history_ids) >= 2 else None
+                ):
+                    errors.append(f"{prefix}:parent-review-not-latest-history")
+                errors.extend(_founder_authorization_errors(prior))
     if len(history_ids) != len(set(history_ids)):
         errors.append("duplicate-history-review-id")
     if design_rows > 1:
@@ -678,16 +736,26 @@ def _history_errors(record: Mapping[str, object], mode: object) -> tuple[str, ..
     pass_count = record.get("general_review_pass_count")
     if pass_count != general_passes:
         errors.append("general-review-pass-count-mismatch")
-    if general_passes > 2:
+    if general_passes > 3 or (general_passes > 2 and founder_passes != 1):
         errors.append("general-review-pass-limit-exceeded")
+    if founder_passes > 1:
+        errors.append("founder-followup-limit-reached")
     if mode == "initial" and general_passes != 0:
         errors.append("initial-review-already-dispatched")
     if mode == "material-redesign" and general_passes >= 2:
         errors.append("general-review-pass-limit-reached")
     if mode == "material-redesign" and general_passes != 1:
         errors.append("material-redesign-requires-initial-pass")
-    if mode == "remediation" and general_passes not in {1, 2}:
+    if mode == "remediation" and general_passes not in {1, 2, 3}:
         errors.append("remediation-requires-prior-general-pass")
+    if mode == "founder-requested":
+        if general_passes != 2:
+            errors.append("founder-followup-requires-two-prior-passes")
+        if founder_passes or general_passes >= 3:
+            errors.append("founder-followup-limit-reached")
+        errors.extend(_founder_authorization_errors(record))
+    elif record.get("founder_followup_authorization") is not None:
+        errors.append("unexpected-founder-followup-authorization")
 
     targeted_used = record.get("targeted_refutation_used")
     if not isinstance(targeted_used, bool) or targeted_used != (refutations > 0):
@@ -753,7 +821,7 @@ def _correction_errors(
     if resolved | disputed != remediated:
         errors.append("remediation-disposition-coverage-mismatch")
     if require_all_resolved and (resolved != remediated or disputed):
-        errors.append("material-redesign-parent-findings-not-resolved")
+        errors.append(f"{record.get('review_mode')}-parent-findings-not-resolved")
 
     scope = _mapping(record.get("remediation_scope"))
     if scope is None:
@@ -843,7 +911,9 @@ def readiness_errors(record: Mapping[str, object]) -> tuple[str, ...]:
     if incomplete:
         errors.append("incomplete-invariant-proof")
 
-    if mode in {"design", "initial"}:
+    if mode in {"design", "initial"} or (
+        mode == "founder-requested" and not record.get("remediated_finding_ids")
+    ):
         for field in (
             "remediated_finding_ids",
             "resolved_finding_ids",
@@ -855,8 +925,8 @@ def readiness_errors(record: Mapping[str, object]) -> tuple[str, ...]:
             errors.append(f"{mode}-review-has-remediation-scope")
         if _sequence(record.get("lead_verification")) not in ((), []):
             errors.append(f"{mode}-review-has-lead-verification")
-    elif mode == "remediation":
-        errors.extend(_correction_errors(record, require_all_resolved=False))
+    elif mode in {"remediation", "founder-requested"}:
+        errors.extend(_correction_errors(record, require_all_resolved=mode == "founder-requested"))
     elif mode == "material-redesign":
         material = set(
             _strict_strings(record, "material_change_categories", errors, allow_empty=False)
@@ -886,7 +956,7 @@ def select_review_action(record: Mapping[str, object]) -> ReviewDecision:
             reason_codes=errors,
             next_step="implementation-audit-repair",
         )
-    if normalized_mode in {"design", "initial", "material-redesign"}:
+    if normalized_mode in {"design", "initial", "material-redesign", "founder-requested"}:
         return ReviewDecision(
             status="ready",
             review_sequence_id=normalized_sequence_id,
@@ -962,7 +1032,9 @@ def triage_errors(record: Mapping[str, object]) -> tuple[str, ...]:
     if incomplete:
         errors.append("incomplete-invariant-proof")
 
-    if mode in {"design", "initial"}:
+    if mode in {"design", "initial"} or (
+        mode == "founder-requested" and not record.get("remediated_finding_ids")
+    ):
         for field in (
             "remediated_finding_ids",
             "resolved_finding_ids",
@@ -974,8 +1046,8 @@ def triage_errors(record: Mapping[str, object]) -> tuple[str, ...]:
             errors.append(f"{mode}-review-has-remediation-scope")
         if _sequence(record.get("lead_verification")) not in ((), []):
             errors.append(f"{mode}-review-has-lead-verification")
-    elif mode == "remediation":
-        errors.extend(_correction_errors(record, require_all_resolved=False))
+    elif mode in {"remediation", "founder-requested"}:
+        errors.extend(_correction_errors(record, require_all_resolved=mode == "founder-requested"))
     elif mode == "material-redesign":
         material = set(
             _strict_strings(record, "material_change_categories", errors, allow_empty=False)
@@ -1011,7 +1083,7 @@ def select_triage_action(record: Mapping[str, object]) -> TriageDecision:
             reason_codes=errors,
             next_step="implementation-audit-repair",
         )
-    if normalized_mode in {"design", "initial", "material-redesign"}:
+    if normalized_mode in {"design", "initial", "material-redesign", "founder-requested"}:
         return TriageDecision(
             status="ceremony-required",
             review_sequence_id=normalized_sequence_id,

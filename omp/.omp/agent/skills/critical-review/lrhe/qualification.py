@@ -283,7 +283,7 @@ class ConditionalPolicy:
 FABLE_ARCHITECTURE_SYNTHESIS_V2 = ConditionalPolicy(
     policy="fable-non-security-architecture-v1",
     required_scope="non-security-architecture",
-    allowed_review_modes=("design", "initial", "material-redesign"),
+    allowed_review_modes=("design", "initial", "material-redesign", "founder-requested"),
     activation_risk_domains=(
         "architecture",
         "cache-invalidation",
