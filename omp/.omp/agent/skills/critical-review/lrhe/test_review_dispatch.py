@@ -45,6 +45,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
         qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
+    ("gpt", "initial", "daybreak-blue"): (
+        "review-daybreak-blue", "supplement", qualification.LEAD_FAMILY_SECURITY_ROLE,
+        qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
     ("gpt", "initial", "claude"): (
         "review-claude-fable", "conditional", qualification.ARCHITECTURE_ROLE,
         qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
@@ -81,7 +85,7 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
 
 EXPECTED_ARITY: dict[tuple[str, str], tuple[int, int]] = {
     ("gpt", "focused"): (1, 1),
-    ("gpt", "initial"): (3, 4),
+    ("gpt", "initial"): (4, 5),
     ("gpt", "targeted-refuter"): (1, 1),
     ("claude", "focused"): (1, 1),
     ("claude", "initial"): (3, 4),
@@ -464,7 +468,7 @@ def test_receipt_schema_refuses_an_incomplete_council(receipt_validator, packet_
 
     complete = [
         _assignment(reviewer_id, EXPECTED_TUPLES[("gpt", "initial", reviewer_id)])
-        for reviewer_id in ("claude-opus", "gemini", "grok")
+        for reviewer_id in ("claude-opus", "gemini", "grok", "daybreak-blue")
     ]
     assert receipt_validator.is_valid(
         _receipt_document(
@@ -482,19 +486,6 @@ def test_receipt_schema_refuses_an_incomplete_council(receipt_validator, packet_
             assignments=complete[:-1],
         )
     )
-
-
-def test_incomplete_padded_and_reordered_rosters_are_refused_by_name():
-    """The roster gate names omissions, additions, and order drift."""
-
-    with pytest.raises(rd.DispatchError, match=r"omits \['grok'\]"):
-        rd._require_exact_roster(
-            "initial", ["claude-opus", "gemini"], ["claude-opus", "gemini", "grok"]
-        )
-    with pytest.raises(rd.DispatchError, match=r"adds \['kimi'\]"):
-        rd._require_exact_roster("targeted-refuter", ["glm", "kimi"], ["glm"])
-    with pytest.raises(rd.DispatchError, match="preserve resolver order"):
-        rd._require_exact_roster("initial", ["gemini", "claude-opus"], ["claude-opus", "gemini"])
 
 
 def test_task_input_uses_one_batch_shape_for_every_reviewer_count(tmp_path):

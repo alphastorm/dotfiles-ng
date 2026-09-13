@@ -775,6 +775,7 @@ def _qualification(path: Path, selector: str) -> None:
                 family: {
                     "strongCritic": [],
                     "supplements": [],
+                    "leadFamilySecurity": [],
                     "architectureSpecialists": [],
                 }
                 for family in ("gpt", "claude")
@@ -1851,11 +1852,13 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
         "gpt": {
             "strongCritic": ["claude-opus"],
             "supplements": ["gemini", "grok"],
+            "leadFamilySecurity": ["daybreak-blue"],
             "architectureSpecialists": ["claude"],
         },
         "claude": {
             "strongCritic": ["daybreak-blue"],
             "supplements": ["gemini", "grok"],
+            "leadFamilySecurity": [],
             "architectureSpecialists": ["claude"],
         },
     }

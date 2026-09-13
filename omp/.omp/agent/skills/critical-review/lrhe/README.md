@@ -279,7 +279,7 @@ reviewer ids may deliberately share one lineage, so joining on family would sile
 merge distinct configured lanes.
 
 Standing is lead-relative rather than reviewer-intrinsic. Only GPT and Claude
-profiles exist, and each has three concepts:
+profiles exist, and each has four explicit groups:
 
 - strongCritic selects one reciprocal cross-family independent reviewer: Opus
   through the CVP-approved route for a GPT lead, or Daybreak Blue for a Claude
@@ -287,13 +287,17 @@ profiles exist, and each has three concepts:
 - supplements selects Gemini 3.8 Flash and Grok 4.6 on every full council. Both
   are cross-family supplemental evidence; Gemini supplies a fast sanity pass and
   Grok supplies cheap decorrelated coverage;
+- leadFamilySecurity selects the qualified Daybreak security lane for GPT full
+  councils only, as same_lineage_blind_sample and supplemental_evidence. It reuses
+  the existing qualified scope and exact model/access contract, not a new canary;
 - architectureSpecialists is record-selected. Fable is default-on for eligible
   design, architecture-heavy initial, and material-redesign councils, but always
   carries supplemental authority. Its independence_class still records whether
   its Claude lineage matches the lead.
 
-No same-family security specialist runs by default: the accountable lead already
-supplies that family. Reviewer entries carry identity, transport, qualification,
+The explicit security group never replaces the reciprocal strong critic or
+weakens the cross-family ordinary-supplement rule. Reviewer entries carry
+identity, transport, qualification,
 and capability evidence, while the resolver derives role, independence_class,
 and authority from the selected profile. Every live row uses task_agent and the
 same atomic Task envelope; OMP owns provider credentials and account rotation.
@@ -335,11 +339,13 @@ Conflating experiment membership with live dispatch turns evaluation lanes into
 unapproved reviewers and makes independent roles look like votes. `panels.yaml`
 therefore owns experiments only; `qualification.yml` owns live dispatch.
 
-qualification.py fails closed unless schema version 9, panel v6, exactly the GPT
+qualification.py fails closed unless schema version 10, panel v7, exactly the GPT
 and Claude lead profiles, one strong critic, nonempty supplements,
 dispatch/evaluation flags, canary results, read-only proof, agents, and selectors
 are internally consistent. Each profile rejects a same-family strong critic or
-supplement, duplicate memberships, and an unavailable strong floor. Fable proves
+supplement, duplicate memberships, and an unavailable strong floor. The explicit
+lead-family security group requires matching lineage, the security lens, and the
+existing passed provider/schema/read-only qualification gates. Fable proves
 the common schema/read-only gates and one passed non-security architecture scope
 with a current cohort or a validated model-upgrade standing amendment.
 targeted-refuter returns only its separately configured global pool.

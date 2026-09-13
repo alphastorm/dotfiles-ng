@@ -126,22 +126,25 @@ artifacts, or proof receipts into the runtime diagnosis harness.
 
 ### Pragmatic full-council composition
 
-The resolver uses three profile groups, not one role per model:
+The resolver uses four explicit profile groups, not one role per model:
 
 | Group | GPT lead | Claude lead | Standing |
 |---|---|---|---|
 | strongCritic | Opus 5 through the CVP-approved route | Daybreak Blue | reciprocal cross-family independent evidence |
 | supplements | Gemini 3.8 Flash and Grok 4.6 | Gemini 3.8 Flash and Grok 4.6 | always-on cross-family supplemental evidence |
+| leadFamilySecurity | qualified Daybreak Blue | none configured | always-on same-lineage blind sample; supplemental evidence only |
 | architectureSpecialists | Fable 5.1 when eligible | Fable 5.1 when eligible | record-selected supplemental architecture synthesis |
 
 The strong critic and supplements must be pairwise distinct by model family and
 correlation group. Fable may intentionally share a lineage because its standing
 is always supplemental.
 
-The accountable lead already supplies its own family, so no same-family security
-specialist runs by default. A future route-specific capability may justify one,
-for example Opus CVP when a Claude lead lacks CVP access, but that requires an
-explicit authority change rather than another permanent roster group.
+GPT full councils include Daybreak through the explicit leadFamilySecurity group,
+reusing its qualified security scope and exact model/access contract. Its
+same_lineage_blind_sample and supplemental_evidence standing never supplies
+independent assurance, replaces Opus, or relaxes the cross-family rules for
+ordinary supplements. No same-family security lane is configured for Claude.
+Focused reciprocal critics and the targeted-refuter pool are unchanged.
 
 ChatGPT Pro Web through pinned pi-oracle is an asynchronous shadow on every full
 council, outside the resolver roster. It has no council standing, never blocks

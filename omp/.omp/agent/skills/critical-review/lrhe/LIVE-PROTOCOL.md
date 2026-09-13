@@ -39,7 +39,7 @@ reviewer prose:
   and claude profiles exist; Gemini and Grok cannot drive a council;
 - strongCritic selects exactly one reciprocal cross-family assurance anchor:
   Opus CVP for a GPT lead or Daybreak Blue for a Claude lead;
-- supplements selects Gemini 3.7 Flash and Grok 4.6 on every full council.
+- supplements selects Gemini 3.8 Flash and Grok 4.6 on every full council.
   They are cross-family supplemental evidence: useful for fast sanity and cheap
   decorrelation, but unable to rescue the independent floor or break a dispute.
   The strong critic and supplements are pairwise distinct by model family and
@@ -47,9 +47,12 @@ reviewer prose:
 - architectureSpecialists is additive and record-selected. Eligible Fable is
   supplemental whether cross-family or same-lineage, and its absence never
   shrinks the unconditional council;
-- no same-family security specialist runs by default. The accountable lead
-  already supplies that lineage. A concrete route capability requires a future
-  explicit authority change rather than another permanent role group;
+- leadFamilySecurity explicitly selects qualified Daybreak Blue on every GPT
+  full council, with same_lineage_blind_sample and supplemental_evidence standing.
+  This reuses its existing security qualification and exact model/access profile;
+  it never substitutes for Opus or becomes a same-family ordinary supplement.
+  The Claude profile has no lead-family security member; focused reciprocal
+  critics and targeted refuters are unchanged;
 - ChatGPT Pro Web through pi-oracle remains outside liveDispatch but is attempted
   asynchronously for every full council. The separate oracleShadow authority has
   no standing and no effect on closure, retries, or reviewer substitution. It is
@@ -62,7 +65,7 @@ reviewer prose:
 Before dispatch, in addition to the hosted-material floor in `SKILL.md`:
 
 1. Read skill://critical-review/qualification.yml. A reviewer is enabled only when its reviewer_id is in the selected profile or required global group, dispatchEnabled is true, its canary and read-only gates pass, and its exact selector resolves. Fable additionally needs a passed scope receipt for the requested architecture domain.
-2. For ordinary cloud-permitted work, populate `provider_data_allowlist` and `reviewer_access_profile_allowlist` from the complete deterministic candidate set for the selected class and lead-family profile. Match access_profile, not provider_route. An explicit provider restriction may only narrow those generated grants; it never triggers Ask or model substitution. A missing generated grant on the strong critic or an always-on supplement fails resolution; a record-selected architecture specialist is skipped with every reason recorded.
+2. For ordinary cloud-permitted work, populate `provider_data_allowlist` and `reviewer_access_profile_allowlist` from the complete deterministic candidate set for the selected class and lead-family profile. Match access_profile, not provider_route. An explicit provider restriction may only narrow those generated grants; it never triggers Ask or model substitution. A missing generated grant on the strong critic, an always-on supplement, or lead-family security fails resolution; a record-selected architecture specialist is skipped with every reason recorded.
 
 A missing, disabled, timed-out, schema-invalid, restricted, or unqualified reviewer is missing, never approved. Do not substitute another model or ask the user to pick one. An architecture specialist the resolver did not select is not_selected/ineligible. Any selected supplemental_evidence row remains additive: it cannot rescue the independent floor, break a disagreement, or earn a retry that the strong critic would not get.
 

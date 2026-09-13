@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Fail-closed reader for lead-relative critical-review qualification.
 
-Schema v9 selects one live profile for one of two qualified accountable lead
-families: GPT/ChatGPT or Claude. Each profile has exactly three concepts:
-strongCritic, always-on supplements, and record-selected
+Schema v10 selects one live profile for one of two qualified accountable lead
+families: GPT/ChatGPT or Claude. Each profile declares strongCritic, always-on
+supplements, explicit leadFamilySecurity, and record-selected
 architectureSpecialists. The strong critic is reciprocal cross-family
 independent evidence. Gemini Flash and Grok are cross-family supplemental
-evidence. Eligible Fable architecture synthesis is always supplemental, with
-lead-relative lineage recorded honestly.
+evidence. Qualified lead-family security is a same-lineage blind sample, never
+an independent anchor. Eligible Fable architecture synthesis is always
+supplemental, with lead-relative lineage recorded honestly.
 
 Reviewer identity is not model lineage. The reviewers mapping key is the
 reviewer_id, the only join key for manifests, dispatch, and findings.
@@ -69,11 +70,11 @@ from review_sequence import (
     select_review_action,
 )
 
-SCHEMA_VERSION = 9
-# Pinned beside the schema version so activation is atomic: a v9 resolver and
-# v6 panel definition cannot half-agree about lead eligibility or reviewer tiers.
-LIVE_PANEL_ID = "critical-review-primary-v6"
-MANIFEST_SCHEMA_VERSION = 8
+SCHEMA_VERSION = 10
+# Pinned beside the schema version so activation is atomic: a v10 resolver and
+# v7 panel definition cannot half-agree about lead eligibility or reviewer tiers.
+LIVE_PANEL_ID = "critical-review-primary-v7"
+MANIFEST_SCHEMA_VERSION = 9
 DEFAULT_QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
 # The manifest records which resolver bytes produced its roster. This is
 # provenance for later audit and re-resolution, not a caller-selectable authority:
@@ -85,6 +86,7 @@ READ_ONLY_REPOSITORY_TOOLS = ("read", "grep", "glob", "lsp", "ast_grep")
 
 STRONG_ROLE = "strong_critic"
 SUPPLEMENT_ROLE = "supplement"
+LEAD_FAMILY_SECURITY_ROLE = "lead_family_security"
 ARCHITECTURE_ROLE = "architecture_specialist"
 DISABLED_ROLE = "disabled"
 
@@ -107,6 +109,7 @@ NO_LIVE_AUTHORITY = "no_live_authority"
 LIVE_ROLES: Mapping[str, tuple[str, str]] = {
     STRONG_ROLE: (CROSS_FAMILY, INDEPENDENT_EVIDENCE),
     SUPPLEMENT_ROLE: (CROSS_FAMILY, SUPPLEMENTAL_EVIDENCE),
+    LEAD_FAMILY_SECURITY_ROLE: (SAME_LINEAGE_BLIND_SAMPLE, SUPPLEMENTAL_EVIDENCE),
     ARCHITECTURE_ROLE: (CROSS_FAMILY, SUPPLEMENTAL_EVIDENCE),
     "targeted_refuter": (CROSS_FAMILY, INDEPENDENT_EVIDENCE),
     "evaluation_only": (NO_LINEAGE_CLAIM, NO_LIVE_AUTHORITY),
@@ -117,12 +120,13 @@ LEAD_RELATIVE_SUPPLEMENTAL_ROLES = frozenset({ARCHITECTURE_ROLE})
 LIVE_GROUPS: Mapping[str, tuple[str, bool]] = {
     "strongCritic": (STRONG_ROLE, True),
     "supplements": (SUPPLEMENT_ROLE, True),
+    "leadFamilySecurity": (LEAD_FAMILY_SECURITY_ROLE, True),
     "architectureSpecialists": (ARCHITECTURE_ROLE, True),
     "targetedRefuters": ("targeted_refuter", True),
     "evaluationOnly": ("evaluation_only", False),
     "disabled": (DISABLED_ROLE, False),
 }
-PROFILE_GROUPS = ("strongCritic", "supplements", "architectureSpecialists")
+PROFILE_GROUPS = ("strongCritic", "supplements", "leadFamilySecurity", "architectureSpecialists")
 GLOBAL_GROUPS = ("targetedRefuters", "evaluationOnly", "disabled")
 CROSS_FAMILY_GROUPS = ("strongCritic", "supplements", "targetedRefuters")
 ORACLE_SHADOW_FIELDS = frozenset(
@@ -215,6 +219,7 @@ SECURITY_SENSITIVE_PATH = re.compile(SECURITY_PATH_PATTERN)
 MANIFEST_MODES = ("initial", "targeted-refuter")
 STRONG_REASON_CODE = "configured-strong-critic"
 SUPPLEMENT_REASON_CODE = "configured-supplement"
+LEAD_FAMILY_SECURITY_REASON_CODE = "configured-lead-family-security"
 ARCHITECTURE_DESIGN_REASON_CODE = "architecture-design-council"
 ARCHITECTURE_INITIAL_REASON_CODE = "architecture-material"
 ARCHITECTURE_REDESIGN_REASON_CODE = "architecture-material-redesign"
@@ -222,6 +227,7 @@ TARGETED_REFUTER_REASON_CODE = "configured-targeted-refuter"
 SELECTION_REASON_CODES = (
     STRONG_REASON_CODE,
     SUPPLEMENT_REASON_CODE,
+    LEAD_FAMILY_SECURITY_REASON_CODE,
     ARCHITECTURE_DESIGN_REASON_CODE,
     ARCHITECTURE_INITIAL_REASON_CODE,
     ARCHITECTURE_REDESIGN_REASON_CODE,
@@ -231,6 +237,7 @@ SELECTION_CLASSES = ("strong", "supplement", "conditional", "targeted")
 SELECTABLE_ROLES = (
     STRONG_ROLE,
     SUPPLEMENT_ROLE,
+    LEAD_FAMILY_SECURITY_ROLE,
     ARCHITECTURE_ROLE,
     "targeted_refuter",
 )
@@ -801,7 +808,9 @@ def validate_qualification(document: object) -> Mapping[str, object]:
     memberships: dict[str, set[str]] = {}
     for lead_family, groups in profile_groups.items():
         seen: dict[str, str] = {}
-        active_profile = bool(groups["strongCritic"] or groups["supplements"])
+        active_profile = bool(
+            groups["strongCritic"] or groups["supplements"] or groups["leadFamilySecurity"]
+        )
         if active_profile and len(groups["strongCritic"]) != 1:
             raise QualificationError(
                 f"liveDispatch.byLeadFamily.{lead_family}.strongCritic must select "
@@ -834,6 +843,17 @@ def validate_qualification(document: object) -> Mapping[str, object]:
                         f"the accountable lead's own lineage; "
                         f"liveDispatch.byLeadFamily.{lead_family}.{group} must be cross-family"
                     )
+                if group == "leadFamilySecurity":
+                    if model_family != lead_family:
+                        raise QualificationError(
+                            f"liveDispatch.byLeadFamily.{lead_family}.{group} must use "
+                            "the accountable lead's own lineage"
+                        )
+                    if entries[reviewer_id].get("lens") != "security":
+                        raise QualificationError(
+                            f"reviewers.{reviewer_id}.lens must be 'security' in "
+                            f"liveDispatch.byLeadFamily.{lead_family}.{group}"
+                        )
                 if identity["execution_mode"] != "task_agent":
                     raise QualificationError(
                         f"reviewers.{reviewer_id}.execution_mode must be 'task_agent' in "
@@ -1541,9 +1561,13 @@ def select_full_council(
     for reviewer in strong:
         _require_packet_authorization(reviewer, packet)
         selected.append(_selected(reviewer, "strong", (STRONG_REASON_CODE,)))
-    for reviewer in profile_reviewers(document, lead_family, "supplements"):
-        _require_packet_authorization(reviewer, packet)
-        selected.append(_selected(reviewer, "supplement", (SUPPLEMENT_REASON_CODE,)))
+    for group, reason_code in (
+        ("supplements", SUPPLEMENT_REASON_CODE),
+        ("leadFamilySecurity", LEAD_FAMILY_SECURITY_REASON_CODE),
+    ):
+        for reviewer in profile_reviewers(document, lead_family, group):
+            _require_packet_authorization(reviewer, packet)
+            selected.append(_selected(reviewer, "supplement", (reason_code,)))
 
     sources = packet_paths(packet)
     for candidate in architecture_specialists(document, lead_family):

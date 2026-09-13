@@ -49,6 +49,7 @@ import canary  # noqa: E402
 import run_review  # noqa: E402
 from qualification import (  # noqa: E402
     ARCHITECTURE_ROLE,
+    LEAD_FAMILY_SECURITY_ROLE,
     STRONG_ROLE,
     SUPPLEMENT_ROLE,
     CONDITIONAL_POLICIES,
@@ -389,7 +390,7 @@ def check_model_selectors() -> Result:
 
 PROBE_ROLE_SUCCESSORS = {
     "primary_critic": {STRONG_ROLE, SUPPLEMENT_ROLE},
-    "security_specialist": {STRONG_ROLE},
+    "security_specialist": {STRONG_ROLE, LEAD_FAMILY_SECURITY_ROLE},
     "conditional_critic": {ARCHITECTURE_ROLE},
 }
 

@@ -1161,7 +1161,7 @@ def _daybreak_entry(*, enabled: bool) -> dict:
 
 
 def _panel(with_conditional: bool = True) -> dict:
-    """One synthetic v9 matrix for the two qualified lead families."""
+    """One synthetic v10 matrix for the two qualified lead families."""
 
     reviewers = {
         "claude-opus": _unconditional_entry(
@@ -1200,11 +1200,13 @@ def _panel(with_conditional: bool = True) -> dict:
         "gpt": {
             "strongCritic": ["claude-opus"],
             "supplements": ["gemini", "grok"],
+            "leadFamilySecurity": ["daybreak-blue"],
             "architectureSpecialists": ["claude"] if with_conditional else [],
         },
         "claude": {
             "strongCritic": ["daybreak-blue"],
             "supplements": ["gemini", "grok"],
+            "leadFamilySecurity": [],
             "architectureSpecialists": ["claude"] if with_conditional else [],
         },
     }
@@ -1462,11 +1464,13 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
         "gpt": {
             "strongCritic": ["claude-opus"],
             "supplements": ["gemini", "grok"],
+            "leadFamilySecurity": ["daybreak-blue"],
             "architectureSpecialists": ["claude"],
         },
         "claude": {
             "strongCritic": ["daybreak-blue"],
             "supplements": ["gemini", "grok"],
+            "leadFamilySecurity": [],
             "architectureSpecialists": ["claude"],
         },
     }
@@ -1498,7 +1502,7 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
     )
 
 
-@pytest.mark.parametrize("group", ("strongCritic", "targetedRefuters"))
+@pytest.mark.parametrize("group", ("strongCritic", "supplements", "targetedRefuters"))
 def test_qualification_rejects_the_lead_lineage_as_an_independent_reviewer(
     group: str,
 ) -> None:
@@ -1508,7 +1512,7 @@ def test_qualification_rejects_the_lead_lineage_as_an_independent_reviewer(
     lead_family = "gpt"
     members = (
         document["liveDispatch"]["byLeadFamily"][lead_family][group]
-        if group == "strongCritic"
+        if group != "targetedRefuters"
         else document["liveDispatch"][group]
     )
     document["reviewers"][members[0]]["model_family"] = lead_family
@@ -1589,18 +1593,14 @@ def test_strong_critic_and_supplements_are_pairwise_decorrelated(field: str) -> 
         validate_qualification(document)
 
 
-def test_same_family_security_reviewers_are_not_in_the_default_roster() -> None:
+def test_lead_family_security_requires_matching_lineage_and_security_lens() -> None:
     document = _panel()
-    gpt_profile = document["liveDispatch"]["byLeadFamily"]["gpt"]
-    claude_profile = document["liveDispatch"]["byLeadFamily"]["claude"]
-    assert "daybreak-blue" not in {
-        reviewer for group in qualification.PROFILE_GROUPS for reviewer in gpt_profile[group]
-    }
-    assert "claude-opus" not in {
-        reviewer for group in qualification.PROFILE_GROUPS for reviewer in claude_profile[group]
-    }
-    gpt_profile["strongCritic"] = ["daybreak-blue"]
+    document["reviewers"]["daybreak-blue"]["model_family"] = "gemini"
     with pytest.raises(QualificationError, match="accountable lead's own lineage"):
+        validate_qualification(document)
+    document = _panel()
+    document["reviewers"]["daybreak-blue"]["lens"] = "whole_repo"
+    with pytest.raises(QualificationError, match="lens must be 'security'"):
         validate_qualification(document)
 
 
@@ -1663,10 +1663,11 @@ def test_retired_profile_binding_cannot_reenter_native_task_dispatch() -> None:
 
 def test_safe_architecture_record_selects_the_full_pragmatic_council(tmp_path: Path) -> None:
     manifest = _resolve(tmp_path, _ready_record(tmp_path / "safe"))
-    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "claude"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "daybreak-blue", "claude"]
     assert manifest["skipped"] == []
     assert [entry["selectionClass"] for entry in manifest["selected"]] == [
         "strong",
+        "supplement",
         "supplement",
         "supplement",
         "conditional",
@@ -1706,7 +1707,7 @@ def test_security_domains_skip_only_fable(tmp_path: Path, domain: str) -> None:
     record = _with_domains(_ready_record(tmp_path / "denied"), [domain])
     _remint_receipt(record)
     manifest = _resolve(tmp_path, record)
-    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "daybreak-blue"]
     assert _reviewer_ids(manifest, "skipped") == ["claude"]
     assert "security-risk-domain" in manifest["skipped"][0]["reasonCodes"]
 
@@ -1717,7 +1718,7 @@ def test_unqualified_architecture_adjacent_domains_skip_fable(
 ) -> None:
     record = _with_domains(_ready_record(tmp_path / "broad"), [domain])
     manifest = _resolve(tmp_path, record)
-    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "daybreak-blue"]
     assert _reviewer_ids(manifest, "skipped") == ["claude"]
     assert manifest["skipped"][0]["reasonCodes"] == ["architecture-scope-absent"]
 
@@ -1725,7 +1726,7 @@ def test_unqualified_architecture_adjacent_domains_skip_fable(
 def test_one_denied_domain_beside_safe_domains_still_skips_fable(tmp_path: Path) -> None:
     record = _with_domains(_ready_record(tmp_path / "mixed"), ["architecture", "privacy"])
     manifest = _resolve(tmp_path, record)
-    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "daybreak-blue"]
     assert _reviewer_ids(manifest, "skipped") == ["claude"]
 
 
@@ -1803,7 +1804,7 @@ def test_targeted_refuter_resolution_never_contains_council_supplements() -> Non
 @pytest.mark.parametrize(
     ("lead_family", "expected", "architecture_independence"),
     (
-        ("gpt", ["claude-opus", "gemini", "grok", "claude"], qualification.CROSS_FAMILY),
+        ("gpt", ["claude-opus", "gemini", "grok", "daybreak-blue", "claude"], qualification.CROSS_FAMILY),
         (
             "claude",
             ["daybreak-blue", "gemini", "grok", "claude"],
@@ -1834,8 +1835,17 @@ def test_lead_family_matrix_derives_pragmatic_roster_and_standing(
     assert all(
         (entry["selectionClass"], entry["role"], entry["authority"])
         == ("supplement", qualification.SUPPLEMENT_ROLE, qualification.SUPPLEMENTAL_EVIDENCE)
-        for entry in rest[:-1]
+        for entry in rest[:2]
     )
+    if lead_family == "gpt":
+        security = rest[2]
+        assert security["reviewer_id"] == "daybreak-blue"
+        assert (security["selectionClass"], security["role"],
+                security["independence_class"], security["authority"]) == (
+            "supplement", qualification.LEAD_FAMILY_SECURITY_ROLE,
+            qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
+        )
+        assert security["reasonCodes"] == [qualification.LEAD_FAMILY_SECURITY_REASON_CODE]
     architecture = rest[-1]
     assert architecture["role"] == qualification.ARCHITECTURE_ROLE
     assert architecture["authority"] == qualification.SUPPLEMENTAL_EVIDENCE
@@ -1882,7 +1892,7 @@ def test_task_reviewer_qualification_loads_without_transport_receipts(tmp_path: 
 
 def test_unconditional_council_survives_absent_fable(tmp_path: Path) -> None:
     manifest = _resolve(tmp_path, _ready_record(tmp_path / "nofable"), _panel(False))
-    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "daybreak-blue"]
     assert manifest["skipped"] == []
 
 
@@ -1972,7 +1982,7 @@ def test_resolver_cli_persists_exactly_the_manifest_it_prints(tmp_path: Path, ca
     printed = capsys.readouterr().out
     assert out.read_text(encoding="utf-8") == printed
     manifest = json.loads(printed)
-    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "claude"]
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "daybreak-blue", "claude"]
 
     # A second resolution never silently replaces the roster that was dispatched.
     with pytest.raises(SystemExit):

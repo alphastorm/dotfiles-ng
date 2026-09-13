@@ -1042,9 +1042,8 @@ def class_candidates(
             ),
             *(
                 _standing(lead_family, INITIAL, reviewer, "supplement")
-                for reviewer in qualification.profile_reviewers(
-                    document, lead_family, "supplements"
-                )
+                for group in ("supplements", "leadFamilySecurity")
+                for reviewer in qualification.profile_reviewers(document, lead_family, group)
             ),
             *(
                 _standing(lead_family, INITIAL, critic.reviewer, "conditional")

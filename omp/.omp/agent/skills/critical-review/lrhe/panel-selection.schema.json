@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "lrhe/panel-selection.schema.json",
   "title": "Critical Review Panel Selection",
-  "description": "One resolver-owned council roster with one strong critic, always-on supplements, and record-selected architecture specialists.",
+  "description": "One resolver-owned council roster with one strong critic, cross-family supplements, explicitly qualified lead-family security, and record-selected architecture specialists.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -12,8 +12,8 @@
     "authoritySha256", "selected", "skipped"
   ],
   "properties": {
-    "schemaVersion": { "const": 8 },
-    "panelId": { "const": "critical-review-primary-v6" },
+    "schemaVersion": { "const": 9 },
+    "panelId": { "const": "critical-review-primary-v7" },
     "mode": { "enum": ["initial", "targeted-refuter"] },
     "leadFamily": { "enum": ["gpt", "claude"] },
     "reviewRecordPath": { "type": "string", "pattern": "^/" },
@@ -75,6 +75,7 @@
         "architecture-material-redesign",
         "architecture-scope-absent",
         "authorization-proof-applicable",
+        "configured-lead-family-security",
         "configured-strong-critic",
         "configured-supplement",
         "configured-targeted-refuter",
@@ -103,7 +104,7 @@
         "data_allowlist_key": { "type": "string", "minLength": 1 },
         "execution_mode": { "const": "task_agent" },
         "role": {
-          "enum": ["strong_critic", "supplement", "architecture_specialist", "targeted_refuter"]
+          "enum": ["strong_critic", "supplement", "lead_family_security", "architecture_specialist", "targeted_refuter"]
         },
         "independence_class": { "enum": ["cross_family", "same_lineage_blind_sample"] },
         "authority": { "enum": ["independent_evidence", "supplemental_evidence"] },
@@ -135,6 +136,17 @@
               "authority": { "const": "supplemental_evidence" },
               "selectionClass": { "const": "supplement" },
               "reasonCodes": { "items": { "const": "configured-supplement" } }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "role": { "const": "lead_family_security" } }, "required": ["role"] },
+          "then": {
+            "properties": {
+              "independence_class": { "const": "same_lineage_blind_sample" },
+              "authority": { "const": "supplemental_evidence" },
+              "selectionClass": { "const": "supplement" },
+              "reasonCodes": { "items": { "const": "configured-lead-family-security" } }
             }
           }
         },
