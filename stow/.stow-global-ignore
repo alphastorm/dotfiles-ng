@@ -5,3 +5,12 @@
 .*.example
 ^/@.*
 README.*
+
+# Stow never reads .gitignore, so a regenerable artifact left in a package is
+# still a link candidate: stow tries to install it, collides with the real copy
+# already in $HOME, and aborts the WHOLE package rather than that one path. A
+# `bun install` inside a folded .omp/plugins put 89MB of node_modules in
+# dotfiles-private and wedged `stow -R omp-private` on 244 conflicts.
+node_modules
+__pycache__
+.venv

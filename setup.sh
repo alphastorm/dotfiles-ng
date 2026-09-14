@@ -354,7 +354,13 @@ function stow_dotfiles() {
   #     harness from public, the corpus and answer key from private.
   #   - written by the OMP runtime: `profiles/audit/agent` holds agent.db,
   #     history.db, models.db and their WAL files. Fold it and OMP writes live
-  #     databases into .dotfiles-private on every run.
+  #     databases into .dotfiles-private on every run. `plugins` is the same
+  #     shape: only package.json, bun.lock and patches/ are tracked, and a
+  #     `bun install` drops an 89MB node_modules beside them. Folded, that
+  #     install lands inside the private checkout, and the next stow run tries
+  #     to link all 89MB back into $HOME, hits the real files already there,
+  #     and aborts the entire package. That is not hypothetical: it happened,
+  #     and it wedged `stow -R omp-private` until the tree was cleaned.
   #
   # `agent/agents` is deliberately NOT here. Nothing but agent definitions lives
   # in it and only the private package owns them, so letting it fold makes the
@@ -375,6 +381,7 @@ function stow_dotfiles() {
     "$HOME/.omp/agent/extensions" \
     "$HOME/.omp/agent/skills" \
     "$HOME/.omp/agent/skills/critical-review" \
+    "$HOME/.omp/plugins" \
     "$HOME/.omp/profiles/audit/agent"
   stow -S -t "$HOME" omp
 }
