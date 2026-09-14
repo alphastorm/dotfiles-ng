@@ -362,6 +362,13 @@ function stow_dotfiles() {
   # `omp agents unpack --user` from re-breaking stow: an unpacked file lands in
   # the private checkout as a visible, revertible diff instead of as a foreign
   # real file that stow refuses to overwrite and aborts the whole package on.
+  #
+  # `agent/managed-skills` is deliberately NOT here either, for the same reason.
+  # The agent's `manage_skill` tool is the only writer, and letting the directory
+  # fold means a newly minted or edited skill shows up as a diff in the private
+  # checkout instead of as an untracked file that is lost with the home
+  # directory. Pre-creating it would silently un-track every skill written after
+  # the next setup run.
   mkdir -p \
     "$HOME/.omp" \
     "$HOME/.omp/agent" \
