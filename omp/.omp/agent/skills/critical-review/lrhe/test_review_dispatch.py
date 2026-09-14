@@ -29,6 +29,30 @@ from test_review_sequence import _ready_record  # noqa: E402
 # (lead_family, review_class, reviewer_id) -> (agent, selectionClass, role,
 # independence_class, authority).
 EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
+    ("gpt", "canary", "claude-opus"): (
+        "review-claude-opus", "canary", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
+    ),
+    ("gpt", "canary", "gemini"): (
+        "review-gemini", "canary", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
+    ("gpt", "canary", "grok"): (
+        "review-grok", "canary", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
+    ("gpt", "canary", "daybreak-blue"): (
+        "review-daybreak-blue", "canary", qualification.LEAD_FAMILY_SECURITY_ROLE,
+        qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
+    ("gpt", "canary", "claude"): (
+        "review-claude-fable", "canary", qualification.ARCHITECTURE_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
+    ("gpt", "canary", "glm"): (
+        "review-glm-floor", "canary", "targeted_refuter",
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
+    ),
     ("gpt", "focused", "claude-opus"): (
         "review-claude-opus", "focused", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
@@ -55,6 +79,26 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
     ),
     ("gpt", "targeted-refuter", "glm"): (
         "review-glm-floor", "targeted", "targeted_refuter",
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
+    ),
+    ("claude", "canary", "daybreak-blue"): (
+        "review-daybreak-blue", "canary", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
+    ),
+    ("claude", "canary", "gemini"): (
+        "review-gemini", "canary", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
+    ("claude", "canary", "grok"): (
+        "review-grok", "canary", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
+    ("claude", "canary", "claude"): (
+        "review-claude-fable", "canary", qualification.ARCHITECTURE_ROLE,
+        qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
+    ("claude", "canary", "glm"): (
+        "review-glm-floor", "canary", "targeted_refuter",
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
     ("claude", "focused", "daybreak-blue"): (
@@ -84,9 +128,11 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
 }
 
 EXPECTED_ARITY: dict[tuple[str, str], tuple[int, int]] = {
+    ("gpt", "canary"): (1, 1),
     ("gpt", "focused"): (1, 1),
     ("gpt", "initial"): (4, 5),
     ("gpt", "targeted-refuter"): (1, 1),
+    ("claude", "canary"): (1, 1),
     ("claude", "focused"): (1, 1),
     ("claude", "initial"): (3, 4),
     ("claude", "targeted-refuter"): (1, 1),
@@ -849,6 +895,9 @@ def test_prepare_enforces_packet_only_evidence_end_to_end(tmp_path, material, au
     assert rd.main(prepare_args(inline_packet, complete)) == 0
     emitted = json.loads(capsys.readouterr().out)["task_input"]
     assert len(emitted["tasks"]) == 1
+    # Nothing is retrieved for a packet-only subject, so the retrieval directive
+    # would be an instruction about paths this reviewer must not open.
+    assert rd.BATCHED_RETRIEVAL_DIRECTIVE not in emitted["tasks"][0]["task"]
     assert all(path.is_file() for path in complete.values())
 
     envelope_sha256 = _digest(complete["envelope"].read_text(encoding="utf-8"))
@@ -1204,6 +1253,7 @@ def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):
     assert task.startswith(f"{rd.RECEIPT_MARKER}\n")
     assert f"subject_commit={repository['commit']}" in task
     assert f"repository_path={repository['path'].resolve()}" in task
+    assert rd.BATCHED_RETRIEVAL_DIRECTIVE in task
     assert f"independence_class={independence_class}" in task
     assert material["scope"].read_text(encoding="utf-8").rstrip("\n") in task
     assert material["packet"].read_text(encoding="utf-8").rstrip("\n") in task
@@ -1222,6 +1272,116 @@ def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):
         == 1
     )
     assert capsys.readouterr().out == ""
+
+
+def _canary_prepare_args(tmp_path, material, repository, *, reviewer: str | None = "gemini"):
+    paths = {
+        "subject": tmp_path / "frozen-subject.json",
+        "receipt": tmp_path / "resolver-receipt.json",
+        "envelope": tmp_path / "review-dispatch-envelope.json",
+    }
+    argv = [
+        "prepare",
+        "--scope",
+        str(material["scope"]),
+        "--packet",
+        str(material["packet"]),
+        "--repo",
+        str(repository["path"]),
+        "--commit",
+        repository["commit"],
+        "--file",
+        "src/dispatch.py",
+        "--lead-family",
+        "gpt",
+        "--review-class",
+        rd.CANARY,
+        "--subject",
+        str(paths["subject"]),
+        "--receipt",
+        str(paths["receipt"]),
+        "--out",
+        str(paths["envelope"]),
+    ]
+    if reviewer is not None:
+        argv += ["--reviewer", reviewer]
+    return paths, argv
+
+
+def test_canary_prepare_probes_one_named_lane(tmp_path, material, repository, capsys):
+    """A probe is one seat in its own selection class, disclosed, with no shadow."""
+
+    paths, argv = _canary_prepare_args(tmp_path, material, repository)
+    assert rd.main(argv) == 0
+    emitted = json.loads(capsys.readouterr().out)["task_input"]
+
+    receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
+    assert receipt["reviewClass"] == rd.CANARY
+    assert [row["reviewer_id"] for row in receipt["assignments"]] == ["gemini"]
+    assignment = receipt["assignments"][0]
+    agent, selection_class, role, independence_class, authority = EXPECTED_TUPLES[
+        ("gpt", "canary", "gemini")
+    ]
+    assert (
+        assignment["agent"],
+        assignment["selectionClass"],
+        assignment["role"],
+        assignment["independence_class"],
+        assignment["authority"],
+        assignment["reasonCodes"],
+    ) == (
+        agent,
+        selection_class,
+        role,
+        independence_class,
+        authority,
+        [rd.CANARY_REASON_CODE],
+    )
+
+    envelope = json.loads(paths["envelope"].read_text(encoding="utf-8"))
+    assert envelope["reviewClass"] == rd.CANARY
+    assert envelope["oracleShadow"] is None
+    assert len(emitted["tasks"]) == 1
+    task = emitted["tasks"][0]["task"]
+    assert f"review_class={rd.CANARY}" in task
+    assert rd.CANARY_PROBE_DISCLOSURE in task
+
+    envelope_sha256 = _digest(paths["envelope"].read_text(encoding="utf-8"))
+    assert (
+        rd.main(
+            [
+                "verify-task",
+                "--envelope",
+                str(paths["envelope"]),
+                "--sha256",
+                envelope_sha256,
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["task_input"] == emitted
+
+
+def test_canary_prepare_refuses_an_unconfigured_lane_a_record_and_no_lane(
+    tmp_path, material, repository
+):
+    """A probe names one configured lane and nothing else, and writes nothing when it cannot."""
+
+    paths, argv = _canary_prepare_args(tmp_path, material, repository, reviewer="minimax")
+    assert rd.main(argv) == 1
+    assert not any(path.exists() for path in paths.values())
+
+    record = tmp_path / "canary-record.json"
+    record.write_text('{"review_id": "probe"}\n', encoding="utf-8")
+    paths, argv = _canary_prepare_args(tmp_path, material, repository)
+    assert rd.main([*argv, "--record", str(record)]) == 1
+    assert not any(path.exists() for path in paths.values())
+
+    paths, argv = _canary_prepare_args(tmp_path, material, repository, reviewer=None)
+    with pytest.raises(SystemExit) as refusal:
+        rd.main(argv)
+    assert refusal.value.code == 2
+    assert not any(path.exists() for path in paths.values())
 
 
 def test_targeted_refuter_prepare_infers_the_fixed_pool(tmp_path, authority, repository, capsys):

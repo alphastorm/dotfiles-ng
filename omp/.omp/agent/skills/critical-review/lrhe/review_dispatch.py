@@ -100,17 +100,30 @@ WORKING_TREE_KIND = "working-tree"
 FOCUSED = "focused"
 INITIAL = "initial"
 TARGETED_REFUTER = "targeted-refuter"
-REVIEW_CLASSES = (FOCUSED, INITIAL, TARGETED_REFUTER)
+# A qualification canary probes one lane's boundary conduct -- read-only tools,
+# pinned served model, schema-valid terminal yield -- on a synthetic subject, so
+# a charter or model change can be re-evidenced through this gate instead of an
+# ungated spawn beside it. It resolves no council, binds no review record, and
+# grants nothing: the result is evidence about the lane, never about a change.
+CANARY = "canary"
+REVIEW_CLASSES = (CANARY, FOCUSED, INITIAL, TARGETED_REFUTER)
 # The two classes whose roster is the protocol's own, so the record's dispatch
 # gate decides whether they may run at all.
 RECORD_BOUND_CLASSES = (INITIAL, TARGETED_REFUTER)
 
-# `focused` is the one selection class this module adds to the resolver's
-# vocabulary, and only because a focused review is a single configured critic
-# dispatched outside a council -- it is neither unconditional council membership
-# nor a specialist seat nor a conditional lane.
+# `focused` and `canary` are the two selection classes this module adds to the
+# resolver's vocabulary, each because it dispatches one configured reviewer
+# outside a council -- neither is unconditional council membership, a specialist
+# seat, nor a conditional lane. A canary seat is named separately from a focused
+# one so a probe result can never be read back as a focused review.
 FOCUSED_SELECTION_CLASS = "focused"
-SELECTION_CLASSES = (FOCUSED_SELECTION_CLASS, *qualification.SELECTION_CLASSES)
+CANARY_SELECTION_CLASS = "canary"
+SELECTION_CLASSES = (
+    CANARY_SELECTION_CLASS,
+    FOCUSED_SELECTION_CLASS,
+    *qualification.SELECTION_CLASSES,
+)
+CANARY_REASON_CODE = "configured-qualification-canary"
 
 DISPATCH_MARKER = "CRITICAL_REVIEW_DISPATCH_V1"
 RECEIPT_MARKER = "CRITICAL_REVIEW_RESOLVER_RECEIPT_V1"
@@ -122,6 +135,24 @@ DISPATCH_TASK_INTENT = "Dispatching resolved reviewers"
 INLINE_EVIDENCE_FORMAT = "critical-review-complete-inline-evidence-v1"
 ORACLE_SHADOW_MARKER = "CRITICAL_REVIEW_ORACLE_SHADOW_V1"
 ORACLE_EVIDENCE_INCOMPATIBLE = "oracle_repository_evidence_required"
+
+# Named because it is an invariant of every repository assignment rather than a
+# stylistic note: a reviewer that spends one lookup per turn on a bound set of a
+# hundred paths pays hundreds of serial round trips, and the council waits for
+# all of them while the subject stays frozen.
+BATCHED_RETRIEVAL_DIRECTIVE = (
+    "Retrieve those bytes in as few turns as your claims require: request the independent "
+    "reads you already know you need in the same turn rather than one per turn, and prefer a "
+    "single whole-file or wide-range read over repeated narrow greps of the same path. Bounded "
+    "inspection governs which paths you open, never how many calls you spend opening them."
+)
+# A probe is disclosed to the reviewer it probes. Concealing it would measure
+# conduct under a belief the lane will never hold in production.
+CANARY_PROBE_DISCLOSURE = (
+    "This receipt resolves review_class=canary: a qualification probe of this lane's boundary "
+    "conduct on a synthetic subject. Review it exactly as you would a real subject. The result "
+    "is evidence about this lane, grants no dispatch authority, and enters no review ledger."
+)
 
 # The only tree entries a reviewer can be pointed at. A committed symlink is a
 # clean, immutable entry whose *target* is neither: following one would let a
@@ -1019,11 +1050,60 @@ def _standing(
     )
 
 
+def _canary_pool(
+    document: Mapping[str, object], lead_family: str
+) -> tuple[qualification.LiveReviewer, ...]:
+    """Every lane this lead family configures, once each, in profile order.
+
+    A probe measures one lane in the exact standing the authority already grants
+    it, so the pool is the union of the configured groups rather than a second
+    roster with roles of its own. A lane configured in two groups keeps the first
+    standing the profile gives it, which is the standing its council seat carries.
+    """
+
+    pool: dict[str, qualification.LiveReviewer] = {}
+    for reviewer in (
+        *qualification.strong_reviewers(document, lead_family),
+        *(
+            member
+            for group in ("supplements", "leadFamilySecurity")
+            for member in qualification.profile_reviewers(document, lead_family, group)
+        ),
+        *(
+            critic.reviewer
+            for critic in qualification.architecture_specialists(document, lead_family)
+        ),
+        *qualification.global_reviewers(document, "targetedRefuters", lead_family),
+    ):
+        pool.setdefault(reviewer.reviewer_id, reviewer)
+    return tuple(pool.values())
+
+
+def canary_reviewer(
+    document: Mapping[str, object], lead_family: str, reviewer_id: object
+) -> qualification.LiveReviewer:
+    """Resolve the one probed lane, or name every lane that could be probed."""
+
+    pool = _canary_pool(document, lead_family)
+    for reviewer in pool:
+        if reviewer.reviewer_id == reviewer_id:
+            return reviewer
+    raise DispatchError(
+        f"lead family {lead_family!r} configures no reviewer {reviewer_id!r} to probe; it "
+        f"configures {[item.reviewer_id for item in pool]}"
+    )
+
+
 def class_candidates(
     document: Mapping[str, object], lead_family: str, review_class: str
 ) -> tuple[Standing, ...]:
     """Return every reviewer one class may ever dispatch under one lead family."""
 
+    if review_class == CANARY:
+        return tuple(
+            _standing(lead_family, CANARY, reviewer, CANARY_SELECTION_CLASS)
+            for reviewer in _canary_pool(document, lead_family)
+        )
     if review_class == FOCUSED:
         reviewer = qualification.focused_reviewer(document, lead_family)
         return (_standing(lead_family, FOCUSED, reviewer, FOCUSED_SELECTION_CLASS),)
@@ -1064,7 +1144,7 @@ def roster_arity(
     else has one exact arity.
     """
 
-    if review_class == FOCUSED:
+    if review_class in (CANARY, FOCUSED):
         return 1, 1
     candidates = class_candidates(document, lead_family, review_class)
     if review_class == TARGETED_REFUTER:
@@ -1198,6 +1278,26 @@ def resolve_assignments(
             f"review class {review_class!r} is resolved from the frozen review record, so the "
             "subject must bind one; freeze it with --record"
         )
+
+    if review_class == CANARY:
+        if verified.record is not None:
+            raise DispatchError(
+                "a qualification canary binds no review record; it probes a lane, not a change"
+            )
+        if len(requested) != 1:
+            raise DispatchError(
+                f"a qualification canary probes exactly one reviewer; {list(requested)} names "
+                f"{len(requested)}"
+            )
+        reviewer = canary_reviewer(document, lead_family, requested[0])
+        _require_grants(reviewer, verified.packet)
+        assignments = (
+            _assignment(reviewer, CANARY_SELECTION_CLASS, (CANARY_REASON_CODE,)),
+        )
+        validate_evidence_compatibility(
+            subject, verified.packet, [item.evidence_delivery for item in assignments]
+        )
+        return assignments
 
     if review_class == FOCUSED:
         reviewer = qualification.focused_reviewer(document, lead_family)
@@ -1633,6 +1733,12 @@ def canonical_task_text(
     nothing can keep, so a reviewer handed one may read bytes nobody froze; a
     reviewer handed the bytes reads the subject. A repository subject also names
     its commit and its exact bound paths, which the commit does keep.
+
+    A repository assignment states how to retrieve those paths as well as which
+    ones. Nothing else tells a reviewer that, and a model that defaults to one
+    lookup per turn spends hundreds of round trips on a bound set two batched
+    turns would cover -- latency the council pays serially while the subject is
+    frozen.
     """
 
     if assignment.execution_mode != "task_agent":
@@ -1672,6 +1778,8 @@ def canonical_task_text(
             "",
             "Read no other path. The verified assurance scope and immutable packet below are "
             "the same bytes that were frozen with that commit.",
+            "",
+            BATCHED_RETRIEVAL_DIRECTIVE,
         ]
     else:
         target = [
@@ -1679,6 +1787,8 @@ def canonical_task_text(
             "Do not inspect any path: this subject is its bytes, and no repository epoch is "
             "bound to it.",
         ]
+    if receipt.review_class == CANARY:
+        target = [*target, "", CANARY_PROBE_DISCLOSURE]
     sections = [
         "\n".join(header),
         "",
@@ -2195,7 +2305,16 @@ def command_prepare(args: argparse.Namespace) -> str:
     else:
         if args.manifest is not None:
             raise DispatchError("only an initial council has a panel manifest")
-        if args.review_class == FOCUSED:
+        if args.review_class == CANARY:
+            if args.record is not None:
+                raise DispatchError(
+                    "a qualification canary binds no review record; it probes a lane, not a "
+                    "change"
+                )
+            reviewers = (
+                canary_reviewer(authority, args.lead_family, args.reviewer).reviewer_id,
+            )
+        elif args.review_class == FOCUSED:
             reviewers = (
                 qualification.focused_reviewer(authority, args.lead_family).reviewer_id,
             )
@@ -2359,6 +2478,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     prepare.add_argument(
         "--review-class", required=True, help=f"one of {', '.join(REVIEW_CLASSES)}"
     )
+    prepare.add_argument(
+        "--reviewer",
+        help=(
+            f"the one lane a {CANARY} probe dispatches; prohibited for every other review "
+            "class, whose roster is resolved and never chosen"
+        ),
+    )
     verify = commands.add_parser(
         "verify-task",
         help=(
@@ -2370,6 +2496,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     verify.add_argument("--sha256", required=True)
 
     args = parser.parse_args(argv)
+    if args.command == "prepare":
+        # Refused here, before any artifact exists: a caller who names the roster
+        # of a real review class has misunderstood the boundary, and the answer
+        # is a usage error rather than a half-written preparation.
+        if args.review_class == CANARY and not args.reviewer:
+            parser.error(f"--review-class {CANARY} requires --reviewer")
+        if args.review_class != CANARY and args.reviewer is not None:
+            parser.error(
+                f"--reviewer names the probed lane and is valid only for --review-class {CANARY}"
+            )
     handlers = {
         "prepare": command_prepare,
         "verify-task": command_verify_task,

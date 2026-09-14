@@ -59,7 +59,9 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,11 +79,13 @@ from jsonschema import Draft202012Validator
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
+import review_dispatch  # noqa: E402  -- needs the path above
 import run_review  # noqa: E402  -- needs the path above
 
 SKILL = Path.home() / ".omp/agent/skills/critical-review"
 AGENTS = Path.home() / ".omp/agent/agents"
 DATA = SKILL / "lrhe-data"
+REPOSITORY_PROBES = DATA / "repository-probes.yml"
 
 EXIT_OK = 0
 EXIT_FAILED = 10
@@ -1202,6 +1206,246 @@ def validate_trace_receipt(
     return receipt
 
 
+def _repository_probe(version: str) -> dict[str, Any]:
+    """Return one declared probe, or name the declared set instead of guessing."""
+
+    try:
+        document = yaml.safe_load(REPOSITORY_PROBES.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise TraceCanaryError(f"{REPOSITORY_PROBES} is unreadable: {exc}") from exc
+    probes = document.get("probes") if isinstance(document, dict) else None
+    if not isinstance(probes, dict):
+        raise TraceCanaryError(f"{REPOSITORY_PROBES} declares no probes mapping")
+    probe = probes.get(version)
+    if not isinstance(probe, dict) or not isinstance(probe.get("assignment"), str):
+        raise TraceCanaryError(
+            f"{REPOSITORY_PROBES} declares no probe {version!r}; it declares {sorted(probes)}"
+        )
+    return probe
+
+
+def _probe_git(repo: Path, *args: str) -> str:
+    try:
+        completed = subprocess.run(
+            ("git", "-C", str(repo), *args), capture_output=True, text=True, check=False
+        )
+    except OSError as exc:
+        raise TraceCanaryError(f"git is not runnable: {exc}") from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise TraceCanaryError(f"git {' '.join(args)} failed in {repo}: {detail}")
+    return completed.stdout
+
+
+def materialize_probe_subject(
+    workdir: Path, *, reviewer_id: str, lead_family: str, version: str, fixture: Path
+) -> dict[str, Any]:
+    """Build one immutable probe subject: fixture repository, scope, packet, descriptor.
+
+    The fixture is committed into a repository built here because freezing needs a
+    clean HEAD, and the tree a lead works in is never one. The packet carries the
+    probed lane's own two grants and nothing else, so a probe cannot transmit its
+    fixture to a lane nobody asked to measure.
+    """
+
+    entry = qualification_reviewers(load_qualification()).get(reviewer_id)
+    if not isinstance(entry, dict):
+        raise TraceCanaryError(f"qualification declares no reviewer {reviewer_id!r}")
+    probe = _repository_probe(version)
+    if not fixture.is_file():
+        raise TraceCanaryError(f"probe fixture is not readable: {fixture}")
+
+    repo = workdir / "repo"
+    repo.mkdir(parents=True)
+    bound = fixture.name
+    fixture_bytes = fixture.read_bytes()
+    (repo / bound).write_bytes(fixture_bytes)
+    _probe_git(repo, "init", "-q")
+    _probe_git(repo, "add", "--", bound)
+    _probe_git(
+        repo,
+        "-c",
+        "user.name=critical-review canary",
+        "-c",
+        "user.email=canary@localhost.invalid",
+        "commit",
+        "-q",
+        "-m",
+        f"probe fixture for {version}",
+    )
+    commit = _probe_git(repo, "rev-parse", "HEAD").strip()
+
+    descriptor = json.dumps(
+        {
+            "review_id": f"canary-{version}-{reviewer_id}",
+            "class": "qualification-canary",
+            "grantsDispatchAuthority": False,
+            "probeVersion": version,
+            "probeRole": probe.get("role"),
+            "fixtureSha256": hashlib.sha256(fixture_bytes).hexdigest(),
+            "reviewerId": reviewer_id,
+            "leadFamily": lead_family,
+        },
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+    record = workdir / "probe-descriptor.json"
+    _write_new(record, descriptor)
+
+    scope = workdir / "scope.md"
+    _write_new(
+        scope,
+        "\n".join(
+            (
+                "# Assurance scope",
+                f"Class: qualification canary for the {reviewer_id!r} lane under lead family "
+                f"{lead_family!r}.",
+                "Outcome: one trace receipt proving this lane's boundary conduct -- read-only "
+                "tools, the pinned served model, one schema-valid terminal response -- against "
+                "the declared probe fixture.",
+                "Asset: the qualification record's claim that this lane still behaves as "
+                "qualified after a charter or model change.",
+                "Adversary: none. The fixture is synthetic, non-secret, and committed for this "
+                "probe alone.",
+                "Caps: one reviewer, one bound path, one dispatch. The probe grants no dispatch "
+                "authority and its findings enter no review ledger.",
+                "Non-goals: council standing, evidence about any real change, and any claim "
+                "about review quality beyond this fixture.",
+                "Result validity: the receipt is evidence only for the exact charter bytes and "
+                f"selector this probe dispatched, under probe {version}.",
+                "",
+            )
+        ),
+    )
+
+    # The declared probe text names the fixture at its skill path, and the frozen
+    # subject is a copy of it at one bound repository-relative path. Left alone,
+    # the packet would instruct the reviewer to read a path the receipt forbids,
+    # so every path form naming this fixture is rebound to the bound name. A
+    # probe that never names its fixture is the wrong --fixture for it.
+    assignment, rebound = re.subn(rf"\S*{re.escape(bound)}", bound, probe["assignment"])
+    if not rebound:
+        raise TraceCanaryError(
+            f"probe {version!r} never names {bound!r}, so its instructions would send the "
+            "reviewer outside the bound subject"
+        )
+
+    packet = workdir / "packet.md"
+    body = {
+        "review_record_path": str(record),
+        "review_record_sha256": hashlib.sha256(descriptor.encode("utf-8")).hexdigest(),
+        "goal": f"Measure the {reviewer_id} lane's boundary conduct on the {version} fixture.",
+        "non_goals": ["council standing", "evidence about any real change"],
+        "requirements": [
+            "the reviewer reads only the bound fixture path",
+            "the reply validates against the reviewer's own output schema",
+        ],
+        "invariants": [
+            "a probe grants no dispatch authority",
+            "the served model equals the pinned selector",
+        ],
+        "trust_boundaries": ["lead to one hosted reviewer lane"],
+        "data_or_state_transitions": [
+            "none; the probe repository exists only for this dispatch",
+        ],
+        "rollback_contract": "discard the probe workdir; nothing outside it changed",
+        "compatibility_contract": "internal qualification evidence only",
+        "design_or_diff": assignment,
+        "known_open_questions": ["none"],
+        "rejected_alternatives_and_reasons": [
+            "spawning the reviewer beside the dispatch gate: it would leave the gate's "
+            "guarantee resting on an ungated path",
+        ],
+        "provider_data_allowlist": [entry["data_allowlist_key"]],
+        "reviewer_access_profile_allowlist": [entry["access_profile"]],
+    }
+    _write_new(packet, "# Packet\n\n```yaml\n" + yaml.safe_dump(body, sort_keys=True) + "```\n")
+
+    return {
+        "agent": entry["agent"],
+        "commit": commit,
+        "descriptor": record,
+        "evidence_delivery": entry.get("evidenceDelivery", "repository"),
+        "file": bound,
+        "fixture_sha256": hashlib.sha256(fixture_bytes).hexdigest(),
+        "packet": packet,
+        "repo": repo,
+        "scope": scope,
+        "selector": entry["model"],
+    }
+
+
+def cmd_trace_dispatch(args: argparse.Namespace) -> int:
+    """Materialize one probe subject and print its gated dispatch payload.
+
+    This command still opens no connection. It ends where every reviewer
+    dispatch ends: verifier-approved Task input the lead submits verbatim, so a
+    requalification probe crosses the same gate a council does instead of an
+    ungated spawn path beside it.
+    """
+
+    workdir = args.workdir
+    if workdir is None:
+        workdir = Path(
+            tempfile.mkdtemp(prefix=f"critical-review-canary-{args.reviewer}-")
+        )
+    try:
+        subject = materialize_probe_subject(
+            workdir,
+            reviewer_id=args.reviewer,
+            lead_family=args.lead_family,
+            version=args.probe,
+            fixture=args.fixture if args.fixture.is_absolute() else SKILL / args.fixture,
+        )
+    except (TraceCanaryError, OutputRefusal, OSError) as exc:
+        print(f"failed: {exc}", file=sys.stderr)
+        return EXIT_FAILED
+    print(
+        "\n".join(
+            (
+                f"probe workdir: {workdir}",
+                f"probe commit: {subject['commit']} ({subject['file']})",
+                f"fixture sha256: {subject['fixture_sha256']}",
+                f"lane: {subject['agent']} {subject['selector']} "
+                f"({subject['evidence_delivery']})",
+                "after the reviewer yields, derive the receipt with:",
+                f"  ./.venv/bin/python canary.py trace-receipt --trace <session.jsonl> "
+                f"--agent-definition {AGENTS / (str(subject['agent']) + '.md')} "
+                f"--agent {subject['agent']} --selector {subject['selector']} "
+                f"--evidence-delivery {subject['evidence_delivery']} --out <receipt.json>",
+            )
+        ),
+        file=sys.stderr,
+    )
+    return review_dispatch.main(
+        [
+            "prepare",
+            "--scope",
+            str(subject["scope"]),
+            "--packet",
+            str(subject["packet"]),
+            "--repo",
+            str(subject["repo"]),
+            "--commit",
+            str(subject["commit"]),
+            "--file",
+            str(subject["file"]),
+            "--lead-family",
+            args.lead_family,
+            "--review-class",
+            review_dispatch.CANARY,
+            "--reviewer",
+            args.reviewer,
+            "--subject",
+            str(workdir / "frozen-subject.json"),
+            "--receipt",
+            str(workdir / "resolver-receipt.json"),
+            "--out",
+            str(workdir / "review-dispatch-envelope.json"),
+        ]
+    )
+
+
 def cmd_trace_receipt(args: argparse.Namespace) -> int:
     try:
         receipt = capture_trace_receipt(
@@ -1296,6 +1540,33 @@ def main(argv: list[str] | None = None) -> int:
         help="versioned JSONL to append results to; never truncates an existing file",
     )
     grade.set_defaults(fn=cmd_grade)
+
+    dispatch = sub.add_parser(
+        "trace-dispatch",
+        help=(
+            "materialize one probe subject and print the gated Task input that probes one "
+            "reviewer lane through the dispatch gate"
+        ),
+    )
+    dispatch.add_argument("--reviewer", required=True, help="the one lane to probe")
+    dispatch.add_argument(
+        "--lead-family", required=True, help="accountable lead family whose profile grants standing"
+    )
+    dispatch.add_argument(
+        "--probe", required=True, help=f"probe version declared in {REPOSITORY_PROBES.name}"
+    )
+    dispatch.add_argument(
+        "--fixture",
+        type=Path,
+        required=True,
+        help="skill-relative or absolute fixture file the probe reviews",
+    )
+    dispatch.add_argument(
+        "--workdir",
+        type=Path,
+        help="probe workdir; a fresh temporary directory when omitted",
+    )
+    dispatch.set_defaults(fn=cmd_trace_dispatch)
 
     receipt = sub.add_parser(
         "trace-receipt", help="derive a live-review boundary receipt from an OMP Task trace"

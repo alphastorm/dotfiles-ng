@@ -41,6 +41,7 @@ import preflight  # noqa: E402
 import qualification  # noqa: E402
 import run_review  # noqa: E402  -- needs the path above
 import snapshot_terms  # noqa: E402
+import review_dispatch  # noqa: E402
 
 PANELS = yaml.safe_load((HERE / "panels.yaml").read_text())
 POLICIES = yaml.safe_load((HERE / "provider-policies.yaml").read_text())
@@ -3067,3 +3068,51 @@ def test_trace_receipt_rejects_fallback_and_forbidden_tool_activity(
     _write_trace(trace, served=served, attempted=attempted, executed=executed)
     with pytest.raises(canary.TraceCanaryError, match=re.escape(failure)):
         canary.capture_trace_receipt(trace, agent, "review-grok", selector, "inline")
+
+
+def test_probe_subject_grants_only_the_probed_lane(tmp_path):
+    """A probe authorizes one lane and freezes as one commit holding one file.
+
+    The grants matter more than the fixture: a probe packet that carried every
+    configured lane's grants would authorize transmitting its subject to lanes
+    nobody asked to measure, and a probe repository that did not freeze would
+    send the reviewer at a mutable tree.
+    """
+
+    subject = canary.materialize_probe_subject(
+        tmp_path / "probe",
+        reviewer_id="gemini",
+        lead_family="gpt",
+        version="live-repository-v6",
+        fixture=canary.DATA / "repository-canary-parse.py",
+    )
+    entry = qualification.reviewers(qualification.load_qualification())["gemini"]
+    packet = qualification.parse_packet(subject["packet"])
+    assert packet["provider_data_allowlist"] == [entry["data_allowlist_key"]]
+    assert packet["reviewer_access_profile_allowlist"] == [entry["access_profile"]]
+
+    verified = review_dispatch.freeze_subject(
+        scope_path=subject["scope"],
+        packet_path=subject["packet"],
+        repository_path=subject["repo"],
+        subject_commit=subject["commit"],
+        files=[subject["file"]],
+    )
+    assert verified.subject.files == (subject["file"],)
+    assert verified.record is None
+    text = subject["packet"].read_text(encoding="utf-8")
+    assert str(canary.DATA) not in text and "~/.omp" not in text
+    assert subject["file"] in text
+
+
+def test_probe_refuses_a_fixture_its_instructions_never_name(tmp_path):
+    """The wrong fixture fails here rather than in the reviewer's read."""
+
+    with pytest.raises(canary.TraceCanaryError, match="never names"):
+        canary.materialize_probe_subject(
+            tmp_path / "mismatched",
+            reviewer_id="gemini",
+            lead_family="gpt",
+            version="live-repository-v6",
+            fixture=canary.DATA / "repository-canary-auth.py",
+        )

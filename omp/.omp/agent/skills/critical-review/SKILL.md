@@ -198,7 +198,7 @@ CRITICAL_REVIEW_RESOLVER_RECEIPT_V1
 `subject_kind`: <repository|packet-only>
 `subject_commit`: <clean full 40-hex commit|none>
 `lead_family`: <gpt|claude>
-`review_class`: <focused|initial|targeted-refuter>
+`review_class`: <canary|focused|initial|targeted-refuter>
 `reviewer_id`: <resolved>
 `selectionClass`: <resolved>
 `role`: <resolved>
@@ -207,6 +207,7 @@ CRITICAL_REVIEW_RESOLVER_RECEIPT_V1
 
 # Target
 For a repository subject: review only `repository_path` at the bound commit and exact regular-file list.
+For a repository subject: retrieve the bound paths in batched turns — independent reads in the same turn, one whole-file or wide-range read over repeated narrow greps of the same path.
 For a packet-only subject: inspect no path.
 The verified assurance scope and packet bytes are reproduced in the generated task.
 Do not modify files or inspect peer output.
@@ -226,6 +227,16 @@ Before accepting readiness or lifecycle claims, compare the implementation's ass
 Return one schema-valid summary/evidence/unresolved object, at most 12 evidence items, exact anchors present in the supplied evidence, and explicit missing evidence for unresolved claims.
 Every evidence item must identify the protected asset or invariant and the residual consequence after declared controls. Do not report general hardening or speculative future-proofing as a defect.
 ```
+
+## Reviewer qualification canary
+
+A reviewer's charter bytes and model selector are pinned: `qualification.yml` binds each lane's `canaryReceipt`, and `preflight.py` validates that receipt against the live agent definition or, when a `charterAmendment` is present, against the amended parent. So editing a reviewer definition invalidates its qualification until one fresh trace of the amended charter exists. That trace is produced by the `canary` review class, never by spawning a reviewer beside the dispatch gate.
+
+`canary` is a one-seat class: it names exactly one configured lane, resolves that lane's existing standing under `selectionClass: canary`, binds no review record, selects no Oracle shadow, and discloses the probe to the reviewer in its assignment. Its result is boundary evidence about the lane — read-only tools, pinned served model, one schema-valid terminal response — and never evidence about a reviewed change. The receipt schema pins `canary` standing as its own tuple, so a probe result cannot be recorded as a council or focused seat.
+
+A probe is prepared and dispatched exactly like a council: the canary tool's `trace-dispatch` materializes a frozen probe subject — the declared fixture committed into a throwaway repository, because freezing needs a clean HEAD and a working tree is never one — and returns verifier-approved Task input whose packet carries only the probed lane's two grants. The lead submits that payload verbatim through the same gate, then derives the boundary receipt from the reviewer's session transcript. The live protocol carries both commands.
+
+A charter change then lands as a `lrhe-charter-standing-amendment-v1` document binding the parent definition, the parent evidence receipt named by `canaryReceipt`, the current definition bytes, the unified-diff digest, and that fresh trace; `qualification.yml` references it as `charterAmendment`. Nothing here grants dispatch authority: live council membership stays owned by `liveDispatch`.
 
 ## Lead verification and dispositions
 

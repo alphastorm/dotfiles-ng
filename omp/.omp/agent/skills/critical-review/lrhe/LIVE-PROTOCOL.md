@@ -743,6 +743,48 @@ Recheck epoch digests once more before final disposition. Mark the review stale 
 
 Close the frozen epoch before modifying reviewed files. Then apply the sequence gate: close verified localized remediation directly; use the single targeted-refuter path only for a still-disputed P0/P1; return systemic omissions to implementation audit; and open another full council only for a readiness-complete material redesign within the autonomous two-pass limit or the single bound founder-requested third pass.
 
+## Reviewer qualification canary
+
+A reviewer's charter bytes are pinned: `qualification.yml` binds each lane's
+`canaryReceipt`, and `preflight.py` validates that receipt against the live agent
+definition, or against the amended parent when a `charterAmendment` is present.
+Editing a reviewer definition therefore invalidates that lane's qualification
+until one fresh trace of the amended charter exists. Produce it with the `canary`
+review class — one seat, one bound fixture, no review record, no Oracle shadow,
+and disclosed to the reviewer — never by spawning a reviewer beside the dispatch
+gate:
+
+```bash
+./lrhe/canary.py trace-dispatch --reviewer gemini --lead-family gpt \
+  --probe live-repository-v6 --fixture lrhe-data/repository-canary-parse.py \
+  --workdir /tmp/critical-review-canary-gemini
+```
+
+That commits the declared fixture into a throwaway repository, writes the probe
+scope and a packet carrying only that lane's two grants, rebinds the probe text
+to the bound path, and ends in `prepare --review-class canary`, so the payload
+crosses the same gate a council does. Submit the emitted `task_input` verbatim in
+one Task call. When the reviewer yields, derive its boundary receipt from the
+session transcript:
+
+```bash
+./lrhe/canary.py trace-receipt --trace <session.jsonl> \
+  --agent-definition ~/.omp/agent/agents/review-gemini.md --agent review-gemini \
+  --selector google-antigravity/gemini-3.8-flash:high \
+  --evidence-delivery repository \
+  --out lrhe-data/standing-amendment-vN/<amendment-id>.trace-receipt.json
+```
+
+Then write the standing amendment beside that receipt: `schema:
+lrhe-charter-standing-amendment-v1`, `change_class:
+resolver-receipt-standing-source-v1`, the retained parent definition and its
+digest, the parent evidence receipt already named by `canaryReceipt`, the current
+definition digest, `unified_diff_sha256` over the parent-to-current charter text,
+and this trace's path, digest, and exact `observed_at`. Reference it from the
+lane's `charterAmendment` and re-run the gates: the parent cohort receipt keeps
+validating against the parent charter, and the current bytes are evidenced by the
+probe.
+
 ## Proving changes to this skill
 
 When modifying this critical-review skill itself, use its stable developer tiers:
