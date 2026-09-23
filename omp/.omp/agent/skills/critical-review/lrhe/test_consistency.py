@@ -3077,6 +3077,7 @@ def test_probe_subject_grants_only_the_probed_lane(tmp_path):
     send the reviewer at a mutable tree.
     """
 
+    entry = qualification.reviewers(_live_document())["gemini"]
     subject = canary.materialize_probe_subject(
         tmp_path / "probe",
         reviewer_id="gemini",
@@ -3084,7 +3085,6 @@ def test_probe_subject_grants_only_the_probed_lane(tmp_path):
         version="live-repository-v6",
         fixture=canary.DATA / "repository-canary-parse.py",
     )
-    entry = qualification.reviewers(qualification.load_qualification())["gemini"]
     packet = qualification.parse_packet(subject["packet"])
     assert packet["provider_data_allowlist"] == [entry["data_allowlist_key"]]
     assert packet["reviewer_access_profile_allowlist"] == [entry["access_profile"]]
@@ -3106,6 +3106,7 @@ def test_probe_subject_grants_only_the_probed_lane(tmp_path):
 def test_probe_refuses_a_fixture_its_instructions_never_name(tmp_path):
     """The wrong fixture fails here rather than in the reviewer's read."""
 
+    _live_document()  # the declared probes, fixtures, and lanes are private
     with pytest.raises(canary.TraceCanaryError, match="never names"):
         canary.materialize_probe_subject(
             tmp_path / "mismatched",
