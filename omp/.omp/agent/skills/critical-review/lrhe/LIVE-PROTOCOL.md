@@ -787,12 +787,15 @@ probe.
 
 ### Model upgrades
 
-A model or effort change invalidates a lane the same way. For a lane whose
-evidence is one repository trace, the fresh trace of the new definition becomes
-its `canaryReceipt` directly and any `charterAmendment` chain is retired: that
-receipt already pins the current charter bytes. A lane qualified by a scoped
-cohort instead crosses only an allowlisted same-provider point release through
-`lrhe-model-upgrade-standing-amendment-v1`.
+A model or effort change invalidates a lane the same way. The steps below cover
+a lane whose evidence is one repository trace: the fresh trace of the new
+definition becomes its `canaryReceipt` directly and any `charterAmendment` chain
+is retired, because that receipt already pins the current charter bytes. A lane
+qualified by a scoped cohort keeps its cohort receipt and its amendment chain: it
+crosses only a same-provider point release allowlisted in `preflight.py`, through
+a new `lrhe-model-upgrade-standing-amendment-v1` that chains its current
+`charterAmendment` and names a fresh trace taken through steps 1-3, so step 4's
+binding does not apply to it.
 
 1. Resolve the selector before editing. The model must be in its provider's
    cached catalogue (`~/.omp/agent/models.db`) with the effort among its native
