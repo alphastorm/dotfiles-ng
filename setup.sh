@@ -369,12 +369,12 @@ function stow_dotfiles() {
   # the private checkout as a visible, revertible diff instead of as a foreign
   # real file that stow refuses to overwrite and aborts the whole package on.
   #
-  # `agent/managed-skills` is deliberately NOT here either, for the same reason.
-  # The agent's `manage_skill` tool is the only writer, and letting the directory
-  # fold means a newly minted or edited skill shows up as a diff in the private
-  # checkout instead of as an untracked file that is lost with the home
-  # directory. Pre-creating it would silently un-track every skill written after
-  # the next setup run.
+  # `agent/managed-skills` is in neither group: no stow layout can own it. OMP's
+  # `manage_skill` and `learn` refuse to write when the managed-skills root is a
+  # symlink, and they refuse a symlinked skill directory or SKILL.md just as
+  # firmly. Folding it, as this function once did on purpose, failed every
+  # write; pre-creating it would only move the refusal one level down. It is a
+  # real git worktree instead -- see ensure_managed_skills_worktree.
   mkdir -p \
     "$HOME/.omp" \
     "$HOME/.omp/agent" \
@@ -384,6 +384,35 @@ function stow_dotfiles() {
     "$HOME/.omp/plugins" \
     "$HOME/.omp/profiles/audit/agent"
   stow -S -t "$HOME" omp
+}
+
+# Keep ~/.omp/agent/managed-skills a real directory that is itself tracked: a
+# git worktree of the private repository on the `omp-managed-skills` branch. OMP
+# writes plain files there, and a skill it mints or edits is still a visible,
+# revertible, pushable diff (`git -C ~/.omp/agent/managed-skills status`) rather
+# than an untracked file that dies with the home directory.
+function ensure_managed_skills_worktree() {
+  local private_dir=$1
+  local skills="$HOME/.omp/agent/managed-skills"
+  local branch=omp-managed-skills
+
+  # A symlink here is the stow fold this replaced. `stow -R` leaves it behind
+  # dangling, a link holds no data, and while it stands every manage_skill
+  # write fails.
+  if [ -L "$skills" ]; then
+    rm "$skills"
+  fi
+  if [ ! -e "$skills" ]; then
+    git -C "$private_dir" worktree add "$skills" "$branch"
+  fi
+  if [ "$(git -C "$skills" rev-parse --show-toplevel 2>/dev/null)" != "$(cd "$skills" && pwd -P)" ] ||
+    [ "$(git -C "$skills" branch --show-current)" != "$branch" ]; then
+    echo "error: $skills must be a git worktree of $private_dir on branch $branch" >&2
+    return 1
+  fi
+  if [ -n "$(git -C "$skills" status --porcelain)" ]; then
+    echo "note: uncommitted managed-skill changes in $skills" >&2
+  fi
 }
 
 function stow_private_dotfiles() {
@@ -399,6 +428,10 @@ function stow_private_dotfiles() {
     echo "warning: private dotfiles unavailable; continuing with public configuration." >&2
     return 0
   fi
+
+  # Before stow, not after: the global ignore keeps stow off this path either
+  # way, and an unrelated package conflict must not leave the fold in place.
+  ensure_managed_skills_worktree "$private_dir"
 
   # -R, not -S. A plain -S leaves stale links behind when a file moves between the
   # public and private packages: the old package's link survives, the new package

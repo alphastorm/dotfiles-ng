@@ -14,3 +14,10 @@ README.*
 node_modules
 __pycache__
 .venv
+
+# ~/.omp/agent/managed-skills belongs to OMP: setup.sh keeps it a git worktree,
+# and manage_skill refuses to write through any stow link. A stray package copy
+# (an old checkout, a hand-written skill) must never reach it: stow would plant
+# a symlinked skill OMP will not update, or abort the whole package on the
+# first real SKILL.md it collides with.
+^/\.omp/agent/managed-skills$
