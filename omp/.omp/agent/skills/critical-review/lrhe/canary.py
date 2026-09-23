@@ -59,6 +59,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1242,9 +1243,10 @@ def _probe_git(repo: Path, *args: str) -> str:
 # daybreak-live-repository-v2); dispatched now, that text contradicts the receipt
 # the reviewer is told to trust, and a reviewer that stops on an internally
 # inconsistent packet spends the run proving nothing. Keys, not prose: a line that
-# assigns one of these fields, bare or backticked as the dispatcher renders it.
+# assigns one of these fields, bare or in paired backticks as the dispatcher renders it.
 _RESTATED_STANDING = re.compile(
-    r"^\s*`?(subject_commit|lead_family|selectionClass|role|independence_class|authority)`?\s*:",
+    r"^\s*(`?)(subject_commit|lead_family|selectionClass|role|independence_class|authority)"
+    r"\1\s*:",
     re.MULTILINE,
 )
 
@@ -1261,7 +1263,7 @@ def materialize_probe_subject(
     """
 
     probe = _repository_probe(version)
-    restated = sorted(set(_RESTATED_STANDING.findall(probe["assignment"])))
+    restated = sorted({key for _, key in _RESTATED_STANDING.findall(probe["assignment"])})
     if restated:
         raise TraceCanaryError(
             f"probe {version!r} restates resolver-owned standing {restated}; a canary takes "
@@ -1403,7 +1405,8 @@ def cmd_trace_dispatch(args: argparse.Namespace) -> int:
     """
 
     workdir = args.workdir
-    if workdir is None:
+    created = workdir is None
+    if created:
         workdir = Path(
             tempfile.mkdtemp(prefix=f"critical-review-canary-{args.reviewer}-")
         )
@@ -1416,6 +1419,9 @@ def cmd_trace_dispatch(args: argparse.Namespace) -> int:
             fixture=args.fixture if args.fixture.is_absolute() else SKILL / args.fixture,
         )
     except (TraceCanaryError, OutputRefusal, OSError) as exc:
+        if created:
+            # A refused probe leaves nothing behind; a caller's own --workdir stays theirs.
+            shutil.rmtree(workdir, ignore_errors=True)
         print(f"failed: {exc}", file=sys.stderr)
         return EXIT_FAILED
     print(

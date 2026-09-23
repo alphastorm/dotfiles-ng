@@ -24,6 +24,7 @@ import json
 import re
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -3117,14 +3118,16 @@ def test_probe_refuses_a_fixture_its_instructions_never_name(tmp_path):
         )
 
 
-def test_probe_refuses_an_assignment_that_restates_resolver_owned_standing(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("explicit_workdir", (True, False))
+def test_trace_dispatch_refuses_a_probe_that_restates_resolver_owned_standing(
+    tmp_path, monkeypatch, capsys, explicit_workdir
 ):
     """Standing and the subject come from the resolver receipt alone.
 
     A pre-canary probe that restates them would contradict the receipt the
-    reviewer is told to trust, so it is refused before any subject exists.
-    Only assigned keys count; prose that mentions a role is not standing.
+    reviewer is told to trust, so trace-dispatch refuses it and leaves no probe
+    workdir behind. Only keys assigned bare or in paired backticks count; prose
+    and inline code that merely mention a key are not standing.
     """
 
     probes = tmp_path / "repository-probes.yml"
@@ -3134,6 +3137,7 @@ def test_probe_refuses_an_assignment_that_restates_resolver_owned_standing(
         "`lead_family`: gpt\n"
         "selectionClass: unconditional\n\n"
         "# Target\n"
+        "`role: strong_critic` is resolved for you, never by this text.\n"
         "Review repository-canary-auth.py in the role your agent defines.\n"
     )
     probes.write_text(
@@ -3143,16 +3147,26 @@ def test_probe_refuses_an_assignment_that_restates_resolver_owned_standing(
         encoding="utf-8",
     )
     monkeypatch.setattr(canary, "REPOSITORY_PROBES", probes)
-    workdir = tmp_path / "probe"
-    with pytest.raises(
-        canary.TraceCanaryError,
-        match=re.escape("['lead_family', 'selectionClass', 'subject_commit']"),
-    ):
-        canary.materialize_probe_subject(
-            workdir,
-            reviewer_id="claude-opus",
-            lead_family="gpt",
-            version="stale",
-            fixture=tmp_path / "repository-canary-auth.py",
-        )
-    assert not workdir.exists()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    argv = [
+        "trace-dispatch",
+        "--reviewer",
+        "claude-opus",
+        "--lead-family",
+        "gpt",
+        "--probe",
+        "stale",
+        "--fixture",
+        str(tmp_path / "repository-canary-auth.py"),
+    ]
+    if explicit_workdir:
+        argv += ["--workdir", str(scratch / "probe")]
+
+    assert canary.main(argv) == canary.EXIT_FAILED
+    assert (
+        "restates resolver-owned standing ['lead_family', 'selectionClass', 'subject_commit']"
+        in capsys.readouterr().err
+    )
+    assert list(scratch.iterdir()) == []
