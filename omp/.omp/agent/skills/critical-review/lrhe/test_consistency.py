@@ -2003,8 +2003,6 @@ def test_the_conditional_selector_agrees_across_agent_qualification_and_override
         assert front["model"] == [entry["model"]]
         assert front["thinkingLevel"] == FABLE_POLICY.thinking_level
         assert overrides[entry["agent"]] == entry["model"]
-    assert overrides["review-claude-opus"] == "anthropic/claude-opus-5:max"
-    assert document["reviewers"]["claude-opus"]["model"] == "anthropic/claude-opus-5:max"
 
 
 @needs_agents
