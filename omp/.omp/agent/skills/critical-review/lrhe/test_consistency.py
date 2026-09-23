@@ -3115,3 +3115,44 @@ def test_probe_refuses_a_fixture_its_instructions_never_name(tmp_path):
             version="live-repository-v6",
             fixture=canary.DATA / "repository-canary-auth.py",
         )
+
+
+def test_probe_refuses_an_assignment_that_restates_resolver_owned_standing(
+    tmp_path, monkeypatch
+):
+    """Standing and the subject come from the resolver receipt alone.
+
+    A pre-canary probe that restates them would contradict the receipt the
+    reviewer is told to trust, so it is refused before any subject exists.
+    Only assigned keys count; prose that mentions a role is not standing.
+    """
+
+    probes = tmp_path / "repository-probes.yml"
+    assignment = (
+        "subject_commit: 37a0c1d26fc45e63344d0297387e8590f72eb56b\n"
+        "# Resolved standing\n"
+        "`lead_family`: gpt\n"
+        "selectionClass: unconditional\n\n"
+        "# Target\n"
+        "Review repository-canary-auth.py in the role your agent defines.\n"
+    )
+    probes.write_text(
+        yaml.safe_dump(
+            {"probes": {"stale": {"role": "primary_critic", "assignment": assignment}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(canary, "REPOSITORY_PROBES", probes)
+    workdir = tmp_path / "probe"
+    with pytest.raises(
+        canary.TraceCanaryError,
+        match=re.escape("['lead_family', 'selectionClass', 'subject_commit']"),
+    ):
+        canary.materialize_probe_subject(
+            workdir,
+            reviewer_id="claude-opus",
+            lead_family="gpt",
+            version="stale",
+            fixture=tmp_path / "repository-canary-auth.py",
+        )
+    assert not workdir.exists()

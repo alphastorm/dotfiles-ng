@@ -1237,6 +1237,18 @@ def _probe_git(repo: Path, *args: str) -> str:
     return completed.stdout
 
 
+# Standing and the subject belong to the resolver receipt alone. Probes written
+# before the canary class restated both (live-repository-v16,
+# daybreak-live-repository-v2); dispatched now, that text contradicts the receipt
+# the reviewer is told to trust, and a reviewer that stops on an internally
+# inconsistent packet spends the run proving nothing. Keys, not prose: a line that
+# assigns one of these fields, bare or backticked as the dispatcher renders it.
+_RESTATED_STANDING = re.compile(
+    r"^\s*`?(subject_commit|lead_family|selectionClass|role|independence_class|authority)`?\s*:",
+    re.MULTILINE,
+)
+
+
 def materialize_probe_subject(
     workdir: Path, *, reviewer_id: str, lead_family: str, version: str, fixture: Path
 ) -> dict[str, Any]:
@@ -1248,10 +1260,16 @@ def materialize_probe_subject(
     fixture to a lane nobody asked to measure.
     """
 
+    probe = _repository_probe(version)
+    restated = sorted(set(_RESTATED_STANDING.findall(probe["assignment"])))
+    if restated:
+        raise TraceCanaryError(
+            f"probe {version!r} restates resolver-owned standing {restated}; a canary takes "
+            "standing and subject from its resolver receipt alone, so dispatch a neutral probe"
+        )
     entry = qualification_reviewers(load_qualification()).get(reviewer_id)
     if not isinstance(entry, dict):
         raise TraceCanaryError(f"qualification declares no reviewer {reviewer_id!r}")
-    probe = _repository_probe(version)
     if not fixture.is_file():
         raise TraceCanaryError(f"probe fixture is not readable: {fixture}")
 
