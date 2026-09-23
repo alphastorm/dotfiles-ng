@@ -4,6 +4,15 @@ set -euo pipefail
 SCRIPTDIR=$(dirname "$0")
 cd "$SCRIPTDIR" || exit
 
+# `./setup.sh --check` is the no-effect validation path: it runs the preflight
+# below against the machine as it stands -- nothing installed, nothing restowed
+# -- and exits.
+CHECK_ONLY=
+if [ "${1:-}" = --check ]; then
+  CHECK_ONLY=1
+fi
+PRIVATE_DIR=${DOTFILES_PRIVATE_DIR:-"$HOME/.dotfiles-private"}
+
 # detect platform-dependent options
 OS=$(uname -s)
 echo "os: $OS"
@@ -29,7 +38,8 @@ if [ "$OS" == "Darwin" ]; then
     eval "$("$brew_executable" shellenv)"
   }
 
-  if ! load_brew; then
+  # A check installs nothing, Homebrew included.
+  if ! load_brew && [ -z "$CHECK_ONLY" ]; then
     HOMEBREW_INSTALLER=$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh) || {
       echo "error: failed to download the Homebrew installer." >&2
       exit 1
@@ -354,13 +364,7 @@ function stow_dotfiles() {
   #     harness from public, the corpus and answer key from private.
   #   - written by the OMP runtime: `profiles/audit/agent` holds agent.db,
   #     history.db, models.db and their WAL files. Fold it and OMP writes live
-  #     databases into .dotfiles-private on every run. `plugins` is the same
-  #     shape: only package.json, bun.lock and patches/ are tracked, and a
-  #     `bun install` drops an 89MB node_modules beside them. Folded, that
-  #     install lands inside the private checkout, and the next stow run tries
-  #     to link all 89MB back into $HOME, hits the real files already there,
-  #     and aborts the entire package. That is not hypothetical: it happened,
-  #     and it wedged `stow -R omp-private` until the tree was cleaned.
+  #     databases into .dotfiles-private on every run.
   #
   # `agent/agents` is deliberately NOT here. Nothing but agent definitions lives
   # in it and only the private package owns them, so letting it fold makes the
@@ -369,55 +373,117 @@ function stow_dotfiles() {
   # the private checkout as a visible, revertible diff instead of as a foreign
   # real file that stow refuses to overwrite and aborts the whole package on.
   #
-  # `agent/managed-skills` is in neither group: no stow layout can own it. OMP's
-  # `manage_skill` and `learn` refuse to write when the managed-skills root is a
-  # symlink, and they refuse a symlinked skill directory or SKILL.md just as
-  # firmly. Folding it, as this function once did on purpose, failed every
-  # write; pre-creating it would only move the refusal one level down. It is a
-  # real git worktree instead -- see ensure_managed_skills_worktree.
+  # `agent/managed-skills` and `plugins` are in neither group: no stow layout can
+  # own a directory whose writer refuses links or renames files over them. They
+  # are runtime worktrees -- see ensure_runtime_worktree.
   mkdir -p \
     "$HOME/.omp" \
     "$HOME/.omp/agent" \
     "$HOME/.omp/agent/extensions" \
     "$HOME/.omp/agent/skills" \
     "$HOME/.omp/agent/skills/critical-review" \
-    "$HOME/.omp/plugins" \
     "$HOME/.omp/profiles/audit/agent"
   stow -S -t "$HOME" omp
 }
 
-# Keep ~/.omp/agent/managed-skills a real directory that is itself tracked: a
-# git worktree of the private repository on the `omp-managed-skills` branch. OMP
-# writes plain files there, and a skill it mints or edits is still a visible,
-# revertible, pushable diff (`git -C ~/.omp/agent/managed-skills status`) rather
-# than an untracked file that dies with the home directory.
-function ensure_managed_skills_worktree() {
-  local private_dir=$1
-  local skills="$HOME/.omp/agent/managed-skills"
-  local branch=omp-managed-skills
+# Directories an OMP runtime writer owns, one "<branch> <path>" line each. Each
+# is a git worktree of the private repository on its own branch, never a stow
+# target: stow can only offer links, and these writers refuse or replace them.
+#   - `manage_skill` and `learn` refuse a symlinked managed-skills root, skill
+#     directory, or SKILL.md, so the fold that once tracked the skills failed
+#     every write.
+#   - `omp plugin install` runs bun in ~/.omp/plugins, and bun saves bun.lock by
+#     renaming a temp file over it. The stowed link became a real file, and the
+#     next `stow -R omp-private` aborted the whole package on it.
+# In a worktree the runtime writes real files, and every change it makes is
+# still a visible, revertible, pushable diff: `git -C <path> status`.
+function runtime_worktrees() {
+  printf '%s %s\n' \
+    omp-managed-skills "$HOME/.omp/agent/managed-skills" \
+    omp-plugins "$HOME/.omp/plugins"
+}
 
-  # A symlink here is the stow fold this replaced. `stow -R` leaves it behind
-  # dangling, a link holds no data, and while it stands every manage_skill
-  # write fails.
-  if [ -L "$skills" ]; then
-    rm "$skills"
+function is_runtime_worktree() {
+  local branch=$1 target=$2
+  [ "$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$target" 2>/dev/null && pwd -P)" ] &&
+    [ "$(git -C "$target" branch --show-current 2>/dev/null)" = "$branch" ]
+}
+
+function ensure_runtime_worktree() {
+  local branch=$1 target=$2
+
+  # A symlink here is a stow fold from the old layout. `stow -R` leaves it
+  # behind dangling, and a link holds no data.
+  if [ -L "$target" ]; then
+    rm "$target"
   fi
-  if [ ! -e "$skills" ]; then
-    git -C "$private_dir" worktree add "$skills" "$branch"
+  if [ ! -e "$target" ]; then
+    # A deleted worktree stays registered, and `worktree add` refuses a
+    # registered path until the registration is pruned.
+    git -C "$PRIVATE_DIR" worktree prune
+    git -C "$PRIVATE_DIR" worktree add "$target" "$branch"
   fi
-  if [ "$(git -C "$skills" rev-parse --show-toplevel 2>/dev/null)" != "$(cd "$skills" && pwd -P)" ] ||
-    [ "$(git -C "$skills" branch --show-current)" != "$branch" ]; then
-    echo "error: $skills must be a git worktree of $private_dir on branch $branch" >&2
+  if ! is_runtime_worktree "$branch" "$target"; then
+    echo "error: $target must be a git worktree of $PRIVATE_DIR on branch $branch" >&2
     return 1
   fi
-  if [ -n "$(git -C "$skills" status --porcelain)" ]; then
-    echo "note: uncommitted managed-skill changes in $skills" >&2
+  if [ -n "$(git -C "$target" status --porcelain)" ]; then
+    echo "note: uncommitted changes in $target" >&2
+  fi
+}
+
+# Every package this script stows, one "<package> <stow directory>" line each,
+# in the order the steps below restow them. preflight_stow simulates exactly
+# this list, so a package added to those steps belongs here too.
+function stow_packages() {
+  local platform_package=@mac
+  [ "$PLATFORM" = osx ] || platform_package=@linux
+  printf '%s %s\n' stow "$PWD" "$platform_package" "$PWD" git "$PWD" vim "$PWD" zsh "$PWD" omp "$PWD"
+  if [ -d "$PRIVATE_DIR/.git" ]; then
+    printf '%s %s\n' omp-private "$PRIVATE_DIR"
+    if [ "$OS" == "Darwin" ]; then
+      printf '%s %s\n' zsh-private "$PRIVATE_DIR"
+    fi
+  fi
+}
+
+# Simulate every restow before anything changes. Stow aborts a whole package on
+# its first conflict -- a real file where one of its links belongs, which is what
+# a runtime saving by rename leaves behind -- and `set -e` then stopped this
+# script at that package, with everything before it applied and everything after
+# it skipped. Now it stops up front and names every conflict at once.
+function preflight_stow() {
+  local failed=0 package dir output branch target
+  if ! command -v stow >/dev/null; then
+    return 0 # first run: stow arrives with the packages, and nothing is stowed yet
+  fi
+  while read -r package dir; do
+    [ -d "$dir/$package" ] || continue
+    if ! output=$(stow --simulate --restow --dir "$dir" --target "$HOME" "$package" 2>&1); then
+      printf 'conflict: %s\n%s\n' "$package" "$output" >&2
+      failed=1
+    fi
+  done <<EOF
+$(stow_packages)
+EOF
+  if [ -d "$PRIVATE_DIR/.git" ]; then
+    while read -r branch target; do
+      if [ -e "$target" ] && [ ! -L "$target" ] && ! is_runtime_worktree "$branch" "$target"; then
+        echo "conflict: $target must be a git worktree of $PRIVATE_DIR on branch $branch" >&2
+        failed=1
+      fi
+    done <<EOF
+$(runtime_worktrees)
+EOF
+  fi
+  if [ "$failed" -ne 0 ]; then
+    echo "error: nothing was changed; resolve the conflicts above, then rerun" >&2
+    return 1
   fi
 }
 
 function stow_private_dotfiles() {
-  local private_dir
-  private_dir=${DOTFILES_PRIVATE_DIR:-"$HOME/.dotfiles-private"}
+  local private_dir=$PRIVATE_DIR branch target
 
   if [ -e "$private_dir" ] || [ -L "$private_dir" ]; then
     if ! [ -d "$private_dir/.git" ]; then
@@ -429,9 +495,13 @@ function stow_private_dotfiles() {
     return 0
   fi
 
-  # Before stow, not after: the global ignore keeps stow off this path either
-  # way, and an unrelated package conflict must not leave the fold in place.
-  ensure_managed_skills_worktree "$private_dir"
+  # Before stow, not after: the global ignore keeps stow off these paths either
+  # way, and an unrelated package conflict must not strand a stale fold.
+  while read -r branch target; do
+    ensure_runtime_worktree "$branch" "$target" </dev/null
+  done <<EOF
+$(runtime_worktrees)
+EOF
 
   # -R, not -S. A plain -S leaves stale links behind when a file moves between the
   # public and private packages: the old package's link survives, the new package
@@ -453,6 +523,14 @@ function stow_private_dotfiles() {
 
 # run main installation
 echo "dotfiles path: $SCRIPTDIR"
+
+# Before anything changes: an install that cannot be restowed stops here with
+# every conflict listed, instead of partway through.
+preflight_stow
+if [ -n "$CHECK_ONLY" ]; then
+  echo "check passed: every package would restow without a conflict"
+  exit 0
+fi
 
 "install_${PACKAGE_MANAGER}_packages"
 
