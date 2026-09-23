@@ -785,6 +785,46 @@ lane's `charterAmendment` and re-run the gates: the parent cohort receipt keeps
 validating against the parent charter, and the current bytes are evidenced by the
 probe.
 
+### Model upgrades
+
+A model or effort change invalidates a lane the same way. For a lane whose
+evidence is one repository trace, the fresh trace of the new definition becomes
+its `canaryReceipt` directly and any `charterAmendment` chain is retired: that
+receipt already pins the current charter bytes. A lane qualified by a scoped
+cohort instead crosses only an allowlisted same-provider point release through
+`lrhe-model-upgrade-standing-amendment-v1`.
+
+1. Resolve the selector before editing. The model must be in its provider's
+   cached catalogue (`~/.omp/agent/models.db`) with the effort among its native
+   efforts. Prefer the native top effort to a `models.yml` `modelOverrides`
+   alias: a Task child reuses the dispatching session's model registry, so an
+   override written after that session started is invisible to it, the effort
+   clamps down, and `trace-receipt` rejects the run. If an override is
+   unavoidable, dispatch from a session started after writing it.
+2. Repin every bind point in one change: the agent's `model` and matching
+   `thinkingLevel`, its `task.agentModelOverrides` entry, the exact empty
+   `retry.fallbackChains` entry for the new selector, and the lane's `model` and
+   `correlation_group`. Settings reload on every Task spawn, so no restart is
+   needed; the evidence-contract gate should then fail only on that lane's
+   receipt pins.
+3. Probe under a lead family whose profile configures the lane (`claude-opus` is
+   configured only under `gpt`) with a neutral registered probe, for example
+   `--probe live-repository-v3 --fixture lrhe-data/repository-canary-auth.py`.
+   `trace-dispatch` refuses a probe that restates resolver-owned standing, which
+   rules out `live-repository-v16` and `daybreak-live-repository-v2`. From eval,
+   `await tool.task(payload["task_input"])` submits the payload without
+   transcribing it; independent lanes may run concurrently.
+4. Find each child transcript by its `model_change` row in the dispatching
+   session's directory and derive its receipt beside its predecessor in
+   `lrhe-data/`, named for the new model, effort, and date. Bind it through
+   `canaryReceipt`, `lastCanary`, and the `canary` summary's
+   `repositoryPromptVersion`, `declaredTools`, and `servedModel`, then delete
+   `charterAmendment`. Superseded receipts and amendments stay as history.
+5. Rename the version in `SKILL.md`, this protocol, and `README.md`; never pin a
+   test to an exact live selector.
+6. `preflight.py --slow` must report every reviewer evidence contract matching,
+   and `review_checks.py quick` must pass.
+
 ## Proving changes to this skill
 
 When modifying this critical-review skill itself, use its stable developer tiers:
