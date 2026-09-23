@@ -130,8 +130,8 @@ The resolver uses four explicit profile groups, not one role per model:
 
 | Group | GPT lead | Claude lead | Standing |
 |---|---|---|---|
-| strongCritic | Opus 5 through the CVP-approved route | Daybreak Blue | reciprocal cross-family independent evidence |
-| supplements | Gemini 3.8 Flash and Grok 4.6 | Gemini 3.8 Flash and Grok 4.6 | always-on cross-family supplemental evidence |
+| strongCritic | Opus 5.5 through the CVP-approved route | Daybreak Blue | reciprocal cross-family independent evidence |
+| supplements | Gemini 3.8 Flash and Grok 4.7 | Gemini 3.8 Flash and Grok 4.7 | always-on cross-family supplemental evidence |
 | leadFamilySecurity | qualified Daybreak Blue | none configured | always-on same-lineage blind sample; supplemental evidence only |
 | architectureSpecialists | Fable 5.1 when eligible | Fable 5.1 when eligible | record-selected supplemental architecture synthesis |
 

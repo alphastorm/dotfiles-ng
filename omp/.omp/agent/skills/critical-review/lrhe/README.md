@@ -284,7 +284,7 @@ profiles exist, and each has four explicit groups:
 - strongCritic selects one reciprocal cross-family independent reviewer: Opus
   through the CVP-approved route for a GPT lead, or Daybreak Blue for a Claude
   lead;
-- supplements selects Gemini 3.8 Flash and Grok 4.6 on every full council. Both
+- supplements selects Gemini 3.8 Flash and Grok 4.7 on every full council. Both
   are cross-family supplemental evidence; Gemini supplies a fast sanity pass and
   Grok supplies cheap decorrelated coverage;
 - leadFamilySecurity selects the qualified Daybreak security lane for GPT full
@@ -313,7 +313,7 @@ ChatGPT Pro Web remains deliberately outside liveDispatch. For ordinary cloud-pe
 Agent names are stable lane identifiers, not model-version aliases. Multiple
 qualified lanes in one family use durable variant names such as
 `review-claude-opus` and `review-claude-fable`; a transient release such as
-Grok 4.6 remains in the exact `model` selector, active override, qualification
+Grok 4.7 remains in the exact `model` selector, active override, qualification
 receipt, and emitted manifest. This avoids identity churn on routine model
 upgrades while keeping the served version auditable at every dispatch. A passed
 parent quality cohort may cross only an explicitly allowlisted same-provider,

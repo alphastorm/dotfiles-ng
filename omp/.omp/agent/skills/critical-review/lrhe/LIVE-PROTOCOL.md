@@ -39,7 +39,7 @@ reviewer prose:
   and claude profiles exist; Gemini and Grok cannot drive a council;
 - strongCritic selects exactly one reciprocal cross-family assurance anchor:
   Opus CVP for a GPT lead or Daybreak Blue for a Claude lead;
-- supplements selects Gemini 3.8 Flash and Grok 4.6 on every full council.
+- supplements selects Gemini 3.8 Flash and Grok 4.7 on every full council.
   They are cross-family supplemental evidence: useful for fast sanity and cheap
   decorrelation, but unable to rescue the independent floor or break a dispute.
   The strong critic and supplements are pairwise distinct by model family and
