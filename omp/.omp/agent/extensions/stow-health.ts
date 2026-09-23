@@ -13,8 +13,6 @@ const SKIP: Record<string, true> = {
 	checkpoints: true,
 	logs: true,
 	memories: true,
-	"performance-v1": true,
-	"performance-v2": true,
 	run: true,
 	sessions: true,
 	"terminal-sessions": true,
