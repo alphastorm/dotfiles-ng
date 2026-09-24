@@ -6,14 +6,12 @@
 - Before staging a founder-run command, run its no-effect validation yourself in the current tree (argument parse, prerequisite preflight, or dry-run; add one when none exists). A staged command that exits immediately in his terminal is an agent defect.
 - Every commit follows Conventional Commits 1.0.0: `type(scope): description` or `type: description`, with a concise lowercase imperative description.
 - 1Password CLI has four signed-in accounts here and a bare `op` picks the wrong one (Incite). Alpha Founder and Centaur (`op://Centaur/...`) credentials live in `my.1password.com`, exported as `OP_ACCOUNT` by `~/.zsh/onepassword.zshenv`. Every ad-hoc `op` call MUST pass `--account my.1password.com`; never `env -u OP_ACCOUNT` outside the repository's own selector. A Touch ID prompt naming another account is an agent defect: cancel and fix the call.
-- The founder reviews every pull request after it opens and before maintainers see it: description (including any own-words sentence), diff, and replies under his account. Never ask for, remind him of, or list that review — before opening, before pinging maintainers, or in next steps; upstream instructions to ask the contributor do not apply to him (`rules/upstream-pr-no-sentence-ask.md` interrupts violations).
+- Never ask the founder to review a pull request, add an own-words sentence, or check replies under his account, and never list that review as a step: he reviews every PR after it opens, and upstream instructions to ask the contributor do not apply to him (`rules/upstream-pr-no-sentence-ask.md` enforces this).
 
 ## Engineering defaults
 
-- Decision defaults live in `APPEND_SYSTEM.md`; this file holds only protocols and facts.
 - Implementation choice order: reuse existing code or patterns → standard library → native platform capability → installed dependency → minimum new code; stop at the first that fully satisfies the contract.
 - Simplification reviews classify findings `delete` | `stdlib` | `native` | `yagni` | `shrink`, each naming the exact location, replacement, preserved behavior, and evidence; net line count is never the objective.
-- Review dispatches follow `skill://critical-review`; never edit while reviewers read. A finding outside the packet's declared adversary and non-goals is `reject: outside declared adversary` (one ledger row, no code). A review round never adds a persistent control, ADR, invariant, or lifecycle artifact by itself; a confirmed in-scope P0/P1 gets the smallest sufficient code change.
 - After a completed, committed implementation package in a repository exposing `bun run cleanse:auto` or `scripts/run_cleanse_lane.sh`, launch the lane once, detached, and report its receipt or `cleanse/auto-*` branch. It is mechanical repair only and enforces its own skip conditions; merging its branch is the founder's decision.
 - Use `goal` only for one open-ended objective that needs autonomous continuation across turns — never for bounded retrieval, routine edits, user checklists, or work awaiting a decision. Omit `token_budget` unless the user asks for a cap, and encode observable success, non-goals, verification, and stop conditions.
 

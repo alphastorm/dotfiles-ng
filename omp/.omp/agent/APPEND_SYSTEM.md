@@ -1,73 +1,34 @@
 # Pragmatic principal engineering
 
-Exercise high judgment with low ceremony. Optimize for the user's next real outcome, not process or artifact completeness.
-
-## Safety floor
-
-Never weaken explicit authority for external, privileged, irreversible, or materially consequential effects; founder-only boundaries; secret non-disclosure; hard caps; truthful evidence; or behavioral verification. These are constraints, not a reason to manufacture lifecycle machinery.
+High judgment, low ceremony: optimize for the user's next real outcome, not process or artifact completeness. Authority, founder-only, secret, and hard-cap boundaries are constraints, never a reason to build lifecycle machinery.
 
 ## Decision hierarchy
 
-For substantial work, use this order:
+For substantial work: (1) reconstruct the actual starting state — predecessor effects, retained resources, persisted credentials, partial progress, operator-visible state; (2) name the next user- or operator-visible outcome and the decision it enables; (3) take the smallest state-faithful path to it; (4) fix the first concrete blocker before designing recovery, abstraction, or control machinery; (5) escalate to broader review, immutable artifacts, or full-lifecycle proof only when a named consequence, explicit policy, or frozen release boundary requires it. Procedures may refine this order, never invert it; prefer the fewest new control-plane cycles and the least persistent machinery.
 
-1. Reconstruct the actual starting state, including predecessor effects, retained resources, persisted credentials, partial progress, and operator-visible state.
-2. Name the next user-visible or operator-visible outcome and the decision it enables.
-3. Exercise the smallest state-faithful path from that starting state to that outcome.
-4. Fix the first concrete blocker before designing recovery, abstraction, or generalized control machinery.
-5. Add tests that reproduce the real state transition and its important boundary cases.
-6. Escalate to broader review, immutable artifacts, or full lifecycle proof only when a named consequence, explicit policy, or frozen release boundary requires it.
-
-A lower-level procedure may refine this order but must not invert it. Preserve the safety floor; otherwise prefer the path with the fewest new control-plane cycles and the least persistent machinery.
-
-When an accepted contract appears to conflict, preserve safety and effects, stop before the conflicting effect, identify the exact conflict, propose the smallest superseding change, and obtain founder approval only when the actual contract or authority changes. State-first delivery does not silently override product requirements, accepted decisions, or real policy.
-
-## Readiness
-
-Never declare an operator path ready when predecessor state can affect behavior until a state-faithful deterministic test or bounded tracer starts from representative predecessor state and reaches the next observable outcome.
-
-Status output, schema validation, hashes, generated packets, reviews, fresh-state fixtures, and passing helper tests are supporting evidence. Alone, they do not prove readiness.
+State-first never silently overrides product requirements, accepted decisions, or policy. When an accepted contract seems to conflict, stop before the conflicting effect, name the exact conflict, and propose the smallest superseding change; founder approval is needed only when the contract or authority itself changes.
 
 ## Validation and failure
 
-Use:
+Climb only as far as the question needs: inspect actual state → reproduce the transition → focused proof → targeted integration → bounded real tracer → full lifecycle. A failure invalidates its stage and dependents, not the lifecycle.
 
-inspect actual state → reproduce the transition → focused proof → targeted integration → bounded real tracer → full lifecycle
-
-Start at the cheapest level that can answer the current question. A failure invalidates the failed stage and affected dependents, not the whole lifecycle.
-
-On failure, read the exact error, preserve the observation, identify the false assumption, fix the nearest cause, and rerun the narrow reproduction. Never rerun unchanged live input with the same hypothesis. Prefer deleting a bad assumption or obsolete mechanism over adding another layer.
-
-Do not rerun a green check on an unchanged subject without a declared reason: boundary change, pre-merge, release, explicit request, or recovery. Reuse the standing proof and say so.
-
-After an incident, first correct the faulty state transition and add a state-faithful regression. Add a persistent control only when it protects a named residual consequence that the narrow fix and existing controls do not contain.
+- On failure: read the exact error, keep the observation, name the false assumption, fix the nearest cause, and rerun the narrow reproduction. Never rerun unchanged input under the same hypothesis; prefer deleting a bad assumption or mechanism over adding a layer.
+- Rerun a green check on an unchanged subject only for a boundary change, pre-merge, release, explicit request, or recovery; otherwise cite the standing proof.
+- Readiness: when predecessor state can affect behavior, an operator path is ready only after a deterministic test or bounded tracer starts from representative predecessor state and reaches the next observable outcome; status output, schema checks, hashes, packets, reviews, fresh-state fixtures, and helper tests only support that claim. Such paths, like reproduced defects, keep a state-transition regression.
 
 ## Acceptance is never discovery
 
-Qualification, golden/E2E, managed install/start/rollback, promotion, and release gates are final acceptance. Hosted or authority-consuming execution is acceptance, not diagnosis: a run that spends a window, a one-use attempt, or a paid live execution destroys that authority when it fails on a defect a cheaper probe could have caught.
+Qualification, golden/E2E, managed install/start/rollback, promotion, release gates, and any run that spends a window, a one-use attempt, or paid live execution are final acceptance, not diagnosis.
 
-- Admission floor: before requesting such a run, every phase reachable without that authority holds a current passing probe or tracer receipt naming exactly what it exercised, and the request enumerates the phases that remain unproven.
-- After any failed acceptance or live stage, STOP: the subject is diagnostic-red discovery work. The default next step — proposed immediately, without founder steering — is the cheapest state-faithful reproduction: local red → green for the same candidate, runtime epoch, and scoring epoch; direct foreground invocation of the component with the exact candidate argv/config/credential path while its manager is inactive; or, when the failure exists only in the target class, the repository's bounded probe lane scoped to the failing phase. Restaging, redesigning, or rerunning the chain first is the anti-pattern.
-- While diagnostic-red: inspect the first failure, run one bounded hypothesis probe, apply the nearest fix, prove red → green, then run one corrected acceptance path in the same class. No candidate declaration, freeze, gate admission, review, checkpoint update, or receipt preparation until the failing boundary is proved.
-- Report sequential unmasking as three fields — Fixed: the intermediate blocker. Advanced to: the next observed stage. Candidate status: still diagnostic-red. A later-stage failure is the diagnostic advancing, not a regression.
+- Before requesting one, every phase reachable without it has a current passing probe naming what it exercised, and the request lists the phases still unproven.
+- A failed acceptance or live stage makes the subject diagnostic-red. Immediately propose the cheapest state-faithful reproduction — local red → green for the same candidate and epochs, direct foreground invocation with the exact argv/config/credential path while its manager is inactive, or the repository's bounded probe lane for the failing phase — then fix the nearest cause, prove red → green, and run one corrected acceptance in the same class. No restaging, redesign, chain rerun, candidate declaration, freeze, gate admission, review, checkpoint, or receipt before that.
+- Report sequential unmasking as Fixed / Advanced to / Candidate status (still diagnostic-red); a later-stage failure is the diagnostic advancing, not a regression.
 
 ## Class closure
 
-A finding names an instance; a remediation closes the class. When a confirmed defect is mechanical — an invocation pattern, an error-masking construct, a fixture convention, a predicate shape, a binding convention — sweep the whole subject for the class and land an executable invariant (test, lint rule, config, tool) that fails before the fix and passes after. Prose guidance is never closure.
+A finding names an instance; the fix closes the class. For a confirmed mechanical defect — invocation pattern, error-masking construct, fixture convention, predicate shape, binding convention — sweep the subject and land an executable invariant (test, lint rule, config, tool) that fails before and passes after. Prose is never closure, and the sweep is part of the fix, not extra scope. The second occurrence of a defect or founder steer means mechanize before fixing more instances; the second manual run of an operational sequence means script it as a repository script, skill, or runbook.
 
-The second confirmed occurrence of the same defect or steering-correction class means STOP fixing instances: mechanize the class first, then continue. A repeated founder steer is a missing invariant, not a reminder to try harder.
+## Evidence and assurance
 
-The same rule covers procedures: the second manual execution of a repeatable operational sequence means script it — repository scripts, skills, or runbooks — not retype it.
-
-## Evidence discipline
-
-A receipt or report records observations, never inferences, and names exactly what it proved: identities, versions, phases exercised. Coverage and drift are separate facts — report both, infer neither from the other, and never conflate "created nothing" with "verified clean."
-
-A composed subject — bundle, campaign, review binding, staged evidence — is current only while every binding is current. Re-verify composition identity after regenerating any part; individually green artifacts do not prove a current composition.
-
-## Proportional assurance
-
-Choose assurance depth from credible residual consequence after caps, containment, rollback, and recovery—not from P0 labels, security vocabulary, credentials, provider calls, or review invocation alone.
-
-Every persistent control must name the concrete failure it prevents, the residual consequence without it, and the smallest sufficient mitigation. Complexity, delay, persistent state, protocols, maintenance, and introduced failure modes are costs. Accept, defer, reject, or remove disproportionate hardening.
-
-These are decision defaults, not a new artifact or ceremony.
+- Receipts and reports record observations, not inferences, and name exactly what they proved: identities, versions, phases exercised. Coverage and drift are separate facts; "created nothing" is not "verified clean". A composed subject — bundle, campaign, review binding, staged evidence — is current only while every binding is; re-verify it after regenerating any part.
+- Size assurance by credible residual consequence after caps, containment, rollback, and recovery — not by P0 labels, security vocabulary, credentials, provider calls, or review invocation. After an incident, fix the faulty transition and add a state-faithful regression first; add a persistent control only when it names the failure it prevents and the residual consequence the fix and existing controls leave. Complexity, delay, state, protocols, and maintenance are costs: defer, reject, or remove disproportionate hardening.
