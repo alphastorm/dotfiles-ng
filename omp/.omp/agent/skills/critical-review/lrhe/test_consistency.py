@@ -1215,7 +1215,7 @@ def _fable_cohort(
         "schema": FABLE_POLICY.cohort_schema,
         "result": "passed",
         "cohort_id": "fable-max-architecture-20260810",
-        "policy": FABLE_POLICY.policy,
+        "policy": FABLE_POLICY.cohort_policy,
         "scope": FABLE_POLICY.required_scope,
         "agent": "review-claude-fable",
         "requested_selector": selector,
@@ -1270,7 +1270,7 @@ def _conditional_scope_fixture(tmp_path, monkeypatch, attempts: int = 20) -> tup
                     "status": "passed",
                     "canaryReceipt": "lrhe-data/fable-max-architecture-cohort.json",
                 },
-                "security": {
+                "security-review": {
                     "status": "ineligible",
                     "boundaryEvidence": ["lrhe-data/fable-max-refusals.json"],
                 },
@@ -1280,9 +1280,6 @@ def _conditional_scope_fixture(tmp_path, monkeypatch, attempts: int = 20) -> tup
             "policy": FABLE_POLICY.policy,
             "allowedReviewModes": list(FABLE_POLICY.allowed_review_modes),
             "activationRiskDomainsAny": list(FABLE_POLICY.activation_risk_domains),
-            "deniedRiskDomains": list(FABLE_POLICY.denied_risk_domains),
-            "requiredProofClassStatuses": {"authorization": "not-applicable"},
-            "denyPathComponentRegex": FABLE_POLICY.deny_path_pattern,
             "onUnknown": "skip",
         },
     }
@@ -1338,10 +1335,25 @@ def test_an_agent_edited_after_its_cohort_makes_the_receipt_stale(tmp_path, monk
     assert "agent_definition_sha256" in result.detail
 
 
-def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
-    tmp_path, monkeypatch
-):
-    """A point release reuses quality evidence without relabeling old model traces."""
+def _sha256_of(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_json(path: Path, value: dict) -> None:
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _bind_fable_amendment(tmp_path: Path, amendment_path: Path) -> None:
+    qualification_path = tmp_path / "qualification.yml"
+    document = yaml.safe_load(qualification_path.read_text(encoding="utf-8"))
+    document["reviewers"]["claude"]["charterAmendment"] = str(
+        amendment_path.relative_to(tmp_path)
+    )
+    qualification_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+
+def _fable_model_upgrade_chain(tmp_path, monkeypatch) -> dict:
+    """Bind the live Fable evidence shape: Fable 5 cohort, charter amendment, 5.1 upgrade."""
     current_definition, _ = _conditional_scope_fixture(tmp_path, monkeypatch)
     data = tmp_path / "lrhe-data" / "standing-amendment-v2"
     data.mkdir(parents=True)
@@ -1351,9 +1363,6 @@ def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
         tmp_path, parent_definition, selector=FABLE_PARENT_SELECTOR
     )
 
-    def digest(path: Path) -> str:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-
     parent_trace = data / "parent.trace-receipt.json"
     parent_receipt = _trace_receipt(
         parent_definition,
@@ -1361,9 +1370,7 @@ def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
         FABLE_PARENT_SELECTOR,
         "repository",
     )
-    parent_trace.write_text(
-        json.dumps(parent_receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    _write_json(parent_trace, parent_receipt)
     parent_text = parent_definition.read_text(encoding="utf-8")
     parent_amendment = {
         "schema": "lrhe-charter-standing-amendment-v1",
@@ -1372,29 +1379,24 @@ def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
         "change_class": "resolver-receipt-standing-source-v1",
         "agent": "review-claude-fable",
         "parent_definition_path": str(parent_definition.relative_to(tmp_path)),
-        "parent_definition_sha256": digest(parent_definition),
+        "parent_definition_sha256": _sha256_of(parent_definition),
         "parent_evidence_path": str(cohort.relative_to(tmp_path)),
-        "parent_evidence_sha256": digest(cohort),
-        "current_definition_sha256": digest(parent_definition),
+        "parent_evidence_sha256": _sha256_of(cohort),
+        "current_definition_sha256": _sha256_of(parent_definition),
         "current_trace_path": str(parent_trace.relative_to(tmp_path)),
-        "current_trace_sha256": digest(parent_trace),
+        "current_trace_sha256": _sha256_of(parent_trace),
         "unified_diff_sha256": preflight._unified_diff_sha256(parent_text, parent_text),
         "observed_at": parent_receipt["observed_at"],
     }
     parent_amendment_path = data / "parent.amendment.json"
-    parent_amendment_path.write_text(
-        json.dumps(parent_amendment, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    _write_json(parent_amendment_path, parent_amendment)
 
     current_trace = data / "current.trace-receipt.json"
     receipt = _trace_receipt(
         current_definition, "review-claude-fable", FABLE_SELECTOR, "repository"
     )
     receipt["observed_at"] = "2026-09-04T00:00:00Z"
-    current_trace.write_text(
-        json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    _write_json(current_trace, receipt)
 
     current_text = current_definition.read_text(encoding="utf-8")
     amendment = {
@@ -1404,29 +1406,49 @@ def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
         "change_class": "model-upgrade-standing-source-v1",
         "agent": "review-claude-fable",
         "parent_definition_path": str(parent_definition.relative_to(tmp_path)),
-        "parent_definition_sha256": digest(parent_definition),
+        "parent_definition_sha256": _sha256_of(parent_definition),
         "parent_evidence_path": str(cohort.relative_to(tmp_path)),
-        "parent_evidence_sha256": digest(cohort),
+        "parent_evidence_sha256": _sha256_of(cohort),
         "parent_amendment_path": str(parent_amendment_path.relative_to(tmp_path)),
-        "parent_amendment_sha256": digest(parent_amendment_path),
+        "parent_amendment_sha256": _sha256_of(parent_amendment_path),
         "parent_selector": FABLE_PARENT_SELECTOR,
-        "current_definition_sha256": digest(current_definition),
+        "current_definition_sha256": _sha256_of(current_definition),
         "current_selector": FABLE_SELECTOR,
         "current_trace_path": str(current_trace.relative_to(tmp_path)),
-        "current_trace_sha256": digest(current_trace),
+        "current_trace_sha256": _sha256_of(current_trace),
         "unified_diff_sha256": preflight._unified_diff_sha256(parent_text, current_text),
         "observed_at": receipt["observed_at"],
     }
     amendment_path = data / "claude-fable-5-1.amendment.json"
-    amendment_path.write_text(
-        json.dumps(amendment, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    qualification_path = tmp_path / "qualification.yml"
-    document = yaml.safe_load(qualification_path.read_text(encoding="utf-8"))
-    document["reviewers"]["claude"]["charterAmendment"] = str(
-        amendment_path.relative_to(tmp_path)
-    )
-    qualification_path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    _write_json(amendment_path, amendment)
+    _bind_fable_amendment(tmp_path, amendment_path)
+    return {
+        "cohort": cohort,
+        "current_definition": current_definition,
+        "current_text": current_text,
+        "current_trace": current_trace,
+        "receipt": receipt,
+        "parent_text": parent_text,
+        "parent_receipt": parent_receipt,
+        "amendment": amendment,
+        "amendment_path": amendment_path,
+    }
+
+
+def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
+    tmp_path, monkeypatch
+):
+    """A point release reuses quality evidence without relabeling old model traces."""
+    chain = _fable_model_upgrade_chain(tmp_path, monkeypatch)
+    current_definition = chain["current_definition"]
+    current_text = chain["current_text"]
+    current_trace = chain["current_trace"]
+    receipt = chain["receipt"]
+    amendment = chain["amendment"]
+    amendment_path = chain["amendment_path"]
+    parent_text = chain["parent_text"]
+    parent_receipt = chain["parent_receipt"]
+    digest = _sha256_of
 
     result = preflight.check_conditional_critic_scope()
     assert result.state == preflight.PASS, result.detail
@@ -1490,6 +1512,84 @@ def test_model_upgrade_amendment_preserves_parent_cohort_with_one_current_trace(
     result = preflight.check_conditional_critic_scope()
     assert result.state == preflight.FAIL
     assert "parent definition model" in result.detail
+
+
+def test_chained_charter_amendment_extends_a_model_upgrade_chain(tmp_path, monkeypatch):
+    """A charter edit after a model upgrade chains it; the Fable 5 cohort still binds."""
+    chain = _fable_model_upgrade_chain(tmp_path, monkeypatch)
+    definition = chain["current_definition"]
+    data = tmp_path / "lrhe-data" / "standing-amendment-v4"
+    data.mkdir(parents=True)
+    parent_definition = data / "review-claude-fable-parent.md"
+    parent_definition.write_bytes(definition.read_bytes())
+    parent_text = chain["current_text"]
+    definition.write_text(
+        parent_text + "\nSecurity-touching subjects are in scope.\n", encoding="utf-8"
+    )
+    trace = data / "security-subject.trace-receipt.json"
+    receipt = _trace_receipt(definition, "review-claude-fable", FABLE_SELECTOR, "repository")
+    receipt["observed_at"] = "2026-09-24T00:00:00Z"
+    _write_json(trace, receipt)
+
+    def relative(path: Path) -> str:
+        return str(path.relative_to(tmp_path))
+
+    amendment = {
+        "schema": preflight.CHAINED_CHARTER_AMENDMENT_SCHEMA,
+        "result": "passed",
+        "amendment_id": "fable-security-subject-test",
+        "change_class": preflight.CHARTER_AMENDMENT_CHANGE_CLASS,
+        "agent": "review-claude-fable",
+        "parent_definition_path": relative(parent_definition),
+        "parent_definition_sha256": _sha256_of(parent_definition),
+        "parent_evidence_path": relative(chain["cohort"]),
+        "parent_evidence_sha256": _sha256_of(chain["cohort"]),
+        "parent_amendment_path": relative(chain["amendment_path"]),
+        "parent_amendment_sha256": _sha256_of(chain["amendment_path"]),
+        "current_definition_sha256": _sha256_of(definition),
+        "current_trace_path": relative(trace),
+        "current_trace_sha256": _sha256_of(trace),
+        "unified_diff_sha256": preflight._unified_diff_sha256(
+            parent_text, definition.read_text(encoding="utf-8")
+        ),
+        "observed_at": receipt["observed_at"],
+    }
+    amendment_path = data / "claude-fable-security-subject.amendment.json"
+    _write_json(amendment_path, amendment)
+    _bind_fable_amendment(tmp_path, amendment_path)
+    # Passing proves the cohort was checked against the Fable 5 charter and selector
+    # it ran on, reached through both parent amendments, not the current charter.
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.PASS, result.detail
+
+    # The parent charter must be the one the model-upgrade amendment bound.
+    parent_definition.write_text(parent_text + "\nUnbound charter text.\n", encoding="utf-8")
+    stale = {
+        **amendment,
+        "parent_definition_sha256": _sha256_of(parent_definition),
+        "unified_diff_sha256": preflight._unified_diff_sha256(
+            parent_definition.read_text(encoding="utf-8"),
+            definition.read_text(encoding="utf-8"),
+        ),
+    }
+    _write_json(amendment_path, stale)
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "current definition digest" in result.detail
+
+    # The chained trace must postdate the amendment it extends.
+    parent_definition.write_text(parent_text, encoding="utf-8")
+    receipt["observed_at"] = "2026-09-03T00:00:00Z"
+    _write_json(trace, receipt)
+    early = {
+        **amendment,
+        "current_trace_sha256": _sha256_of(trace),
+        "observed_at": receipt["observed_at"],
+    }
+    _write_json(amendment_path, early)
+    result = preflight.check_conditional_critic_scope()
+    assert result.state == preflight.FAIL
+    assert "must postdate parent amendment" in result.detail
 
 
 def test_a_short_cohort_cannot_promote_the_conditional_critic(tmp_path, monkeypatch):
@@ -1883,9 +1983,9 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
         assert "authority" not in entry
         assert "blockers" not in entry
     assert document["reviewers"]["claude-opus"]["access_profile"] == ("anthropic-cvp-approved-org")
-    assert document["reviewers"]["claude"]["qualification"]["scopes"]["security"][
-        "boundaryEvidence"
-    ] == ["lrhe-data/fable-5-1-model-upgrade-v1/security-boundary-evidence.json"]
+    # Reviewing security-touching subjects never promotes Fable to a security lane.
+    fable_scopes = document["reviewers"]["claude"]["qualification"]["scopes"]
+    assert fable_scopes["security-review"]["status"] == "ineligible"
     qualification.validate_qualification(document)
 
 

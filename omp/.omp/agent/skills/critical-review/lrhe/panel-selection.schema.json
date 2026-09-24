@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "lrhe/panel-selection.schema.json",
   "title": "Critical Review Panel Selection",
-  "description": "One resolver-owned council roster with one strong critic, cross-family supplements, explicitly qualified lead-family security, and record-selected architecture specialists.",
+  "description": "One resolver-owned council roster with one strong critic, cross-family supplements, explicitly qualified lead-family security, and record-selected architecture specialists, including on security-touching subjects.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -12,8 +12,8 @@
     "authoritySha256", "selected", "skipped"
   ],
   "properties": {
-    "schemaVersion": { "const": 9 },
-    "panelId": { "const": "critical-review-primary-v7" },
+    "schemaVersion": { "const": 10 },
+    "panelId": { "const": "critical-review-primary-v8" },
     "mode": { "enum": ["initial", "targeted-refuter"] },
     "leadFamily": { "enum": ["gpt", "claude"] },
     "reviewRecordPath": { "type": "string", "pattern": "^/" },
@@ -74,16 +74,13 @@
         "architecture-material",
         "architecture-material-redesign",
         "architecture-scope-absent",
-        "authorization-proof-applicable",
         "configured-lead-family-security",
         "configured-strong-critic",
         "configured-supplement",
         "configured-targeted-refuter",
         "provider-data-rights-not-authorized",
         "review-mode-ineligible",
-        "risk-domains-empty",
-        "security-risk-domain",
-        "security-sensitive-path"
+        "risk-domains-empty"
       ]
     },
     "selectedReviewer": {
@@ -199,9 +196,8 @@
           "items": {
             "enum": [
               "access-profile-not-authorized", "architecture-scope-absent",
-              "authorization-proof-applicable", "provider-data-rights-not-authorized",
-              "review-mode-ineligible", "risk-domains-empty", "security-risk-domain",
-              "security-sensitive-path"
+              "provider-data-rights-not-authorized", "review-mode-ineligible",
+              "risk-domains-empty"
             ]
           }
         }

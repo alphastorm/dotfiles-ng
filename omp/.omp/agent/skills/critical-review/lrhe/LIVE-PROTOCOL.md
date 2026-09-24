@@ -46,7 +46,9 @@ reviewer prose:
   correlation group;
 - architectureSpecialists is additive and record-selected. Eligible Fable is
   supplemental whether cross-family or same-lineage, and its absence never
-  shrinks the unconditional council;
+  shrinks the unconditional council. An architecture-lens domain activates it;
+  security domains, authorization proofs, and security-looking paths do not
+  exclude it;
 - leadFamilySecurity explicitly selects qualified Daybreak Blue on every GPT
   full council, with same_lineage_blind_sample and supplemental_evidence standing.
   This reuses its existing security qualification and exact model/access profile;
@@ -784,6 +786,16 @@ and this trace's path, digest, and exact `observed_at`. Reference it from the
 lane's `charterAmendment` and re-run the gates: the parent cohort receipt keeps
 validating against the parent charter, and the current bytes are evidenced by the
 probe.
+
+When the lane already carries a `charterAmendment`, chain it instead of
+replacing it: write `schema: lrhe-chained-charter-standing-amendment-v1` with the
+same fields plus `parent_amendment_path` and `parent_amendment_sha256` naming the
+current amendment, and snapshot the charter that amendment bound as the parent
+definition. Preflight validates the whole chain, so a cohort keeps validating
+against the charter and selector it ran on. Probe a lane that reviews
+security-touching subjects on the auth fixture (`--probe live-repository-v3
+--fixture lrhe-data/repository-canary-auth.py`) so the fresh trace also shows the
+charter completes there without a provider refusal.
 
 ### Model upgrades
 

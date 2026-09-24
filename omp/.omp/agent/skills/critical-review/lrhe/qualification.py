@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail-closed reader for lead-relative critical-review qualification.
 
-Schema v10 selects one live profile for one of two qualified accountable lead
+Schema v11 selects one live profile for one of two qualified accountable lead
 families: GPT/ChatGPT or Claude. Each profile declares strongCritic, always-on
 supplements, explicit leadFamilySecurity, and record-selected
 architectureSpecialists. The strong critic is reciprocal cross-family
@@ -62,7 +62,6 @@ except ModuleNotFoundError:
     os.execv(venv_python, [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
 
 from review_sequence import (
-    CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN,
     RISK_DOMAINS,
     _is_session_local,
     _sha256,
@@ -70,11 +69,11 @@ from review_sequence import (
     select_review_action,
 )
 
-SCHEMA_VERSION = 10
-# Pinned beside the schema version so activation is atomic: a v10 resolver and
-# v7 panel definition cannot half-agree about lead eligibility or reviewer tiers.
-LIVE_PANEL_ID = "critical-review-primary-v7"
-MANIFEST_SCHEMA_VERSION = 9
+SCHEMA_VERSION = 11
+# Pinned beside the schema version so activation is atomic: a v11 resolver and
+# v8 panel definition cannot half-agree about lead eligibility or reviewer tiers.
+LIVE_PANEL_ID = "critical-review-primary-v8"
+MANIFEST_SCHEMA_VERSION = 10
 DEFAULT_QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
 # The manifest records which resolver bytes produced its roster. This is
 # provenance for later audit and re-resolution, not a caller-selectable authority:
@@ -166,9 +165,6 @@ ELIGIBILITY_FIELDS = frozenset(
         "policy",
         "allowedReviewModes",
         "activationRiskDomainsAny",
-        "deniedRiskDomains",
-        "requiredProofClassStatuses",
-        "denyPathComponentRegex",
         "onUnknown",
     }
 )
@@ -199,22 +195,7 @@ PACKET_FIELDS = (
     # a vendor.
     "reviewer_access_profile_allowlist",
 )
-# The two grant vocabularies. Matched exactly against reviewer metadata, never
-# read as repository content -- see `packet_paths`.
-AUTHORIZATION_PACKET_FIELDS = frozenset(
-    {"provider_data_allowlist", "reviewer_access_profile_allowlist"}
-)
 _PACKET_FENCE = re.compile(r"^```ya?ml[ \t]*\n(?P<body>.*?)^```", re.DOTALL | re.MULTILINE)
-
-# The conservative path-component rule, verbatim from the implementation packet.
-# It is a skip filter and never a content-rewriting mechanism: a false positive
-# withholds one additive opinion, alters no byte of the packet, and suppresses no
-# other review lane.
-SECURITY_PATH_PATTERN = (
-    r"(?i)(^|[/_.-])(auth|authentication|authorization|oauth|oidc|sso|rbac|iam|security"
-    r"|secrets?|credentials?|cryptography|crypto|certificates?|tls)([/_.-]|$)"
-)
-SECURITY_SENSITIVE_PATH = re.compile(SECURITY_PATH_PATTERN)
 
 MANIFEST_MODES = ("initial", "targeted-refuter")
 STRONG_REASON_CODE = "configured-strong-critic"
@@ -246,12 +227,9 @@ PROVIDER_DATA_RIGHTS_SKIP_REASON_CODE = "provider-data-rights-not-authorized"
 SKIP_REASON_CODES = (
     ACCESS_PROFILE_SKIP_REASON_CODE,
     "architecture-scope-absent",
-    "authorization-proof-applicable",
     PROVIDER_DATA_RIGHTS_SKIP_REASON_CODE,
     "review-mode-ineligible",
     "risk-domains-empty",
-    "security-risk-domain",
-    "security-sensitive-path",
 )
 
 
@@ -260,13 +238,14 @@ class ConditionalPolicy:
     """Pinned eligibility for one record-selected supplemental specialist."""
 
     policy: str
+    # The policy a scoped quality cohort was admitted under. A cohort stays
+    # evidence about what it measured, so a successor routing policy names its
+    # parent here instead of relabeling the cohort.
+    cohort_policy: str
     required_scope: str
     allowed_review_modes: tuple[str, ...]
     activation_risk_domains: tuple[str, ...]
-    denied_risk_domains: tuple[str, ...]
     qualified_risk_domains: tuple[str, ...]
-    required_proof_class_statuses: tuple[tuple[str, str], ...]
-    deny_path_pattern: str
     on_unknown: str
     fallback_allowed: bool
     thinking_level: str
@@ -280,8 +259,13 @@ class ConditionalPolicy:
     cohort_max_negative_control_percent: int
 
 
-FABLE_ARCHITECTURE_SYNTHESIS_V2 = ConditionalPolicy(
-    policy="fable-non-security-architecture-v1",
+# Fable reviews the architecture of every activated subject, security-touching
+# subjects included: Fable 5.1 may identify vulnerabilities for defensive review,
+# and its current charter trace is the registered authorization probe. Activation
+# still requires an architecture-lens domain, so a security-only record skips it.
+FABLE_POLICY = ConditionalPolicy(
+    policy="fable-architecture-v2",
+    cohort_policy="fable-non-security-architecture-v1",
     required_scope="non-security-architecture",
     allowed_review_modes=("design", "initial", "material-redesign", "founder-requested"),
     activation_risk_domains=(
@@ -291,14 +275,6 @@ FABLE_ARCHITECTURE_SYNTHESIS_V2 = ConditionalPolicy(
         "documentation-policy",
         "persistent-state",
     ),
-    denied_risk_domains=(
-        "authorization",
-        CREDENTIALED_EXTERNAL_LIFECYCLE_DOMAIN,
-        "money-or-assets",
-        "privacy",
-        "release-supply-chain",
-        "secrets-cryptography",
-    ),
     qualified_risk_domains=(
         "architecture",
         "cache-invalidation",
@@ -306,8 +282,6 @@ FABLE_ARCHITECTURE_SYNTHESIS_V2 = ConditionalPolicy(
         "documentation-policy",
         "persistent-state",
     ),
-    required_proof_class_statuses=(("authorization", "not-applicable"),),
-    deny_path_pattern=SECURITY_PATH_PATTERN,
     on_unknown="skip",
     fallback_allowed=False,
     thinking_level="max",
@@ -320,8 +294,6 @@ FABLE_ARCHITECTURE_SYNTHESIS_V2 = ConditionalPolicy(
     cohort_max_forbidden_tool_attempts=0,
     cohort_max_negative_control_percent=10,
 )
-# Kept as a source-level name for callers; the v1 policy id itself is removed.
-FABLE_POLICY = FABLE_ARCHITECTURE_SYNTHESIS_V2
 CONDITIONAL_POLICIES: Mapping[str, ConditionalPolicy] = {
     FABLE_POLICY.policy: FABLE_POLICY
 }
@@ -582,28 +554,9 @@ def _eligibility(reviewer_id: str, entry: Mapping[str, object]) -> ConditionalPo
             f"{list(policy.activation_risk_domains)!r} for {policy_id}, "
             f"got {list(activation)!r}"
         )
-    denied = _names(block.get("deniedRiskDomains"), f"{field}.deniedRiskDomains")
-    if denied != policy.denied_risk_domains:
-        raise QualificationError(
-            f"{field}.deniedRiskDomains must be {list(policy.denied_risk_domains)!r} "
-            f"for {policy_id}, got {list(denied)!r}"
-        )
-    unknown = sorted((set(activation) | set(denied)) - RISK_DOMAINS)
+    unknown = sorted(set(activation) - RISK_DOMAINS)
     if unknown:
         raise QualificationError(f"{field} names unknown risk domains {unknown}")
-    statuses = _mapping(
-        block.get("requiredProofClassStatuses"), f"{field}.requiredProofClassStatuses"
-    )
-    expected_statuses = dict(policy.required_proof_class_statuses)
-    if dict(statuses) != expected_statuses:
-        raise QualificationError(
-            f"{field}.requiredProofClassStatuses must be {expected_statuses!r} "
-            f"for {policy_id}, got {dict(statuses)!r}"
-        )
-    if block.get("denyPathComponentRegex") != policy.deny_path_pattern:
-        raise QualificationError(
-            f"{field}.denyPathComponentRegex does not match the pinned {policy_id} rule"
-        )
     if block.get("onUnknown") != policy.on_unknown:
         raise QualificationError(f"{field}.onUnknown must be {policy.on_unknown!r}")
     if entry.get("fallbackAllowed") is not policy.fallback_allowed:
@@ -1157,46 +1110,17 @@ def _strings(value: object) -> tuple[str, ...]:
     return tuple(item for item in cast(Sequence[object], value) if isinstance(item, str))
 
 
-def packet_paths(packet: Mapping[str, object]) -> tuple[str, ...]:
-    """Return every packet string the deny rule is applied to.
-
-    Section 4.1 trusts the repository-relative paths explicitly present in the
-    immutable packet. Every packet string is scanned rather than a guessed path
-    subset: the rule is component-anchored, so prose survives it, and the only
-    cost of over-scanning is withholding one additive opinion.
-
-    The two authorization allowlists are the exception, and not because scanning
-    them is expensive. They are closed grant vocabularies matched exactly against
-    reviewer metadata, so no member of either can ever be a repository path -- but
-    they read like one to a component-anchored rule. `xai-oauth-default` is an
-    entitlement lane, and scanning it would skip every conditional critic on every
-    council forever, on the strength of a route's name. Excluding them removes
-    false positives only: a security-sensitive path cannot hide in a list whose
-    entries must equal some reviewer's `access_profile` or `data_allowlist_key`.
-    """
-
-    collected: list[str] = []
-    for field in PACKET_FIELDS:
-        if field in AUTHORIZATION_PACKET_FIELDS:
-            continue
-        value = packet.get(field)
-        if isinstance(value, str):
-            collected.append(value)
-        else:
-            collected.extend(_strings(value))
-    return tuple(collected)
-
-
 def fable_skip_reason_codes(
     policy: ConditionalPolicy,
     record: Mapping[str, object],
-    packet_source_paths: Sequence[str] = (),
 ) -> tuple[str, ...]:
     """Return every eligibility failure for one conditional critic, sorted.
 
-    All reasons are reported, not just the first: a packet ineligible on three
+    All reasons are reported, not just the first: a record ineligible on two
     independent grounds is a different fact from one ineligible on a single
     ground, and the skip record is the only place that distinction survives.
+    Security-touching domains, proof classes, and paths are deliberately not
+    grounds: the specialist reviews the architecture of those subjects too.
 
     `risk-domains-empty` stays in this vocabulary because the policy has to be
     complete on its own, but the live resolver never emits it -- an empty or
@@ -1211,24 +1135,8 @@ def fable_skip_reason_codes(
     domains = set(_strings(record.get("touched_risk_domains")))
     if not domains:
         reasons.add("risk-domains-empty")
-    else:
-        if not domains.intersection(policy.activation_risk_domains):
-            reasons.add("architecture-scope-absent")
-        if domains.intersection(policy.denied_risk_domains):
-            reasons.add("security-risk-domain")
-    proof_classes = record.get("proof_classes")
-    for proof_class, expected in policy.required_proof_class_statuses:
-        row = proof_classes.get(proof_class) if isinstance(proof_classes, Mapping) else None
-        status = row.get("status") if isinstance(row, Mapping) else None
-        if status != expected:
-            reasons.add("authorization-proof-applicable")
-    candidates = (
-        str(record.get("artifact_path") or ""),
-        *_strings(record.get("changed_files")),
-        *packet_source_paths,
-    )
-    if any(SECURITY_SENSITIVE_PATH.search(path) for path in candidates if path):
-        reasons.add("security-sensitive-path")
+    elif not domains.intersection(policy.activation_risk_domains):
+        reasons.add("architecture-scope-absent")
     unknown = reasons - set(SKIP_REASON_CODES)
     if unknown:  # pragma: no cover -- defends the closed manifest vocabulary
         raise QualificationError(f"unknown skip reason codes {sorted(unknown)}")
@@ -1569,12 +1477,11 @@ def select_full_council(
             _require_packet_authorization(reviewer, packet)
             selected.append(_selected(reviewer, "supplement", (reason_code,)))
 
-    sources = packet_paths(packet)
     for candidate in architecture_specialists(document, lead_family):
         reasons = tuple(
             sorted(
                 {
-                    *fable_skip_reason_codes(candidate.policy, record, sources),
+                    *fable_skip_reason_codes(candidate.policy, record),
                     *packet_authorization_reason_codes(candidate.reviewer, packet),
                 }
             )

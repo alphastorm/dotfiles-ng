@@ -1330,7 +1330,7 @@ def _conditional_entry() -> dict:
                     "status": "passed",
                     "canaryReceipt": "lrhe-data/fable-max-architecture-cohort.json",
                 },
-                "security": {
+                "security-review": {
                     "status": "ineligible",
                     "boundaryEvidence": ["lrhe-data/fable-max-refusals.json"],
                 },
@@ -1340,9 +1340,6 @@ def _conditional_entry() -> dict:
             "policy": FABLE_POLICY.policy,
             "allowedReviewModes": list(FABLE_POLICY.allowed_review_modes),
             "activationRiskDomainsAny": list(FABLE_POLICY.activation_risk_domains),
-            "deniedRiskDomains": list(FABLE_POLICY.denied_risk_domains),
-            "requiredProofClassStatuses": {"authorization": "not-applicable"},
-            "denyPathComponentRegex": FABLE_POLICY.deny_path_pattern,
             "onUnknown": "skip",
         },
     }
@@ -1376,7 +1373,7 @@ def _daybreak_entry(*, enabled: bool) -> dict:
 
 
 def _panel(with_conditional: bool = True) -> dict:
-    """One synthetic v10 matrix for the two qualified lead families."""
+    """One synthetic v11 matrix for the two qualified lead families."""
 
     reviewers = {
         "claude-opus": _unconditional_entry(
@@ -1913,24 +1910,37 @@ def test_safe_design_record_defaults_to_fable_synthesis(tmp_path: Path) -> None:
     ]
 
 
-@pytest.mark.parametrize(
-    "domain",
-    (
-        "authorization",
-        "credentialed-external-lifecycle",
-        "money-or-assets",
-        "privacy",
-        "release-supply-chain",
-        "secrets-cryptography",
-    ),
+_SECURITY_TOUCHING_DOMAINS = (
+    "authorization",
+    "credentialed-external-lifecycle",
+    "money-or-assets",
+    "privacy",
+    "release-supply-chain",
+    "secrets-cryptography",
 )
-def test_security_domains_skip_only_fable(tmp_path: Path, domain: str) -> None:
-    record = _with_domains(_ready_record(tmp_path / "denied"), [domain])
+
+
+@pytest.mark.parametrize("domain", _SECURITY_TOUCHING_DOMAINS)
+def test_security_touching_architecture_records_keep_fable(tmp_path: Path, domain: str) -> None:
+    record = _with_domains(_ready_record(tmp_path / "security"), ["architecture", domain])
+    _remint_receipt(record)
+    manifest = _resolve(tmp_path, record)
+    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "daybreak-blue", "claude"]
+    assert manifest["skipped"] == []
+    architecture = manifest["selected"][-1]
+    assert architecture["role"] == qualification.ARCHITECTURE_ROLE
+    assert architecture["authority"] == qualification.SUPPLEMENTAL_EVIDENCE
+
+
+@pytest.mark.parametrize("domain", _SECURITY_TOUCHING_DOMAINS)
+def test_a_security_only_record_gives_fable_no_architecture_scope(
+    tmp_path: Path, domain: str
+) -> None:
+    record = _with_domains(_ready_record(tmp_path / "security-only"), [domain])
     _remint_receipt(record)
     manifest = _resolve(tmp_path, record)
     assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "daybreak-blue"]
-    assert _reviewer_ids(manifest, "skipped") == ["claude"]
-    assert "security-risk-domain" in manifest["skipped"][0]["reasonCodes"]
+    assert manifest["skipped"][0]["reasonCodes"] == ["architecture-scope-absent"]
 
 
 @pytest.mark.parametrize("domain", ("cross-system-boundary", "public-protocol"))
@@ -1944,53 +1954,26 @@ def test_unqualified_architecture_adjacent_domains_skip_fable(
     assert manifest["skipped"][0]["reasonCodes"] == ["architecture-scope-absent"]
 
 
-def test_one_denied_domain_beside_safe_domains_still_skips_fable(tmp_path: Path) -> None:
-    record = _with_domains(_ready_record(tmp_path / "mixed"), ["architecture", "privacy"])
-    manifest = _resolve(tmp_path, record)
-    assert _reviewer_ids(manifest) == ["claude-opus", "gemini", "grok", "daybreak-blue"]
-    assert _reviewer_ids(manifest, "skipped") == ["claude"]
-
-
-def test_an_applicable_authorization_proof_skips_fable(tmp_path: Path) -> None:
-    record = _ready_record(tmp_path / "proof-classes")
+def test_authorization_proof_and_security_paths_keep_fable(tmp_path: Path) -> None:
+    record = _ready_record(tmp_path / "subject")
     record["proof_classes"]["authorization"] = {
         "status": "passed",
         "evidence_or_justification": "the proven access path is cited",
         "receipt_id": "focused-proof",
     }
-    manifest = _resolve(tmp_path, record)
-    assert manifest["skipped"][0]["reasonCodes"] == ["authorization-proof-applicable"]
-
-
-def test_a_denied_changed_path_skips_fable(tmp_path: Path) -> None:
-    record = _ready_record(tmp_path / "subject")
-    assert _reviewer_ids(_resolve(tmp_path / "control", record), "skipped") == []
     _with_changed_file(record, tmp_path / "subject" / "oauth_gateway.py")
-    manifest = _resolve(tmp_path / "denied", record)
-    assert manifest["skipped"][0]["reasonCodes"] == ["security-sensitive-path"]
-
-
-def test_a_denied_packet_source_path_skips_fable(tmp_path: Path) -> None:
-    record = _ready_record(tmp_path / "subject")
-    manifest = _resolve(tmp_path / "denied", record, design_or_diff="src/auth/session.py")
-    assert manifest["skipped"][0]["reasonCodes"] == ["security-sensitive-path"]
+    manifest = _resolve(tmp_path / "resolved", record, design_or_diff="src/auth/session.py")
+    assert _reviewer_ids(manifest)[-1] == "claude"
+    assert manifest["skipped"] == []
 
 
 def test_every_independent_fable_skip_reason_is_recorded(tmp_path: Path) -> None:
-    record = _with_domains(_ready_record(tmp_path / "everything"), ["privacy"])
-    record["proof_classes"]["authorization"] = {
-        "status": "passed",
-        "evidence_or_justification": "the authorization path is proven",
-        "receipt_id": "focused-proof",
-    }
-    _with_changed_file(record, tmp_path / "everything" / "tls_handshake.py")
-    manifest = _resolve(tmp_path, record)
-    assert manifest["skipped"][0]["reasonCodes"] == [
+    record = _ready_record(tmp_path / "everything", mode="remediation")
+    _with_domains(record, ["privacy"])
+    assert fable_skip_reason_codes(FABLE_POLICY, record) == (
         "architecture-scope-absent",
-        "authorization-proof-applicable",
-        "security-risk-domain",
-        "security-sensitive-path",
-    ]
+        "review-mode-ineligible",
+    )
 
 
 @pytest.mark.parametrize("domains", ([], ["not-a-real-domain"]))
@@ -2294,7 +2277,7 @@ def test_a_conditional_critic_activates_its_scope_and_role_together() -> None:
 
 def test_a_refused_scope_keeps_its_boundary_evidence() -> None:
     document = _panel()
-    document["reviewers"]["claude"]["qualification"]["scopes"]["security"] = {
+    document["reviewers"]["claude"]["qualification"]["scopes"]["security-review"] = {
         "status": "ineligible",
         "boundaryEvidence": [],
     }
@@ -2323,17 +2306,15 @@ def test_conditional_selector_and_eligibility_config_are_exact() -> None:
     with pytest.raises(QualificationError, match="activationRiskDomainsAny must be"):
         validate_qualification(widened)
 
-    relaxed = _panel()
-    relaxed["reviewers"]["claude"]["eligibility"]["denyPathComponentRegex"] = r"(?i)nothing"
-    with pytest.raises(QualificationError, match="denyPathComponentRegex"):
-        validate_qualification(relaxed)
+    stale = _panel()
+    stale["reviewers"]["claude"]["eligibility"]["deniedRiskDomains"] = ["authorization"]
+    with pytest.raises(QualificationError, match="eligibility fields must be"):
+        validate_qualification(stale)
 
-    permissive = _panel()
-    permissive["reviewers"]["claude"]["eligibility"]["requiredProofClassStatuses"] = {
-        "authorization": "passed"
-    }
-    with pytest.raises(QualificationError, match="requiredProofClassStatuses"):
-        validate_qualification(permissive)
+    retired = _panel()
+    retired["reviewers"]["claude"]["eligibility"]["policy"] = "fable-non-security-architecture-v1"
+    with pytest.raises(QualificationError, match="policy must be one of"):
+        validate_qualification(retired)
 
 
 def test_a_conditional_critic_can_never_declare_a_fallback() -> None:

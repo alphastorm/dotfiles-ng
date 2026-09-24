@@ -678,6 +678,10 @@ def _required_read_only_marker(entry: dict) -> str:
 
 CHARTER_AMENDMENT_SCHEMA = "lrhe-charter-standing-amendment-v1"
 CHARTER_AMENDMENT_CHANGE_CLASS = "resolver-receipt-standing-source-v1"
+# A charter change on a lane whose standing already rests on an amendment chains
+# that amendment instead of restarting from the cohort, so every historical trace
+# keeps validating against the exact charter and selector that produced it.
+CHAINED_CHARTER_AMENDMENT_SCHEMA = "lrhe-chained-charter-standing-amendment-v1"
 MODEL_UPGRADE_AMENDMENT_SCHEMA = "lrhe-model-upgrade-standing-amendment-v1"
 MODEL_UPGRADE_AMENDMENT_CHANGE_CLASS = "model-upgrade-standing-source-v1"
 ALLOWED_MODEL_UPGRADE_TRANSITIONS = frozenset(
@@ -706,9 +710,11 @@ CHARTER_AMENDMENT_KEYS = frozenset(
         "observed_at",
     }
 )
-MODEL_UPGRADE_AMENDMENT_KEYS = CHARTER_AMENDMENT_KEYS | {
+CHAINED_CHARTER_AMENDMENT_KEYS = CHARTER_AMENDMENT_KEYS | {
     "parent_amendment_path",
     "parent_amendment_sha256",
+}
+MODEL_UPGRADE_AMENDMENT_KEYS = CHAINED_CHARTER_AMENDMENT_KEYS | {
     "parent_selector",
     "current_selector",
 }
@@ -788,15 +794,24 @@ def _charter_amendment(
         expected_keys = CHARTER_AMENDMENT_KEYS
         expected_change_class = CHARTER_AMENDMENT_CHANGE_CLASS
         parent_selector = selector
+    elif schema == CHAINED_CHARTER_AMENDMENT_SCHEMA:
+        expected_keys = CHAINED_CHARTER_AMENDMENT_KEYS
+        expected_change_class = CHARTER_AMENDMENT_CHANGE_CLASS
+        parent_selector = selector
     elif schema == MODEL_UPGRADE_AMENDMENT_SCHEMA:
         expected_keys = MODEL_UPGRADE_AMENDMENT_KEYS
         expected_change_class = MODEL_UPGRADE_AMENDMENT_CHANGE_CLASS
         parent_selector = amendment.get("parent_selector")
     else:
+        schemas = [
+            CHARTER_AMENDMENT_SCHEMA,
+            CHAINED_CHARTER_AMENDMENT_SCHEMA,
+            MODEL_UPGRADE_AMENDMENT_SCHEMA,
+        ]
         return [
-            f"{family}: charter amendment schema={schema!r}, expected one of "
-            f"{[CHARTER_AMENDMENT_SCHEMA, MODEL_UPGRADE_AMENDMENT_SCHEMA]!r}"
+            f"{family}: charter amendment schema={schema!r}, expected one of {schemas!r}"
         ], None, None
+    chained = schema != CHARTER_AMENDMENT_SCHEMA
 
     missing = expected_keys - set(amendment)
     extra = set(amendment) - expected_keys
@@ -872,7 +887,7 @@ def _charter_amendment(
         current_trace = _amendment_path(
             amendment.get("current_trace_path"), "current_trace_path", ".json"
         )
-        if schema == MODEL_UPGRADE_AMENDMENT_SCHEMA:
+        if chained:
             parent_amendment = _amendment_path(
                 amendment.get("parent_amendment_path"), "parent_amendment_path", ".json"
             )
@@ -923,7 +938,7 @@ def _charter_amendment(
         except (OSError, json.JSONDecodeError) as exc:
             problems.append(f"{family}: parent charter amendment is unreadable: {exc}")
         else:
-            if (
+            if schema == MODEL_UPGRADE_AMENDMENT_SCHEMA and (
                 not isinstance(parent_amendment_document, dict)
                 or parent_amendment_document.get("schema") != CHARTER_AMENDMENT_SCHEMA
             ):
@@ -985,7 +1000,7 @@ def _charter_amendment(
             _rfc3339(trace_observed_at, "current trace observed_at")
         except ValueError as exc:
             problems.append(f"{family}: charter amendment {exc}")
-    if schema == MODEL_UPGRADE_AMENDMENT_SCHEMA and amendment_time is not None:
+    if chained and amendment_time is not None:
         for label, document in (
             ("parent evidence", json.loads(parent_evidence.read_text(encoding="utf-8"))),
             ("parent amendment", parent_amendment_document),
@@ -1054,7 +1069,7 @@ def _cohort_problems(
     expected = {
         "schema": policy.cohort_schema,
         "result": "passed",
-        "policy": policy.policy,
+        "policy": policy.cohort_policy,
         "scope": policy.required_scope,
         "agent": critic.reviewer.agent,
         "requested_selector": cohort_selector,

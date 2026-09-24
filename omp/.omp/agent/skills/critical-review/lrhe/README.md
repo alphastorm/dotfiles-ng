@@ -292,7 +292,9 @@ profiles exist, and each has four explicit groups:
   the existing qualified scope and exact model/access contract, not a new canary;
 - architectureSpecialists is record-selected. Fable is default-on for eligible
   design, architecture-heavy initial, material-redesign, and founder-requested councils, but always
-  carries supplemental authority. Its independence_class still records whether
+  carries supplemental authority. Security domains, authorization proofs, and
+  security-looking paths do not exclude it; a record with no architecture-lens
+  domain still skips it. Its independence_class still records whether
   its Claude lineage matches the lead.
 
 The explicit security group never replaces the reciprocal strong critic or
@@ -339,15 +341,16 @@ Conflating experiment membership with live dispatch turns evaluation lanes into
 unapproved reviewers and makes independent roles look like votes. `panels.yaml`
 therefore owns experiments only; `qualification.yml` owns live dispatch.
 
-qualification.py fails closed unless schema version 10, panel v7, exactly the GPT
+qualification.py fails closed unless schema version 11, panel v8, exactly the GPT
 and Claude lead profiles, one strong critic, nonempty supplements,
 dispatch/evaluation flags, canary results, read-only proof, agents, and selectors
 are internally consistent. Each profile rejects a same-family strong critic or
 supplement, duplicate memberships, and an unavailable strong floor. The explicit
 lead-family security group requires matching lineage, the security lens, and the
 existing passed provider/schema/read-only qualification gates. Fable proves
-the common schema/read-only gates and one passed non-security architecture scope
-with a current cohort or a validated model-upgrade standing amendment.
+the common schema/read-only gates and its passed architecture quality scope,
+the Fable 5 cohort that `fable-architecture-v2` names as its cohort policy, through
+a validated standing-amendment chain; its `security-review` scope stays ineligible.
 targeted-refuter returns only its separately configured global pool.
 
 `initial` is the full-council resolution, not a record mode: it resolves any record the
@@ -383,11 +386,9 @@ Authorization is two grants and never one. A reviewer's data_allowlist_key must
 appear in provider_data_allowlist and its access_profile must appear in
 reviewer_access_profile_allowlist. A withheld grant fails the whole resolution
 for the strong critic or an always-on supplement. It skips a record-selected
-architecture specialist with every reason recorded. Neither allowlist is scanned
-by Fable's deny-path rule because both are closed grant vocabularies rather than
-reviewed source paths.
+architecture specialist with every reason recorded.
 
-Skip reasons are reported as a sorted set, not first-match: a packet ineligible on three
+Skip reasons are reported as a sorted set, not first-match: a record ineligible on two
 independent grounds is a different fact from one ineligible on a single ground, and the
 manifest is the only place that distinction survives. One vocabulary entry,
 `risk-domains-empty`, is deliberately unreachable from the live resolver. An empty or
@@ -459,13 +460,15 @@ so served model, declared and executed tools, schema validity, and fallback are 
 judged by the one implementation that already judges them. A non-completed attempt may
 carry no receipt at all, which is why refusals cannot be hidden as passes. The cohort
 also pins `agent_definition_sha256`: an arbitrary edit after the cohort ran
-makes it stale and requires fresh qualification. Two narrow amendments preserve
+makes it stale and requires fresh qualification. Three narrow amendments preserve
 standing without relabeling old evidence. A
 `resolver-receipt-standing-source-v1` amendment binds one reviewed charter-only
-change. An `lrhe-model-upgrade-standing-amendment-v1` additionally chains that
-qualified parent charter, permits only an explicitly allowlisted selector-only
-delta, and requires the current trace to postdate both the parent cohort and
-parent amendment. Both preserve the parent cohort bytes under their original
+change; `lrhe-chained-charter-standing-amendment-v1` binds the same change on a
+lane whose standing already rests on an amendment, and chains that amendment. An
+`lrhe-model-upgrade-standing-amendment-v1` additionally chains its qualified
+parent charter and permits only an explicitly allowlisted selector-only delta.
+Both chained forms require the current trace to postdate the parent cohort and
+parent amendment. All three preserve the parent cohort bytes under their original
 hashes and require one fresh `lrhe-live-review-trace-v2` receipt against the
 current charter. Old attempts remain validated against the original parent
 snapshot and selector; they are never relabeled as current runs.

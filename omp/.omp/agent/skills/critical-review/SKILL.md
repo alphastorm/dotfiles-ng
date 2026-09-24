@@ -133,11 +133,14 @@ The resolver uses four explicit profile groups, not one role per model:
 | strongCritic | Opus 5.5 through the CVP-approved route | Daybreak Blue | reciprocal cross-family independent evidence |
 | supplements | Gemini 3.8 Flash and Grok 4.7 | Gemini 3.8 Flash and Grok 4.7 | always-on cross-family supplemental evidence |
 | leadFamilySecurity | qualified Daybreak Blue | none configured | always-on same-lineage blind sample; supplemental evidence only |
-| architectureSpecialists | Fable 5.1 when eligible | Fable 5.1 when eligible | record-selected supplemental architecture synthesis |
+| architectureSpecialists | Fable 5.1 when eligible | Fable 5.1 when eligible | record-selected supplemental architecture synthesis, security-touching subjects included |
 
 The strong critic and supplements must be pairwise distinct by model family and
 correlation group. Fable may intentionally share a lineage because its standing
-is always supplemental.
+is always supplemental. Fable is eligible whenever the record names an
+architecture-lens domain; security domains, authorization proofs, and
+security-looking paths no longer exclude it. It may identify vulnerabilities it
+finds but never writes exploits, and it never becomes the council's security lane.
 
 GPT full councils include Daybreak through the explicit leadFamilySecurity group,
 reusing its qualified security scope and exact model/access contract. Its
@@ -236,7 +239,7 @@ A reviewer's charter bytes and model selector are pinned: `qualification.yml` bi
 
 A probe is prepared and dispatched exactly like a council: the canary tool's `trace-dispatch` materializes a frozen probe subject — the declared fixture committed into a throwaway repository, because freezing needs a clean HEAD and a working tree is never one — and returns verifier-approved Task input whose packet carries only the probed lane's two grants. The lead submits that payload verbatim through the same gate, then derives the boundary receipt from the reviewer's session transcript. The live protocol carries both commands.
 
-A charter change then lands as a `lrhe-charter-standing-amendment-v1` document binding the parent definition, the parent evidence receipt named by `canaryReceipt`, the current definition bytes, the unified-diff digest, and that fresh trace; `qualification.yml` references it as `charterAmendment`. Nothing here grants dispatch authority: live council membership stays owned by `liveDispatch`.
+A charter change then lands as a `lrhe-charter-standing-amendment-v1` document binding the parent definition, the parent evidence receipt named by `canaryReceipt`, the current definition bytes, the unified-diff digest, and that fresh trace; `qualification.yml` references it as `charterAmendment`. A lane whose `charterAmendment` already exists chains it instead, through `lrhe-chained-charter-standing-amendment-v1` with the parent amendment's path and digest, so older traces stay bound to the charter and selector that produced them. Nothing here grants dispatch authority: live council membership stays owned by `liveDispatch`.
 
 A model or effort change is the same boundary: repin the lane everywhere it is bound, take one fresh canary trace of the new definition on a neutral probe, and bind that trace directly as its `canaryReceipt`, retiring any `charterAmendment` chain. A cohort-qualified lane instead crosses only an allowlisted point release through the model-upgrade standing amendment. The live protocol lists the bind points and selector rules.
 
