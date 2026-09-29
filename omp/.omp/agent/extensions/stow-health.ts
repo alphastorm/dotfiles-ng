@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { lstat, readdir, readlink } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -19,11 +19,22 @@ const SKIP: Record<string, true> = {
 };
 const MAX_DEPTH = 3;
 
+export interface RuntimeWorktree {
+	rel: string;
+	/** Conventional Commits type and scope of the commits session start makes. */
+	scope: string;
+	/** What the subject counts when it has no room to list names. */
+	noun: string;
+}
+
 // Directories OMP's own writers own. setup.sh's ensure_runtime_worktree keeps
 // each one a git worktree of the private repository, so a change there is backed
 // up only once it is committed and pushed from inside the directory -- and the
-// private checkout's own `git status` never shows it.
-const RUNTIME_WORKTREES = [".omp/agent/managed-skills", ".omp/plugins"];
+// private checkout's own `git status` never shows it. Session start does both.
+const RUNTIME_WORKTREES: readonly RuntimeWorktree[] = [
+	{ rel: ".omp/agent/managed-skills", scope: "docs(skills)", noun: "skills" },
+	{ rel: ".omp/plugins", scope: "chore(plugins)", noun: "files" },
+];
 
 /** Each package setup.sh stows into ~/.omp, as [stow directory, package name]. */
 function stowPackages(home: string): Array<[dir: string, name: string]> {
@@ -76,12 +87,33 @@ interface RunResult {
 	stderr: string;
 }
 
-/** Run a command; undefined when it could not run at all (not installed, timed out). */
-function run(file: string, args: string[]): Promise<RunResult | undefined> {
-	const { promise, resolve } = Promise.withResolvers<RunResult | undefined>();
-	execFile(file, args, { timeout: 10_000 }, (error, stdout, stderr) => {
-		const code = error ? error.code : 0;
-		resolve(typeof code === "number" ? { code, stdout, stderr } : undefined);
+/**
+ * Run a command; undefined when it could not run at all (not installed, timed
+ * out). The child leads a session of its own, so it has no controlling
+ * terminal: ssh and gpg fail instead of prompting over the TUI.
+ */
+function run(file: string, args: string[], timeoutMs = 10_000): Promise<RunResult | undefined> {
+	const { promise, resolve: settle } = Promise.withResolvers<RunResult | undefined>();
+	const child = spawn(file, args, { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+	let stdout = "";
+	let stderr = "";
+	child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+	child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+	// The whole group, so ssh goes too; SIGTERM, so git removes its lock files.
+	const timer = setTimeout(() => {
+		try {
+			if (child.pid) process.kill(-child.pid, "SIGTERM");
+		} catch {
+			// already gone
+		}
+	}, timeoutMs);
+	child.on("error", () => {
+		clearTimeout(timer);
+		settle(undefined);
+	});
+	child.on("close", code => {
+		clearTimeout(timer);
+		settle(code === null ? undefined : { code, stdout, stderr });
 	});
 	return promise;
 }
@@ -109,39 +141,123 @@ async function collectConflicts(home: string): Promise<string[]> {
 	return found.flat();
 }
 
-interface RuntimeState {
-	broken: string[];
-	unsaved: string[];
+/** A runtime worktree holding changes its upstream does not have yet. */
+export interface Pending {
+	tree: RuntimeWorktree;
+	dir: string;
+	/** Entries `git status` lists. */
+	changes: number;
+	/** Commits the upstream lacks. */
+	ahead: number;
+	/** Why only a person can save it, when only a person can. */
+	blocker?: string;
 }
 
-async function inspectRuntimeWorktrees(home: string): Promise<RuntimeState> {
-	const state: RuntimeState = { broken: [], unsaved: [] };
+export async function inspectRuntimeWorktrees(home: string): Promise<{ broken: string[]; pending: Pending[] }> {
+	const broken: string[] = [];
+	const pending: Pending[] = [];
 	await Promise.all(
-		RUNTIME_WORKTREES.map(async rel => {
-			const dir = join(home, rel);
+		RUNTIME_WORKTREES.map(async tree => {
+			const dir = join(home, tree.rel);
 			const stat = await lstat(dir).catch(() => undefined);
 			if (!stat) return; // setup.sh has not run, or there is no private repository
 			if (stat.isSymbolicLink() || !existsSync(join(dir, ".git"))) {
-				state.broken.push(`~/${rel}`);
+				broken.push(`~/${tree.rel}`);
 				return;
 			}
 			const status = await run("git", ["-C", dir, "status", "--porcelain=v2", "--branch"]);
 			if (!status) return;
 			if (status.code !== 0) {
-				state.broken.push(`~/${rel}`);
+				broken.push(`~/${tree.rel}`);
 				return;
 			}
 			const lines = status.stdout.split("\n");
-			const changes = lines.filter(line => line && !line.startsWith("#")).length;
+			const entries = lines.filter(line => line && !line.startsWith("#"));
 			const ahead = Number(/^# branch\.ab \+(\d+) /m.exec(status.stdout)?.[1] ?? 0);
-			const parts: string[] = [];
-			if (changes > 0) parts.push(`${changes} uncommitted`);
-			if (!lines.some(line => line.startsWith("# branch.upstream "))) parts.push("no upstream");
-			else if (ahead > 0) parts.push(`${ahead} unpushed`);
-			if (parts.length > 0) state.unsaved.push(`~/${rel}: ${parts.join(", ")}`);
+			const upstream = lines.some(line => line.startsWith("# branch.upstream "));
+			if (entries.length === 0 && ahead === 0 && upstream) return;
+			let blocker: string | undefined;
+			// A rebase in progress detaches HEAD; committing into it or into a conflict
+			// would take over someone's half-finished work.
+			if (lines.includes("# branch.head (detached)")) blocker = "detached HEAD";
+			else if (entries.some(line => line.startsWith("u "))) blocker = "unresolved conflicts";
+			else if (!upstream) blocker = "no upstream";
+			pending.push({ tree, dir, changes: entries.length, ahead, blocker });
 		}),
 	);
-	return state;
+	return { broken, pending };
+}
+
+// Another OMP session started at the same moment and is saving the same worktree.
+const CONTENDED = /index\.lock|cannot lock ref|nothing to commit/;
+
+/** The line of git's output that says what went wrong. */
+function failure(result: RunResult | undefined): string {
+	if (!result) return "did not finish";
+	const lines = `${result.stderr}\n${result.stdout}`
+		.split("\n")
+		.map(line => line.trim())
+		.filter(Boolean);
+	return lines.find(line => /^(! |fatal:|error:)|denied/.test(line)) ?? lines.at(-1) ?? `exit ${result.code}`;
+}
+
+function commitMessage(
+	tree: RuntimeWorktree,
+	changes: ReadonlyArray<readonly [status: string, path: string]>,
+): { subject: string; body: string } {
+	const names = [...new Set(changes.map(([, path]) => path.split("/")[0]))].sort();
+	const statuses = new Set(changes.map(([status]) => status));
+	const only = statuses.size === 1 ? [...statuses][0] : undefined;
+	const verb = only === "A" ? "add" : only === "D" ? "remove" : "update";
+	const listed = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+	let subject = `${tree.scope}: ${verb} ${listed}`;
+	if (subject.length > 72) subject = `${tree.scope}: ${verb} ${names.length} ${tree.noun}`;
+	const listing = changes.map(([status, path]) => `${status} ${path}`);
+	return { subject, body: ["Saved by the stow-health extension at session start.", "", ...listing].join("\n") };
+}
+
+/**
+ * Commit everything OMP's writers left in a runtime worktree and push its branch
+ * to the upstream. `saved` or `unsaved` is one notification line; neither is set
+ * when there was nothing to do or another session got there first.
+ */
+export async function saveRuntimeWorktree(item: Pending): Promise<{ saved?: string; unsaved?: string }> {
+	const where = `~/${item.tree.rel}`;
+	let uncommitted = item.changes;
+	let ahead = item.ahead;
+	const unsaved = (why: string) => {
+		const parts = [uncommitted > 0 && `${uncommitted} uncommitted`, ahead > 0 && `${ahead} unpushed`];
+		return { unsaved: `${where}: ${parts.filter(Boolean).join(", ") || "not pushed"} (${why})` };
+	};
+	if (item.blocker) return unsaved(item.blocker);
+	let committed = 0;
+	if (uncommitted > 0) {
+		const add = await run("git", ["-C", item.dir, "add", "--all"]);
+		if (add?.code !== 0) return CONTENDED.test(failure(add)) ? {} : unsaved(`add failed: ${failure(add)}`);
+		const staged = await run("git", ["-C", item.dir, "diff", "--cached", "--name-status", "--no-renames", "-z"]);
+		if (staged?.code !== 0) return unsaved(`diff failed: ${failure(staged)}`);
+		const fields = staged.stdout.split("\0");
+		const changes: Array<[status: string, path: string]> = [];
+		for (let i = 0; i + 1 < fields.length; i += 2) changes.push([fields[i], fields[i + 1]]);
+		if (changes.length > 0) {
+			const { subject, body } = commitMessage(item.tree, changes);
+			// Signing can wait on pinentry.
+			const result = await run("git", ["-C", item.dir, "commit", "--quiet", "-m", subject, "-m", body], 60_000);
+			if (result?.code !== 0) {
+				return CONTENDED.test(failure(result)) ? {} : unsaved(`commit failed: ${failure(result)}`);
+			}
+			committed = changes.length;
+			ahead += 1;
+		}
+		uncommitted = 0;
+	}
+	if (ahead === 0) return {};
+	// `upstream`, whatever push.default says: this branch, to the branch it tracks.
+	const push = await run("git", ["-C", item.dir, "-c", "push.default=upstream", "push", "--quiet"], 120_000);
+	if (push?.code !== 0) return CONTENDED.test(failure(push)) ? {} : unsaved(`push failed: ${failure(push)}`);
+	const pushed = `pushed ${ahead} commit${ahead === 1 ? "" : "s"}`;
+	if (committed === 0) return { saved: `${where}: ${pushed}` };
+	return { saved: `${where}: committed ${committed} change${committed === 1 ? "" : "s"}, ${pushed}` };
 }
 
 /**
@@ -155,8 +271,9 @@ async function inspectRuntimeWorktrees(home: string): Promise<RuntimeState> {
  * - A stowed link a runtime replaced with a real file. The next restow aborts
  *   the whole package: every `omp plugin install` did this to bun.lock until
  *   ~/.omp/plugins became a worktree.
- * - A runtime worktree that stopped being one, or holds changes nobody has
- *   committed and pushed yet.
+ * - A runtime worktree that stopped being one. Changes OMP's writers leave in
+ *   one are committed and pushed here, so nobody has to remember to; only what
+ *   that cannot save -- a rebase in progress, a rejected push -- is reported.
  *
  * Session start is the right moment to check, because it is exactly when the
  * configuration is loaded and someone is there to read the result.
@@ -203,12 +320,29 @@ export default function stowHealth(pi: ExtensionAPI): void {
 				"warning",
 			);
 		}
-		if (runtime.unsaved.length > 0) {
-			ctx.ui.notify(
-				"OMP runtime state not backed up yet — commit and push from inside each directory:\n" +
-					runtime.unsaved.map(line => `  ${line}`).join("\n"),
-				"info",
-			);
+		if (runtime.pending.length > 0) {
+			// Signing can wait on pinentry and pushing on the network, so the save
+			// runs past session start and reports when it is done.
+			void Promise.all(runtime.pending.map(saveRuntimeWorktree))
+				.then(outcomes => {
+					const saved = outcomes.flatMap(outcome => (outcome.saved ? [`  ${outcome.saved}`] : []));
+					const unsaved = outcomes.flatMap(outcome => (outcome.unsaved ? [`  ${outcome.unsaved}`] : []));
+					if (saved.length > 0) ctx.ui.notify(`Backed up OMP runtime state:\n${saved.join("\n")}`, "info");
+					if (unsaved.length > 0) {
+						ctx.ui.notify(
+							`OMP runtime state not backed up — commit and push from inside each directory:\n${unsaved.join("\n")}`,
+							"warning",
+						);
+					}
+				})
+				.catch((error: unknown) => {
+					// Detached: an escaped rejection would take the session down with it.
+					try {
+						ctx.ui.notify(`Backing up OMP runtime state failed: ${String(error)}`, "warning");
+					} catch {
+						// the session has already ended
+					}
+				});
 		}
 	});
 }
