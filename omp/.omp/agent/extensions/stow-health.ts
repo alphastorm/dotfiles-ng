@@ -1,9 +1,9 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { lstat, readdir } from "node:fs/promises";
+import { lstat, readdir, readlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 
 // Runtime state, not stowed configuration. `sessions` and `blobs` in particular
 // are large enough that walking them on every session start would be felt.
@@ -25,12 +25,32 @@ const MAX_DEPTH = 3;
 // private checkout's own `git status` never shows it.
 const RUNTIME_WORKTREES = [".omp/agent/managed-skills", ".omp/plugins"];
 
-async function collectDangling(dir: string, depth: number, out: string[]): Promise<void> {
+/** Each package setup.sh stows into ~/.omp, as [stow directory, package name]. */
+function stowPackages(home: string): Array<[dir: string, name: string]> {
+	return [
+		[join(home, ".dotfiles"), "omp"],
+		[process.env.DOTFILES_PRIVATE_DIR ?? join(home, ".dotfiles-private"), "omp-private"],
+	];
+}
+
+/**
+ * Collect the links under `dir` that stow planted and whose target is gone. A
+ * link counts only when it points into one of `packageRoots`: runtime state
+ * under ~/.omp keeps links that are dangling by design -- Chrome's SingletonLock
+ * in a browser profile names `<host>-<pid>`, a lane worktree's bazel-out points
+ * into a pruned output base -- and setup.sh could repair neither.
+ */
+export async function collectDangling(
+	dir: string,
+	packageRoots: readonly string[],
+	depth = 0,
+	out: string[] = [],
+): Promise<string[]> {
 	let entries;
 	try {
 		entries = await readdir(dir, { withFileTypes: true });
 	} catch {
-		return; // unreadable is not the failure this is looking for
+		return out; // unreadable is not the failure this is looking for
 	}
 	for (const entry of entries) {
 		const path = join(dir, entry.name);
@@ -38,11 +58,16 @@ async function collectDangling(dir: string, depth: number, out: string[]): Promi
 		// walk off the far side of skills/critical-review/lrhe, whose .venv alone is
 		// six thousand files.
 		if (entry.isSymbolicLink()) {
-			if (!existsSync(path)) out.push(path);
+			if (existsSync(path)) continue;
+			const link = await readlink(path).catch(() => undefined);
+			if (link === undefined) continue; // removed since readdir listed it
+			const target = resolve(dir, link);
+			if (packageRoots.some(root => target.startsWith(root + sep))) out.push(path);
 		} else if (entry.isDirectory() && depth < MAX_DEPTH && !SKIP[entry.name]) {
-			await collectDangling(path, depth + 1, out);
+			await collectDangling(path, packageRoots, depth + 1, out);
 		}
 	}
+	return out;
 }
 
 interface RunResult {
@@ -69,10 +94,7 @@ function run(file: string, args: string[]): Promise<RunResult | undefined> {
  * The exit status is the verdict; the output only names the paths.
  */
 async function collectConflicts(home: string): Promise<string[]> {
-	const packages: Array<[dir: string, name: string]> = [
-		[join(home, ".dotfiles"), "omp"],
-		[process.env.DOTFILES_PRIVATE_DIR ?? join(home, ".dotfiles-private"), "omp-private"],
-	];
+	const packages = stowPackages(home);
 	const found = await Promise.all(
 		packages.map(async ([dir, name]) => {
 			if (!existsSync(join(dir, name))) return [];
@@ -146,9 +168,11 @@ export default function stowHealth(pi: ExtensionAPI): void {
 		if (!ctx.hasUI) return;
 		const home = homedir();
 		const root = join(home, ".omp");
-		const broken: string[] = [];
-		const [, conflicts, runtime] = await Promise.all([
-			collectDangling(root, 0, broken),
+		const [broken, conflicts, runtime] = await Promise.all([
+			collectDangling(
+				root,
+				stowPackages(home).map(([dir, name]) => resolve(dir, name)),
+			),
 			collectConflicts(home),
 			inspectRuntimeWorktrees(home),
 		]);
