@@ -13,7 +13,7 @@
   ],
   "properties": {
     "schemaVersion": { "const": 10 },
-    "panelId": { "const": "critical-review-primary-v8" },
+    "panelId": { "const": "critical-review-primary-v9" },
     "mode": { "enum": ["initial", "targeted-refuter"] },
     "leadFamily": { "enum": ["gpt", "claude"] },
     "reviewRecordPath": { "type": "string", "pattern": "^/" },

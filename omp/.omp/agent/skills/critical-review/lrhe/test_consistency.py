@@ -66,7 +66,6 @@ SKILL_OWNED_CONTROLS = (
     "stop before review ceremony",
     "#### focused review routing",
     "only gpt/chatgpt and claude are qualified accountable leads",
-    "always uses exactly one reciprocal cross-family strong critic",
     "the caller cannot name, replace, reorder, or add a reviewer",
     "this routing does not modify the full council roster",
     "never invoke ask to choose an assurance class",
@@ -203,9 +202,7 @@ def test_proportional_assurance_policy_contract():
     focused_routing = focused_routing.split("when a full council is justified", 1)[0]
     assert "review-daybreak-blue for a claude lead" in focused_routing
     assert "review-claude-opus under cvp for" in focused_routing
-    assert "gemini and grok remain full-council supplements" in focused_routing
     assert "review-claude-fable remains resolver-qualified architecture synthesis" in focused_routing
-    assert "always uses exactly one reciprocal cross-family strong critic" in focused_routing
     assert "the caller cannot name, replace, reorder, or add a reviewer" in focused_routing
     assert "this routing does not modify the full council roster" in focused_routing
 
@@ -296,7 +293,6 @@ def test_a_bounded_case_stops_before_the_live_protocol():
     for control in (
         "bounded experiment",
         "stop before review ceremony",
-        "always uses exactly one reciprocal cross-family strong critic",
         "review-claude-opus under cvp",
         "no_cloud",
     ):
@@ -768,6 +764,7 @@ def _qualification(path: Path, selector: str) -> None:
                 family: {
                     "strongCritic": [],
                     "supplements": [],
+                    "focusedSupplements": [],
                     "leadFamilySecurity": [],
                     "architectureSpecialists": [],
                 }
@@ -1945,12 +1942,14 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
         "gpt": {
             "strongCritic": ["claude-opus"],
             "supplements": ["gemini", "grok"],
+            "focusedSupplements": ["grok"],
             "leadFamilySecurity": ["daybreak-blue"],
             "architectureSpecialists": ["claude"],
         },
         "claude": {
             "strongCritic": ["daybreak-blue"],
             "supplements": ["gemini", "grok"],
+            "focusedSupplements": ["grok"],
             "leadFamilySecurity": [],
             "architectureSpecialists": ["claude"],
         },

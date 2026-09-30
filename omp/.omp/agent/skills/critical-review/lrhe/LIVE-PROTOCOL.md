@@ -44,6 +44,9 @@ reviewer prose:
   decorrelation, but unable to rescue the independent floor or break a dispute.
   The strong critic and supplements are pairwise distinct by model family and
   correlation group;
+- focusedSupplements names the supplements that also sit on every focused
+  review: Grok 4.7 for both leads. Each member must be in the same profile's
+  supplements and keeps that supplemental standing beside the strong critic;
 - architectureSpecialists is additive and record-selected. Eligible Fable is
   supplemental whether cross-family or same-lineage, and its absence never
   shrinks the unconditional council. An architecture-lens domain activates it;
@@ -460,7 +463,7 @@ Evidence compatibility is executable policy:
   must carry the same complete bundle for that member, while every repository
   member still requires the bound commit and files.
 
-A focused preparation uses the same command with `--review-class focused`; the resolver infers the profile's reciprocal strong critic and rejects any caller-supplied reviewer choice. It has no panel manifest. A targeted-refuter
+A focused preparation uses the same command with `--review-class focused`; the resolver infers the profile's reciprocal strong critic followed by its `focusedSupplements` and rejects any caller-supplied reviewer choice. It has no panel manifest. A targeted-refuter
 preparation uses `--review-class targeted-refuter`, requires the remediation
 record, and infers the complete fixed pool; callers do not name or filter it.
 Packet, scope, repository, subject, receipt, and envelope arguments retain the
@@ -473,8 +476,8 @@ surface is internal `verify-task`, invoked by the Task policy gate against an
 existing `prepare` envelope.
 
 The review class is a completeness contract, not a label. `initial` is exactly
-the manifest's selected council; `focused` is exactly one configured initial
-critic; `targeted-refuter` is the complete fixed refutation pool. Standing remains
+the manifest's selected council; `focused` is exactly the reciprocal strong
+critic followed by the profile's `focusedSupplements`; `targeted-refuter` is the complete fixed refutation pool. Standing remains
 resolver-owned: `selectionClass`, `role`, `independence_class`, and `authority`
 come from the fixed live authority and cannot be caller-supplied.
 
@@ -497,8 +500,9 @@ it. Every `skipped` entry retains its sorted `reasonCodes` and is reported as
 
 ### Canonical Task boundary
 OMP uses one canonical batch Task shape for every review class: exactly `i`,
-`context`, and `tasks`. A single `focused` reviewer or targeted refuter is a
-one-item batch; never add a padding reviewer. `context` is:
+`context`, and `tasks`. A targeted refuter is a one-item batch and a focused
+review is the strong critic plus its focused supplements; never add a padding
+reviewer. `context` is:
 
 ```text
 CRITICAL_REVIEW_DISPATCH_V1

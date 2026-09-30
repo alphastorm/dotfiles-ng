@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Fail-closed reader for lead-relative critical-review qualification.
 
-Schema v11 selects one live profile for one of two qualified accountable lead
+Schema v12 selects one live profile for one of two qualified accountable lead
 families: GPT/ChatGPT or Claude. Each profile declares strongCritic, always-on
-supplements, explicit leadFamilySecurity, and record-selected
+supplements, focusedSupplements, explicit leadFamilySecurity, and record-selected
 architectureSpecialists. The strong critic is reciprocal cross-family
 independent evidence. Gemini Flash and Grok are cross-family supplemental
-evidence. Qualified lead-family security is a same-lineage blind sample, never
-an independent anchor. Eligible Fable architecture synthesis is always
-supplemental, with lead-relative lineage recorded honestly.
+evidence; focusedSupplements names which of them also sit on every focused
+review, with the same standing. Qualified lead-family security is a same-lineage
+blind sample, never an independent anchor. Eligible Fable architecture synthesis
+is always supplemental, with lead-relative lineage recorded honestly.
 
 Reviewer identity is not model lineage. The reviewers mapping key is the
 reviewer_id, the only join key for manifests, dispatch, and findings.
@@ -69,10 +70,10 @@ from review_sequence import (
     select_review_action,
 )
 
-SCHEMA_VERSION = 11
-# Pinned beside the schema version so activation is atomic: a v11 resolver and
-# v8 panel definition cannot half-agree about lead eligibility or reviewer tiers.
-LIVE_PANEL_ID = "critical-review-primary-v8"
+SCHEMA_VERSION = 12
+# Pinned beside the schema version so activation is atomic: a v12 resolver and
+# v9 panel definition cannot half-agree about lead eligibility or reviewer tiers.
+LIVE_PANEL_ID = "critical-review-primary-v9"
 MANIFEST_SCHEMA_VERSION = 10
 DEFAULT_QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
 # The manifest records which resolver bytes produced its roster. This is
@@ -126,6 +127,11 @@ LIVE_GROUPS: Mapping[str, tuple[str, bool]] = {
     "disabled": (DISABLED_ROLE, False),
 }
 PROFILE_GROUPS = ("strongCritic", "supplements", "leadFamilySecurity", "architectureSpecialists")
+# The supplements that also sit on every focused review. It names members of the
+# same profile's `supplements` and takes its standing from that group, so it is a
+# routing overlay with no role of its own and never adds a lane.
+FOCUSED_SUPPLEMENTS = "focusedSupplements"
+PROFILE_FIELDS = (*PROFILE_GROUPS, FOCUSED_SUPPLEMENTS)
 GLOBAL_GROUPS = ("targetedRefuters", "evaluationOnly", "disabled")
 CROSS_FAMILY_GROUPS = ("strongCritic", "supplements", "targetedRefuters")
 ORACLE_SHADOW_FIELDS = frozenset(
@@ -619,10 +625,10 @@ def _profiles(live: Mapping[str, object]) -> Mapping[str, Mapping[str, object]]:
         ):
             raise QualificationError("liveDispatch.byLeadFamily contains an invalid family name")
         profile = _mapping(raw_profile, f"liveDispatch.byLeadFamily.{raw_family}")
-        if set(profile) != set(PROFILE_GROUPS):
+        if set(profile) != set(PROFILE_FIELDS):
             raise QualificationError(
                 f"liveDispatch.byLeadFamily.{raw_family} fields must be "
-                f"{list(PROFILE_GROUPS)!r}, got {sorted(profile)}"
+                f"{list(PROFILE_FIELDS)!r}, got {sorted(profile)}"
             )
         profiles[raw_family] = profile
     return profiles
@@ -825,6 +831,17 @@ def validate_qualification(document: object) -> Mapping[str, object]:
                         f"{reviewer_id!r} both use {value!r}"
                     )
                 owners[value] = reviewer_id
+        focused_field = f"liveDispatch.byLeadFamily.{lead_family}.{FOCUSED_SUPPLEMENTS}"
+        outside = [
+            reviewer_id
+            for reviewer_id in _names(profiles[lead_family].get(FOCUSED_SUPPLEMENTS), focused_field)
+            if reviewer_id not in groups["supplements"]
+        ]
+        if outside:
+            raise QualificationError(
+                f"{focused_field} names {outside}, which the same profile's supplements do not; "
+                "a focused seat reuses a supplement's qualification and standing"
+            )
     global_memberships: dict[str, str] = {}
     for group in GLOBAL_GROUPS:
         for reviewer_id in global_groups[group]:
@@ -1043,10 +1060,14 @@ def strong_reviewers(
     return profile_reviewers(document, lead_family, "strongCritic")
 
 
-def focused_reviewer(
+def focused_reviewers(
     document: Mapping[str, object], lead_family: str
-) -> LiveReviewer:
-    """Return the one reciprocal strong critic for unattended focused review."""
+) -> tuple[LiveReviewer, ...]:
+    """Return the focused roster: the reciprocal strong critic, then focusedSupplements.
+
+    Each focused supplement is the same profile's `supplements` member, so it carries
+    exactly the supplemental standing of its council seat and never the anchor's.
+    """
 
     candidates = strong_reviewers(document, lead_family)
     if len(candidates) != 1:
@@ -1054,7 +1075,15 @@ def focused_reviewer(
             f"liveDispatch.byLeadFamily.{lead_family}.strongCritic must resolve exactly one "
             f"focused reviewer, got {[reviewer.reviewer_id for reviewer in candidates]}"
         )
-    return candidates[0]
+    supplements = {
+        reviewer.reviewer_id: reviewer
+        for reviewer in profile_reviewers(document, lead_family, "supplements")
+    }
+    focused = _names(
+        _profile(document, lead_family).get(FOCUSED_SUPPLEMENTS),
+        f"liveDispatch.byLeadFamily.{lead_family}.{FOCUSED_SUPPLEMENTS}",
+    )
+    return (candidates[0], *(supplements[reviewer_id] for reviewer_id in focused))
 
 
 def global_reviewers(

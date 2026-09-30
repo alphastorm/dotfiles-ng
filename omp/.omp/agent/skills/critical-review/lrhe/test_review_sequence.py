@@ -1373,7 +1373,7 @@ def _daybreak_entry(*, enabled: bool) -> dict:
 
 
 def _panel(with_conditional: bool = True) -> dict:
-    """One synthetic v11 matrix for the two qualified lead families."""
+    """One synthetic v12 matrix for the two qualified lead families."""
 
     reviewers = {
         "claude-opus": _unconditional_entry(
@@ -1412,12 +1412,14 @@ def _panel(with_conditional: bool = True) -> dict:
         "gpt": {
             "strongCritic": ["claude-opus"],
             "supplements": ["gemini", "grok"],
+            "focusedSupplements": ["grok"],
             "leadFamilySecurity": ["daybreak-blue"],
             "architectureSpecialists": ["claude"] if with_conditional else [],
         },
         "claude": {
             "strongCritic": ["daybreak-blue"],
             "supplements": ["gemini", "grok"],
+            "focusedSupplements": ["grok"],
             "leadFamilySecurity": [],
             "architectureSpecialists": ["claude"] if with_conditional else [],
         },
@@ -1676,12 +1678,14 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
         "gpt": {
             "strongCritic": ["claude-opus"],
             "supplements": ["gemini", "grok"],
+            "focusedSupplements": ["grok"],
             "leadFamilySecurity": ["daybreak-blue"],
             "architectureSpecialists": ["claude"],
         },
         "claude": {
             "strongCritic": ["daybreak-blue"],
             "supplements": ["gemini", "grok"],
+            "focusedSupplements": ["grok"],
             "leadFamilySecurity": [],
             "architectureSpecialists": ["claude"],
         },
@@ -1813,6 +1817,21 @@ def test_lead_family_security_requires_matching_lineage_and_security_lens() -> N
     document = _panel()
     document["reviewers"]["daybreak-blue"]["lens"] = "whole_repo"
     with pytest.raises(QualificationError, match="lens must be 'security'"):
+        validate_qualification(document)
+
+
+@pytest.mark.parametrize(
+    ("lead_family", "reviewer_id"),
+    (("gpt", "daybreak-blue"), ("gpt", "claude-opus"), ("claude", "claude")),
+)
+def test_focused_supplements_must_be_the_profiles_own_supplements(
+    lead_family: str, reviewer_id: str
+) -> None:
+    """A focused seat takes a supplement's standing, so it can name no other lane."""
+
+    document = _panel()
+    document["liveDispatch"]["byLeadFamily"][lead_family]["focusedSupplements"] = [reviewer_id]
+    with pytest.raises(QualificationError, match="supplements do not"):
         validate_qualification(document)
 
 

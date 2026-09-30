@@ -42,17 +42,17 @@ When the deterministic result is not a full council, stop before review ceremony
 
 #### Focused review routing
 
-Only GPT/ChatGPT and Claude are qualified accountable leads. A focused review always uses exactly one reciprocal cross-family strong critic: review-claude-opus under CVP for a GPT lead and review-daybreak-blue for a Claude lead. `qualification.yml` owns those profile entries, and `review_dispatch.py prepare --review-class focused` resolves the reviewer from the accountable lead family. The caller cannot name, replace, reorder, or add a reviewer.
+Only GPT/ChatGPT and Claude are qualified accountable leads. A focused review uses exactly one reciprocal cross-family strong critic — review-claude-opus under CVP for a GPT lead and review-daybreak-blue for a Claude lead — plus the profile's `focusedSupplements`, which is review-grok for both leads. `qualification.yml` owns those profile entries, and `review_dispatch.py prepare --review-class focused` resolves both seats from the accountable lead family; the packet grants both seats' vendor and access profiles. The caller cannot name, replace, reorder, or add a reviewer.
 
-Gemini and Grok remain full-council supplements, never focused alternatives. Review-claude-fable remains resolver-qualified architecture synthesis for full councils, not a focused shortcut. This routing does not modify the full council roster.
+The Grok seat keeps its council supplement's standing: cross-family supplemental evidence that never replaces the strong critic or counts toward the independent floor. Its findings get the same lead verification and disposition as any other; a missing, refused, or invalid Grok result is recorded and never blocks closure or triggers a substitute. Gemini remains a full-council supplement only. Review-claude-fable remains resolver-qualified architecture synthesis for full councils, not a focused shortcut. This routing does not modify the full council roster.
 
 Routing selects the reviewer; it never states the reviewer's standing. The emitted Task payload is submitted verbatim. The resolver emits `selectionClass`, `role`, `independence_class`, and `authority` from the live authority; the lead never writes, derives, or hand-copies a standing field, and a reviewer reached any other way is not a review.
 
 Review execution is a blocking Task boundary. Every `review-*` agent declares
 `blocking: true`, so submit the resolver-emitted batch once and consume its
-verdicts from that call. A focused review is a legitimate one-item batch, not a
-general delegation wave; never pad it, detach it, poll `hub`/jobs, or run sleep
-loops while the subject is frozen.
+verdicts from that call. A focused review is a small resolver-emitted batch, not
+a general delegation wave; never pad or trim it, detach it, poll `hub`/jobs, or
+run sleep loops while the subject is frozen.
 
 An enclosing eval call may auto-background while that protected Task is still
 running. Its `bg_*` acknowledgement, an unavailable kernel result variable, or

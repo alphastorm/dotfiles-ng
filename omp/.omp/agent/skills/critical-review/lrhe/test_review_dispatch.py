@@ -57,6 +57,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-claude-opus", "focused", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
+    ("gpt", "focused", "grok"): (
+        "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
     ("gpt", "initial", "claude-opus"): (
         "review-claude-opus", "strong", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
@@ -105,6 +109,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-daybreak-blue", "focused", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
+    ("claude", "focused", "grok"): (
+        "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
     ("claude", "initial", "daybreak-blue"): (
         "review-daybreak-blue", "strong", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
@@ -129,11 +137,11 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
 
 EXPECTED_ARITY: dict[tuple[str, str], tuple[int, int]] = {
     ("gpt", "canary"): (1, 1),
-    ("gpt", "focused"): (1, 1),
+    ("gpt", "focused"): (2, 2),
     ("gpt", "initial"): (4, 5),
     ("gpt", "targeted-refuter"): (1, 1),
     ("claude", "canary"): (1, 1),
-    ("claude", "focused"): (1, 1),
+    ("claude", "focused"): (2, 2),
     ("claude", "initial"): (3, 4),
     ("claude", "targeted-refuter"): (1, 1),
 }
@@ -425,8 +433,8 @@ def packet_only_subject(material) -> dict:
 
 def test_receipt_schema_admits_every_valid_tuple(receipt_validator, packet_only_subject):
     for (lead_family, review_class, reviewer_id), row in EXPECTED_TUPLES.items():
-        if review_class == "initial":
-            continue  # arity is asserted separately; a lone member fails minItems
+        if review_class in ("initial", "focused"):
+            continue  # a lone member of a multi-seat class fails minItems
         document = _receipt_document(
             packet_only_subject,
             lead_family=lead_family,
@@ -436,6 +444,28 @@ def test_receipt_schema_admits_every_valid_tuple(receipt_validator, packet_only_
         assert receipt_validator.is_valid(document), (
             f"{lead_family}/{review_class}/{reviewer_id} is configured but rejected"
         )
+
+
+@pytest.mark.parametrize("lead_family", EXPECTED_LEAD_FAMILIES)
+def test_receipt_schema_requires_the_whole_focused_roster(
+    receipt_validator, packet_only_subject, lead_family: str
+):
+    """A focused receipt without its supplemental seat cannot even be recorded."""
+
+    roster = [
+        _assignment(reviewer_id, row)
+        for (family, review_class, reviewer_id), row in EXPECTED_TUPLES.items()
+        if family == lead_family and review_class == "focused"
+    ]
+    assert [row["reviewer_id"] for row in roster][1:] == ["grok"]
+    for assignments, valid in ((roster, True), (roster[:1], False)):
+        document = _receipt_document(
+            packet_only_subject,
+            lead_family=lead_family,
+            review_class="focused",
+            assignments=assignments,
+        )
+        assert receipt_validator.is_valid(document) is valid
 
 
 def test_receipt_schema_refuses_a_reviewer_that_class_never_dispatches(
@@ -853,8 +883,9 @@ def test_prepare_enforces_packet_only_evidence_end_to_end(tmp_path, material, au
     assert refusal.out == ""
     assert not any(path.exists() for path in repository_only.values())
 
-    authority["reviewers"]["claude-opus"]["evidenceDelivery"] = "inline"
-    authority["reviewers"]["claude-opus"]["tools"] = []
+    for reviewer_id in ("claude-opus", "grok"):
+        authority["reviewers"][reviewer_id]["evidenceDelivery"] = "inline"
+        authority["reviewers"][reviewer_id]["tools"] = []
     validated_authority = qualification.validate_qualification(authority)
     rd.LIVE_AUTHORITY.write_text(
         yaml.safe_dump(validated_authority, sort_keys=False), encoding="utf-8"
@@ -894,10 +925,10 @@ def test_prepare_enforces_packet_only_evidence_end_to_end(tmp_path, material, au
     complete = output_paths(tmp_path / "complete")
     assert rd.main(prepare_args(inline_packet, complete)) == 0
     emitted = json.loads(capsys.readouterr().out)["task_input"]
-    assert len(emitted["tasks"]) == 1
+    assert [item["agent"] for item in emitted["tasks"]] == ["review-claude-opus", "review-grok"]
     # Nothing is retrieved for a packet-only subject, so the retrieval directive
     # would be an instruction about paths this reviewer must not open.
-    assert rd.BATCHED_RETRIEVAL_DIRECTIVE not in emitted["tasks"][0]["task"]
+    assert all(rd.BATCHED_RETRIEVAL_DIRECTIVE not in item["task"] for item in emitted["tasks"])
     assert all(path.is_file() for path in complete.values())
 
     envelope_sha256 = _digest(complete["envelope"].read_text(encoding="utf-8"))
@@ -1090,7 +1121,13 @@ def test_verify_subject_refuses_a_scope_or_packet_edited_after_freezing(material
 def test_focused_refuses_every_caller_selected_alternative(material, authority):
     document = qualification.validate_qualification(authority)
     verified = rd.freeze_subject(scope_path=material["scope"], packet_path=material["packet"])
-    for reviewer_ids in (["gemini"], ["daybreak-blue"], ["claude-opus", "gemini"]):
+    for reviewer_ids in (
+        ["claude-opus"],
+        ["grok", "claude-opus"],
+        ["claude-opus", "gemini"],
+        ["claude-opus", "grok", "gemini"],
+        ["daybreak-blue", "grok"],
+    ):
         with pytest.raises(rd.DispatchError, match="complete resolved roster"):
             rd.resolve_assignments(
                 document,
@@ -1107,7 +1144,7 @@ def test_focused_refuses_every_caller_selected_alternative(material, authority):
     ("lead_family", "reviewer_id"),
     (("gpt", "claude-opus"), ("claude", "daybreak-blue")),
 )
-def test_focused_assignment_is_the_reciprocal_strong_critic(
+def test_focused_roster_is_the_reciprocal_strong_critic_then_grok(
     material, authority, repository, lead_family: str, reviewer_id: str
 ):
     document = qualification.validate_qualification(authority)
@@ -1118,17 +1155,45 @@ def test_focused_assignment_is_the_reciprocal_strong_critic(
         subject_commit=repository["commit"],
         files=["src/dispatch.py"],
     )
-    assignment = rd.resolve_assignments(
+    strong, supplement = rd.resolve_assignments(
         document,
         verified,
         lead_family=lead_family,
         review_class="focused",
-        reviewer_ids=[reviewer_id],
+        reviewer_ids=[reviewer_id, "grok"],
         authority_path=rd.LIVE_AUTHORITY,
         authority_sha256="0" * 64,
-    )[0]
-    assert assignment.reason_codes == (qualification.STRONG_REASON_CODE,)
-    assert assignment.role == qualification.STRONG_ROLE
+    )
+    assert strong.reason_codes == (qualification.STRONG_REASON_CODE,)
+    assert strong.role == qualification.STRONG_ROLE
+    assert strong.authority == qualification.INDEPENDENT_EVIDENCE
+    assert supplement.reviewer_id == "grok"
+    assert supplement.reason_codes == (qualification.SUPPLEMENT_REASON_CODE,)
+    assert supplement.role == qualification.SUPPLEMENT_ROLE
+    assert supplement.authority == qualification.SUPPLEMENTAL_EVIDENCE
+
+
+def test_focused_refuses_a_packet_that_withholds_the_supplement_grant(
+    tmp_path, material, authority
+):
+    """Grok's vendor grant is checked like the anchor's; it is never dropped."""
+
+    text = material["packet"].read_text(encoding="utf-8")
+    assert "- xai\n" in text
+    packet = tmp_path / "no-xai-packet.md"
+    packet.write_text(text.replace("- xai\n", ""), encoding="utf-8")
+    document = qualification.validate_qualification(authority)
+    verified = rd.freeze_subject(scope_path=material["scope"], packet_path=packet)
+    with pytest.raises(rd.DispatchError, match=r"does not authorize reviewers\.grok"):
+        rd.resolve_assignments(
+            document,
+            verified,
+            lead_family="gpt",
+            review_class="focused",
+            reviewer_ids=["claude-opus", "grok"],
+            authority_path=rd.LIVE_AUTHORITY,
+            authority_sha256="0" * 64,
+        )
 
 
 def test_record_bound_classes_refuse_a_subject_without_a_record(material, authority):
@@ -1218,18 +1283,15 @@ def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):
     assert subject["subjectCommit"] == repository["commit"]
     receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
     assert receipt["reviewClass"] == "focused"
-    assert [row["reviewer_id"] for row in receipt["assignments"]] == ["claude-opus"]
-    assignment = receipt["assignments"][0]
-    agent, selection_class, role, independence_class, authority = EXPECTED_TUPLES[
-        ("gpt", "focused", "claude-opus")
-    ]
-    assert (
-        assignment["agent"],
-        assignment["selectionClass"],
-        assignment["role"],
-        assignment["independence_class"],
-        assignment["authority"],
-    ) == (agent, selection_class, role, independence_class, authority)
+    assert [row["reviewer_id"] for row in receipt["assignments"]] == ["claude-opus", "grok"]
+    for assignment in receipt["assignments"]:
+        assert (
+            assignment["agent"],
+            assignment["selectionClass"],
+            assignment["role"],
+            assignment["independence_class"],
+            assignment["authority"],
+        ) == EXPECTED_TUPLES[("gpt", "focused", assignment["reviewer_id"])]
 
     envelope_sha256 = _digest(paths["envelope"].read_text(encoding="utf-8"))
     assert (
@@ -1248,15 +1310,16 @@ def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):
     assert approved == emitted
     assert set(approved) == {"i", "context", "tasks"}
     assert approved["i"] == rd.DISPATCH_TASK_INTENT
-    assert len(approved["tasks"]) == 1
-    task = approved["tasks"][0]["task"]
-    assert task.startswith(f"{rd.RECEIPT_MARKER}\n")
-    assert f"subject_commit={repository['commit']}" in task
-    assert f"repository_path={repository['path'].resolve()}" in task
-    assert rd.BATCHED_RETRIEVAL_DIRECTIVE in task
-    assert f"independence_class={independence_class}" in task
-    assert material["scope"].read_text(encoding="utf-8").rstrip("\n") in task
-    assert material["packet"].read_text(encoding="utf-8").rstrip("\n") in task
+    assert [item["agent"] for item in approved["tasks"]] == ["review-claude-opus", "review-grok"]
+    for item, assignment in zip(approved["tasks"], receipt["assignments"], strict=True):
+        task = item["task"]
+        assert task.startswith(f"{rd.RECEIPT_MARKER}\n")
+        assert f"subject_commit={repository['commit']}" in task
+        assert f"repository_path={repository['path'].resolve()}" in task
+        assert rd.BATCHED_RETRIEVAL_DIRECTIVE in task
+        assert f"authority={assignment['authority']}" in task
+        assert material["scope"].read_text(encoding="utf-8").rstrip("\n") in task
+        assert material["packet"].read_text(encoding="utf-8").rstrip("\n") in task
 
     material["scope"].write_text("# Assurance scope\nClass: bounded experiment.\n", "utf-8")
     assert (

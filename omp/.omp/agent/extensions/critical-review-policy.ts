@@ -140,8 +140,8 @@ export function parseDispatchMarker(context: unknown): DispatchMarker | null {
 
 /**
  * Accepts only the exact canonical batch Task shape `{context, i, tasks}`.
- * A focused review is a one-item batch; councils use the same shape without
- * creating a second single-reviewer convention.
+ * A canary or targeted refuter is a one-item batch; focused reviews and
+ * councils use the same shape without creating a second reviewer convention.
  */
 export function parseVerifierOutput(
 	stdout: unknown,

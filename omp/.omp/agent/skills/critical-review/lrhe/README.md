@@ -307,8 +307,10 @@ The strong critic and supplements are pairwise distinct by model family and
 correlation group; the conditional architecture specialist may share lineage
 because it remains supplemental.
 
-Focused review always resolves the profile's reciprocal strong critic. The caller
-never chooses a reviewer, and supplements never become focused-review alternatives.
+Focused review resolves the profile's reciprocal strong critic followed by its
+`focusedSupplements` (Grok for both leads), which must be members of the same
+profile's supplements and keep that supplemental standing. The caller never
+chooses a reviewer, and a supplement never replaces the strong critic.
 
 ChatGPT Pro Web remains deliberately outside liveDispatch. For ordinary cloud-permitted full councils, the generated packet grants let the separate `oracleShadow` authority attempt pinned pi-oracle `pro_extended` without a user prompt. Explicit provider restrictions may omit `openai` data egress or the exact `chatgpt-pro-web-asxst0rm` access profile. Its output has no reviewer standing, never blocks closure, receives no peer output, and never substitutes for a qualified lane. Missing grants and every operational failure are persisted as nonblocking outcomes under `lrhe-data/oracle-shadow/`, so browser automation can accumulate evidence without becoming part of the council availability contract.
 
@@ -341,11 +343,12 @@ Conflating experiment membership with live dispatch turns evaluation lanes into
 unapproved reviewers and makes independent roles look like votes. `panels.yaml`
 therefore owns experiments only; `qualification.yml` owns live dispatch.
 
-qualification.py fails closed unless schema version 11, panel v8, exactly the GPT
+qualification.py fails closed unless schema version 12, panel v9, exactly the GPT
 and Claude lead profiles, one strong critic, nonempty supplements,
 dispatch/evaluation flags, canary results, read-only proof, agents, and selectors
 are internally consistent. Each profile rejects a same-family strong critic or
-supplement, duplicate memberships, and an unavailable strong floor. The explicit
+supplement, duplicate memberships, an unavailable strong floor, and a focused
+supplement that is not one of the profile's supplements. The explicit
 lead-family security group requires matching lineage, the security lens, and the
 existing passed provider/schema/read-only qualification gates. Fable proves
 the common schema/read-only gates and its passed architecture quality scope,
