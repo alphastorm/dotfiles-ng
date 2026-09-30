@@ -17,9 +17,9 @@ run-name: lrhe / ${{ github.event_name == 'workflow_dispatch' && inputs.executio
 
 on:
   push:
-    paths: ['omp/.omp/agent/skills/critical-review/lrhe/**', '.github/workflows/lrhe.yml']
+    paths: ['omp/.omp/agent/skills/critical-review/**', '.github/workflows/lrhe.yml']
   pull_request:
-    paths: ['omp/.omp/agent/skills/critical-review/lrhe/**', '.github/workflows/lrhe.yml']
+    paths: ['omp/.omp/agent/skills/critical-review/**', '.github/workflows/lrhe.yml']
   workflow_dispatch:
     inputs:
       execution_pool:

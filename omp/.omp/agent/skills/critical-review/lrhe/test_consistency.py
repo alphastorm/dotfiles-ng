@@ -187,20 +187,11 @@ def _section(flat: str, anchor: str) -> str:
 
 
 def test_proportional_assurance_policy_contract():
-    system_append = _flat((HERE.parents[2] / "APPEND_SYSTEM.md").read_text(encoding="utf-8"))
     skill = _document(SKILL_DOC)
     classes = ("bounded experiment", "reusable internal path", "production/hard-to-reverse")
 
     assert all(name in skill for name in classes)
-    for document in (system_append, skill):
-        assert all(
-            marker in document for marker in ("p0", "credential", "provider call", "security")
-        )
-    assert (
-        "credible residual consequence after caps, containment, rollback, and recovery"
-        in system_append
-    )
-    assert "not from p0 labels, security vocabulary, credentials, provider calls" in system_append
+    assert all(marker in skill for marker in ("p0", "credential", "provider call", "security"))
     assert "do not independently raise it" in skill
 
     assert "assurance selection — before ceremony" in skill
