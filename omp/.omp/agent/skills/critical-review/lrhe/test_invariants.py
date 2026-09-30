@@ -19,10 +19,12 @@ What each test defends:
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import datetime
 import csv
+import sqlite3
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -274,7 +276,8 @@ def _write_policy_registry(tmp_path: Path, policy: dict) -> Path:
     return path
 
 
-def _run_check_data_rights(tmp_path: Path, policy: dict, args: list[str]) -> subprocess.CompletedProcess:
+def _run_check_data_rights(tmp_path: Path, policy: dict, args: list[str],
+                           home: Path | None = None) -> subprocess.CompletedProcess:
     registry = _write_policy_registry(tmp_path, policy)
     return subprocess.run(
         [
@@ -288,6 +291,8 @@ def _run_check_data_rights(tmp_path: Path, policy: dict, args: list[str]) -> sub
         cwd=HERE,
         capture_output=True,
         text=True,
+        # The guard reads the live account set from HOME; never the operator's own.
+        env={**os.environ, "HOME": str(home or tmp_path)},
     )
 
 
@@ -913,6 +918,57 @@ def test_check_data_rights_stale_observation_records_are_unresolved(tmp_path: Pa
     )
     assert p.returncode == 20
     assert json.loads(p.stdout)["reason_code"] == "stale_or_missing_observation"
+
+
+def test_check_data_rights_requires_every_account_the_route_can_reach(tmp_path: Path):
+    """OMP rotates across every enabled Anthropic credential, so one account's fresh
+    observation says nothing about an account added later, and the newest record must
+    not stand in for an older one: each reachable account needs its own."""
+    policy = _build_policy("anthropic-subscription", "anthropic-reachable-accounts",
+                           requiredControls={"modelImprovementEnabled": False})
+    home = tmp_path / "home"
+    (home / ".omp/agent").mkdir(parents=True)
+    db = sqlite3.connect(home / ".omp/agent/agent.db")
+    db.execute("create table auth_credentials (provider text, identity_key text, disabled_cause text)")
+    db.executemany("insert into auth_credentials values (?, ?, ?)", [
+        ("anthropic", "email:first@example.com|org:1", None),
+        ("anthropic", "email:added@example.com|org:2", None),
+        ("anthropic", "email:revoked@example.com|org:3", "revoked"),
+        ("openai-codex", "email:other@example.com|org:4", None),
+    ])
+    db.commit()
+    db.close()
+    observed_path = tmp_path / "observed-controls.yml"
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+
+    def check(*observations: tuple[str, int]) -> subprocess.CompletedProcess:
+        observed_path.write_text(yaml.safe_dump({"observations": [
+            {"accountId": account, "providerRoute": "anthropic-subscription",
+             "observedAt": (today - timedelta(days=age)).isoformat(),
+             "controls": {"modelImprovementEnabled": False}}
+            for account, age in observations
+        ]}), encoding="utf-8")
+        return _run_check_data_rights(tmp_path, policy, [
+            "--item-id", "S1-0001",
+            "--classification", "public_corpus",
+            "--provider-route", "anthropic-subscription",
+            "--policy-id", policy["policyId"],
+            "--item-provider-allowlist", policy["dataAllowlistKey"],
+            "--observed-controls", str(observed_path),
+            "--max-observation-age-days", "30",
+        ], home=home)
+
+    unobserved = check(("first@example.com", 0))
+    assert unobserved.returncode == 20
+    refusal = json.loads(unobserved.stdout)
+    assert refusal["reason_code"] == "stale_or_missing_observation"
+    assert "added@example.com" in refusal["message"]
+
+    masked = check(("first@example.com", 0), ("added@example.com", 31))
+    assert masked.returncode == 20
+    assert "added@example.com" in json.loads(masked.stdout)["message"]
+
+    assert check(("first@example.com", 0), ("added@example.com", 1)).returncode == 0
 
 
 @pytest.mark.parametrize("item_allowlist", [[], ["anthropic"]])

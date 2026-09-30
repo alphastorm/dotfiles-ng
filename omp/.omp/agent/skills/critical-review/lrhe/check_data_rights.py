@@ -26,7 +26,9 @@ nobody was given. `contract_pending` is a legitimate, shippable value.
 what must be true of the account. Re-reading that same file to confirm it is
 checking the policy against itself. Facts about the live account -- notably
 Claude's model-improvement setting -- must be supplied by the caller, and their
-absence on a route that demands them is unresolved, never a pass.
+absence on a route that demands them is unresolved, never a pass. An observation
+is of one account, and a route reaches every account its client can send through,
+so each reachable account needs its own current observation.
 """
 
 from __future__ import annotations
@@ -34,7 +36,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sqlite3
 import sys
+from collections.abc import Iterable
+from contextlib import closing
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -166,37 +171,119 @@ def _load_registry(path: Path, schema_path: Path) -> dict[str, Any]:
     return registry
 
 
-def load_observation(path: Path, provider_route: str, max_age_days: int) -> tuple[dict | None, str | None]:
-    """The most recent recorded observation of the live account, or why it is unusable.
+def _identity_email(identity_key: str) -> str | None:
+    for part in identity_key.split("|"):
+        if part.startswith("email:") and len(part) > len("email:"):
+            return part[len("email:"):].lower()
+    return None
 
-    An observation decays. A model-improvement setting seen six months ago is not
-    an observation of today's setting: defaults change, subscriptions get recreated,
-    and a re-auth can reset a preference with no notice. Treating a stale record as
-    current is the same defaulting bug as treating absent telemetry as success, one
-    layer out, so an expired observation is refused rather than used.
+
+def reachable_accounts(provider_route: str) -> tuple[set[str] | None, str | None]:
+    """The accounts this machine's client can send the route through right now.
+
+    OMP rotates across every enabled Anthropic credential, and Claude Code sends
+    through whichever account it is signed in to, so a route's reach is live state
+    the observation file cannot assert about itself. None means this machine has
+    no such client (a public CI runner) and only the file's own accounts can be
+    checked. An unreadable source is a reason, never an empty set.
     """
+    home = Path.home()
+    if provider_route == "anthropic-subscription":
+        db = home / ".omp/agent/agent.db"
+        if not db.exists():
+            return None, None
+        try:
+            with closing(sqlite3.connect(db.as_uri() + "?mode=ro", uri=True)) as con:
+                rows = con.execute(
+                    "SELECT identity_key FROM auth_credentials "
+                    "WHERE provider = 'anthropic' AND disabled_cause IS NULL"
+                ).fetchall()
+        except sqlite3.Error as exc:
+            return None, f"cannot read OMP's Anthropic credentials from {db}: {exc}"
+        accounts = {_identity_email(str(identity)) for (identity,) in rows}
+        if None in accounts:
+            return None, f"an enabled Anthropic credential in {db} names no account email"
+        return {account for account in accounts if account}, None
+    if provider_route == "claude-code-subscription":
+        path = home / ".claude.json"
+        if not path.exists():
+            return None, None
+        try:
+            account = json.loads(path.read_text(encoding="utf-8")).get("oauthAccount") or {}
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            return None, f"cannot read the Claude Code account from {path}: {exc}"
+        email = str(account.get("emailAddress") or "").lower()
+        return ({email} if email else set()), None
+    return None, None
 
+
+def load_observation(path: Path, provider_route: str, max_age_days: int,
+                     controls: Iterable[str],
+                     reachable: set[str] | None) -> tuple[dict | None, str | None]:
+    """Every reachable account's latest observation, or why they cannot be used.
+
+    An observation decays. The setting changes only on a terms-update consent
+    prompt, a re-created account or a re-auth, none of which announces itself, so
+    an observation older than the limit is refused rather than used -- the same
+    defaulting bug as treating absent telemetry as success, one layer out.
+
+    An observation is also of one account. A route that can reach several is only
+    as observed as the least recently observed of them: the newest record must not
+    stand in for an older one, and an account the file does not name is not
+    observed at all. `reachable` is the live account set when this machine can say
+    (see `reachable_accounts`); otherwise every account the file records for the
+    route must qualify.
+    """
 
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         return None, f"cannot read observed controls {path}: {exc}"
 
-    seen = [o for o in doc.get("observations", []) if o.get("providerRoute") == provider_route]
-    if not seen:
+    latest: dict[str, dict] = {}
+    for observation in doc.get("observations", []):
+        if observation.get("providerRoute") != provider_route:
+            continue
+        account = str(observation.get("accountId") or "").lower()
+        newest = str(latest.get(account, {}).get("observedAt", ""))
+        if str(observation.get("observedAt", "")) >= newest:
+            latest[account] = observation
+    if not latest:
         return None, f"{path.name} records no observation for route {provider_route!r}"
 
-    latest = max(seen, key=lambda o: str(o.get("observedAt", "")))
-    try:
-        observed_at = date.fromisoformat(str(latest["observedAt"]))
-    except (KeyError, ValueError):
-        return None, f"observation for {provider_route!r} has no usable observedAt date"
+    if reachable is None:
+        required = sorted(latest)
+    elif not reachable:
+        return None, f"no account is signed in for route {provider_route!r}"
+    else:
+        unobserved = sorted(reachable - latest.keys())
+        if unobserved:
+            return None, (f"route {provider_route!r} can reach {', '.join(unobserved)}, which "
+                          f"{path.name} does not observe; check each account and record it")
+        required = sorted(reachable)
 
-    age = (datetime.now(timezone.utc).date() - observed_at).days
-    if age > max_age_days:
-        return None, (f"observation for {provider_route!r} is {age} days old, over the "
-                      f"{max_age_days}-day limit; re-check the account and update {path.name}")
-    return latest, None
+    today = datetime.now(timezone.utc).date()
+    merged: dict = {}
+    for account in required:
+        observation = latest[account]
+        name = account or "an unnamed account"
+        try:
+            observed_at = date.fromisoformat(str(observation["observedAt"]))
+        except (KeyError, ValueError):
+            return None, f"observation of {name} on {provider_route!r} has no usable observedAt date"
+        age = (today - observed_at).days
+        if age > max_age_days:
+            return None, (f"observation of {name} on {provider_route!r} is {age} days old, over "
+                          f"the {max_age_days}-day limit; re-check the account and update "
+                          f"{path.name}")
+        recorded = observation.get("controls") or {}
+        for control in controls:
+            if control not in recorded:
+                return None, f"observation of {name} on {provider_route!r} records no {control}"
+            if merged.setdefault(control, recorded[control]) != recorded[control]:
+                return None, (f"accounts reachable through {provider_route!r} disagree on "
+                              f"{control}; each must satisfy the policy on its own")
+    return {"controls": merged}, None
 
 
 # ------------------------------------------------------------------ decision
@@ -292,8 +379,11 @@ def evaluate(args: argparse.Namespace) -> int:
     needed = OBSERVED_CONTROLS.get(args.provider_route, {})
     recorded: dict = {}
     if needed and args.observed_controls and args.observed_controls.exists():
-        found, why = load_observation(args.observed_controls, args.provider_route,
-                                      args.max_observation_age_days)
+        reachable, why = reachable_accounts(args.provider_route)
+        found = None
+        if why is None:
+            found, why = load_observation(args.observed_controls, args.provider_route,
+                                          args.max_observation_age_days, needed, reachable)
         if why and all(getattr(args, d) is None for d in needed.values()):
             return unresolved("stale_or_missing_observation", why)
         recorded = (found or {}).get("controls", {})
@@ -423,9 +513,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="dated record of what was actually seen on the account. Used only "
                          "when the matching flag is absent; a flag always wins, because it "
                          "is what a runner passes when it has just looked")
-    ap.add_argument("--max-observation-age-days", type=int, default=30,
-                    help="refuse an observation older than this. A setting seen months ago "
-                         "is not an observation of today's setting (default: %(default)s)")
+    ap.add_argument("--max-observation-age-days", type=int, default=180,
+                    help="refuse an observation older than this. The setting changes only on a "
+                         "terms-update prompt, a re-created account or a re-auth, none of which "
+                         "announces itself, so it is still re-checked (default: %(default)s)")
     ap.add_argument("--rights-basis", nargs="*", default=None,
                     help="override the recorded basis strings")
     ap.add_argument("--policies", type=Path, default=HERE / "provider-policies.yaml")
