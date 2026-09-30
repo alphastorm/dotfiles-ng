@@ -7,7 +7,7 @@ description: Run independent cross-family review for production-grade, materiall
 
 Run automatic, evidence-driven review. The active main-session model remains the accountable lead and integrator; deterministic policy selects the assurance class and the resolver selects the lead-family profile and reviewer standing. Critics inspect independently; they do not vote, rewrite the solution, edit the repository, or see one another's first-round output.
 
-This document is the whole admission decision. Most invocations end inside it with direct lead verification or one resolver-selected focused reviewer. Full-council mechanics are not here and are not needed to decide against a council. No review-class, provider, roster, or reviewer choice is a user authorization gate.
+This document is the whole admission decision. Most invocations end inside it with direct lead verification or one resolver-selected focused review. Full-council mechanics are not here and are not needed to decide against a council. No review-class, provider, roster, or reviewer choice is a user authorization gate.
 
 ## Scope and authorization
 
@@ -190,7 +190,7 @@ than in a remediation chain.
 
 Every dispatched reviewer receives this complete assignment. It is the canonical trusted assignment and the single owner of the shared review floor, including state fidelity; a private reviewer definition supplies the lens and output schema and never restates these requirements. Do not give reviewers caller-provided output schemas that weaken their agent schema.
 
-The assignment is generated, never composed by hand. `review_dispatch.py prepare` resolves standing, builds the complete task text, and returns the only provider-ready payload; the lead submits it verbatim and writes none of it. The model's inputs are the frozen scope and packet, output paths, the accountable `lead_family`, the review class, and only the focused reviewer id when applicable. The resolver emits every standing field from the live authority, and the Task gate revalidates the whole payload before any reviewer runs. Never write, derive, copy, or edit a reviewer's `selectionClass`, `role`, `independence_class`, or `authority`.
+The assignment is generated, never composed by hand. `review_dispatch.py prepare` resolves standing, builds the complete task text, and returns the only provider-ready payload; the lead submits it verbatim and writes none of it. The model's inputs are the frozen scope and packet, output paths, the accountable `lead_family`, the review class, and, for a canary probe only, the probed lane's reviewer id. The resolver emits every standing field from the live authority, and the Task gate revalidates the whole payload before any reviewer runs. Never write, derive, copy, or edit a reviewer's `selectionClass`, `role`, `independence_class`, or `authority`.
 
 This is the shape the generated assignment takes:
 

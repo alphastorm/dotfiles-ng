@@ -1516,9 +1516,9 @@ def receipt_schema(document: Mapping[str, object]) -> dict[str, object]:
             "reviewClass": {
                 "enum": list(REVIEW_CLASSES),
                 "description": (
-                    "Which resolution produced this receipt: one configured critic outside a "
-                    "council, the complete selected council, or the complete fixed refutation "
-                    "pool."
+                    "Which resolution produced this receipt: one probed canary lane, the "
+                    "focused strong critic with its focused supplements, the complete selected "
+                    "council, or the complete fixed refutation pool."
                 ),
             },
             "subject": {
