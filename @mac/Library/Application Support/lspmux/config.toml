@@ -1,0 +1,43 @@
+instance_timeout = 300
+gc_interval = 10
+listen = "/Users/srs/Library/Caches/lspmux/lspmux.sock"
+connect = "/Users/srs/Library/Caches/lspmux/lspmux.sock"
+log_filters = "info"
+pass_environment = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LC_MESSAGES",
+  "LC_COLLATE",
+  "LC_MONETARY",
+  "LC_NUMERIC",
+  "LC_TIME",
+  "XDG_*",
+  "NODE_PATH",
+  "NODE_OPTIONS",
+  "VIRTUAL_ENV",
+  "PYTHONHOME",
+  "PYTHONPATH",
+  "PYRIGHT_PYTHON_*",
+  "UV_*",
+  "CONDA_*",
+  "RUFF_*",
+  "TSSERVER_*",
+  "ESLINT_*",
+  "SDKROOT",
+  "DEVELOPER_DIR",
+  "CARGO_HOME",
+  "RUSTUP_HOME",
+  "RUSTFLAGS",
+  "RUSTC_WRAPPER",
+  "CARGO_TARGET_DIR",
+  "GOPATH",
+  "GOROOT",
+  "GOMODCACHE",
+]

@@ -14,7 +14,23 @@
       "args": ["--stdio"],
       "fileTypes": [".py", ".pyi"],
       "rootMarkers": [".git", "pyproject.toml", "pyrightconfig.json", "setup.py", "setup.cfg", "requirements.txt"],
-      "disabled": false
+      "disabled": false,
+      "settings": {
+        "python": {
+          "pythonPath": ".venv/bin/python",
+          "analysis": {
+            "autoSearchPaths": true,
+            "diagnosticMode": "openFilesOnly",
+            "useLibraryCodeForTypes": true
+          }
+        }
+      }
+    },
+    "ruff": {
+      "rootMarkers": [".git", "pyproject.toml", "ruff.toml", ".ruff.toml"]
+    },
+    "rust-analyzer": {
+      "rootMarkers": [".git", "Cargo.toml", "rust-analyzer.toml"]
     },
     "clangd": {
       "command": "clangd",

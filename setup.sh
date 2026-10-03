@@ -102,6 +102,20 @@ function install_brew_packages() {
   HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask \
     font-meslo-lg-nerd-font \
     keybase
+
+  # Language servers omp/.omp/agent/lsp.json launches, several by their
+  # /opt/homebrew/bin path.
+  HOMEBREW_NO_AUTO_UPDATE=1 brew install \
+    bash-language-server \
+    cmake-language-server \
+    dockerfile-language-server \
+    helm-ls \
+    marksman \
+    pyright \
+    ruby-lsp \
+    typescript \
+    vscode-langservers-extracted \
+    yaml-language-server
 }
 
 function install_apt_packages() {
@@ -220,6 +234,50 @@ function install_osx_settings() {
 function install_linux_settings() {
   echo "installing linux settings..."
   stow -R -t "$HOME" @linux
+}
+
+# rust-analyzer is a rustup component. lspmux shares one rust-analyzer per
+# workspace across OMP sessions and editors: OMP wraps rust-analyzer in
+# `lspmux client` whenever `lspmux status` answers, and spawns it directly
+# otherwise. Both need a Rust toolchain, so without rustup this step is skipped.
+LSPMUX_GIT=https://codeberg.org/p2502/lspmux.git
+LSPMUX_REV=18861f9d59e74ece8d867772cf07fa302c2dae98
+LSPMUX_LABEL=org.codeberg.p2502.lspmux
+
+function install_language_tooling() {
+  if ! command -v rustup >/dev/null 2>&1; then
+    echo "note: rustup not found; skipping rust-analyzer and lspmux" >&2
+    return 0
+  fi
+  echo "installing rust-analyzer and lspmux..."
+  rustup component add rust-analyzer rust-src
+  if ! [ -x "$HOME/.local/bin/lspmux" ]; then
+    cargo install --locked --root "$HOME/.local" --git "$LSPMUX_GIT" --rev "$LSPMUX_REV" lspmux
+  fi
+  if [ "$PLATFORM" = osx ]; then
+    install_lspmux_agent
+  fi
+}
+
+# The agent is linked only once the binary exists: launchd loads every plist in
+# LaunchAgents at login and would restart a missing server every ten seconds.
+function install_lspmux_agent() {
+  local source="$PWD/launchd/$LSPMUX_LABEL.plist"
+  local target="$HOME/Library/LaunchAgents/$LSPMUX_LABEL.plist"
+  local domain
+  domain="gui/$(id -u)"
+
+  if ! [ -L "$target" ] || [ "$(readlink "$target")" != "$source" ]; then
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      echo "error: refusing to replace $target; remove it and rerun" >&2
+      return 1
+    fi
+    mkdir -p "$HOME/Library/LaunchAgents"
+    ln -s "$source" "$target"
+  fi
+  if ! launchctl print "$domain/$LSPMUX_LABEL" >/dev/null 2>&1; then
+    launchctl bootstrap "$domain" "$target"
+  fi
 }
 
 function _verify_sha256() {
@@ -539,6 +597,7 @@ install_login_shell
 
 install_common_settings
 "install_${PLATFORM}_settings"
+install_language_tooling
 stow_dotfiles
 stow_private_dotfiles
 install_zplug
