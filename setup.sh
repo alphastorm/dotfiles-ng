@@ -100,6 +100,7 @@ function install_brew_packages() {
     zsh
 
   HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask \
+    codex \
     font-meslo-lg-nerd-font \
     keybase
 
@@ -229,6 +230,11 @@ function install_osx_settings() {
   defaults write .GlobalPreferences com.apple.mouse.scaling -1
   # enable dark mode
   osascript -e 'tell application "System Events" to tell appearance preferences to set dark mode to true'
+  # RepoPrompt CE runs Codex from the codex cask. It launches the exact path its
+  # Settings stored, and a versioned Caskroom path disappears on `brew upgrade`,
+  # so point it at the cask's link. RepoPrompt reads this at its next launch.
+  defaults write com.pvncher.repoprompt.ce codexRuntimeSelectionMode external
+  defaults write com.pvncher.repoprompt.ce codexRuntimeExecutablePath "$HOMEBREW_PREFIX/bin/codex"
 }
 
 function install_linux_settings() {
