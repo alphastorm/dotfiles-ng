@@ -481,6 +481,29 @@ describe("protected task calls", () => {
 		]);
 	});
 
+	test("admits the canonical dispatch after the harness strips its intent field", async () => {
+		// omp 18.5.1 removes `i` from tool-call arguments before any tool_call hook runs.
+		const launches: string[] = [];
+		const call = gate(LEAD_PROMPT, approvingVerifier(), async (envelopePath) => {
+			launches.push(envelopePath);
+		});
+		const { i: _intent, ...delivered } = structuredClone(CANONICAL_INPUT);
+
+		expect(await call("task", delivered)).toEqual({ input: delivered });
+		expect(launches).toEqual([ENVELOPE_PATH]);
+	});
+
+	test("blocks an intent-stripped call that deviates from the canonical dispatch", async () => {
+		const { i: _intent, ...delivered } = structuredClone(CANONICAL_INPUT);
+		const reordered = { ...delivered, tasks: [delivered.tasks[1], delivered.tasks[0]] };
+		const verify = approvingVerifier();
+
+		expect(reasonOf(await evaluateTaskDispatch(reordered, verify))).toContain(
+			"canonical dispatch",
+		);
+		expect(verify.calls).toHaveLength(1);
+	});
+
 	test("blocks unresolved and completed envelope redispatches", async () => {
 		const call = gate(LEAD_PROMPT);
 
