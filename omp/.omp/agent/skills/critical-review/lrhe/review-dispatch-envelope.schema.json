@@ -36,6 +36,7 @@
       "enum": [
         "canary",
         "focused",
+        "replay",
         "initial",
         "targeted-refuter"
       ]

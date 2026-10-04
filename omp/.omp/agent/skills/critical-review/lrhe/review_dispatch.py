@@ -23,9 +23,9 @@ refused.
 `resolve_assignments` derives every standing field from the fixed live
 authority. Initial standing comes only from the manifest re-resolved during
 freeze; focused standing names the reciprocal strong critic and the profile's
-configured focused supplements; targeted refutation uses the complete fixed
-pool. Receipts bind the subject, authority,
-both resolvers, and all schemas.
+configured focused supplements; replay standing names only that strong critic;
+targeted refutation uses the complete fixed pool. Receipts bind the subject,
+authority, both resolvers, and all schemas.
 
 Canonical task construction re-reads every bound byte, re-resolves standing,
 and embeds the verified scope and packet bytes. `verify-task` is internal and is
@@ -86,8 +86,8 @@ ENVELOPE_SCHEMA_RELATIVE_PATH = "lrhe/review-dispatch-envelope.schema.json"
 RECEIPT_SCHEMA_FILENAME = "resolver-receipt.schema.json"
 
 # The live authority is not a flag. The caller chooses the subject, the lead
-# family, the review class, and the reviewers; which qualification record grants
-# standing is not a caller decision at any step.
+# family, the review class, and only for a canary the probed reviewer; which
+# qualification record grants standing is not a caller decision at any step.
 LIVE_AUTHORITY = qualification.DEFAULT_QUALIFICATION
 
 REPOSITORY_KIND = "repository"
@@ -99,6 +99,7 @@ SUBJECT_KINDS = (PACKET_ONLY_KIND, REPOSITORY_KIND)
 WORKING_TREE_KIND = "working-tree"
 
 FOCUSED = "focused"
+REPLAY = "replay"
 INITIAL = "initial"
 TARGETED_REFUTER = "targeted-refuter"
 # A qualification canary probes one lane's boundary conduct -- read-only tools,
@@ -107,23 +108,22 @@ TARGETED_REFUTER = "targeted-refuter"
 # ungated spawn beside it. It resolves no council, binds no review record, and
 # grants nothing: the result is evidence about the lane, never about a change.
 CANARY = "canary"
-REVIEW_CLASSES = (CANARY, FOCUSED, INITIAL, TARGETED_REFUTER)
+REVIEW_CLASSES = (CANARY, FOCUSED, REPLAY, INITIAL, TARGETED_REFUTER)
 # The two classes whose roster is the protocol's own, so the record's dispatch
 # gate decides whether they may run at all.
 RECORD_BOUND_CLASSES = (INITIAL, TARGETED_REFUTER)
 
-# `focused` and `canary` are the two selection classes this module adds to the
-# resolver's vocabulary, each because it dispatches one configured reviewer
-# outside a council under a standing no council seat has -- neither is
-# unconditional council membership, a specialist seat, nor a conditional lane.
-# A canary seat is named separately from a focused one so a probe result can
-# never be read back as a focused review. A focused supplement keeps the council
-# vocabulary's `supplement` class because its standing is its council seat's.
+# Record-free strong critics and canary probes have their own selection classes,
+# distinct from council membership. A replay or canary result can never be read
+# back as a focused review. A focused supplement keeps the council vocabulary's
+# `supplement` class because its standing is its council seat's.
 FOCUSED_SELECTION_CLASS = "focused"
+REPLAY_SELECTION_CLASS = "replay"
 CANARY_SELECTION_CLASS = "canary"
 SELECTION_CLASSES = (
     CANARY_SELECTION_CLASS,
     FOCUSED_SELECTION_CLASS,
+    REPLAY_SELECTION_CLASS,
     *qualification.SELECTION_CLASSES,
 )
 CANARY_REASON_CODE = "configured-qualification-canary"
@@ -1113,6 +1113,9 @@ def class_candidates(
             _standing(lead_family, FOCUSED, strong, FOCUSED_SELECTION_CLASS),
             *(_standing(lead_family, FOCUSED, reviewer, "supplement") for reviewer in supplements),
         )
+    if review_class == REPLAY:
+        strong = qualification.focused_reviewers(document, lead_family)[0]
+        return (_standing(lead_family, REPLAY, strong, REPLAY_SELECTION_CLASS),)
     if review_class == TARGETED_REFUTER:
         return tuple(
             _standing(lead_family, TARGETED_REFUTER, reviewer, "targeted")
@@ -1153,7 +1156,7 @@ def roster_arity(
     if review_class == CANARY:
         return 1, 1
     candidates = class_candidates(document, lead_family, review_class)
-    if review_class in (FOCUSED, TARGETED_REFUTER):
+    if review_class in (FOCUSED, REPLAY, TARGETED_REFUTER):
         return len(candidates), len(candidates)
     optional = sum(1 for row in candidates if row.selection_class == "conditional")
     return len(candidates) - optional, len(candidates)
@@ -1225,8 +1228,8 @@ def _assignment_from_row(row: Mapping[str, object]) -> Assignment:
 def _require_grants(reviewer: qualification.LiveReviewer, packet: Mapping[str, object]) -> None:
     """Refuse a lane the packet does not authorize, rather than dropping it.
 
-    Only lanes with no not-selected state reach here -- every focused seat, the
-    probed canary lane, and the whole fixed refutation pool -- so silently
+    Only lanes with no not-selected state reach here -- every focused or replay
+    seat, the probed canary lane, and the whole fixed refutation pool -- so silently
     omitting one would shrink a roster nobody agreed to shrink and emitting it
     would transmit material to a lane the packet never authorized. `initial` is
     not checked here because the council resolver already applies both grants,
@@ -1320,6 +1323,18 @@ def resolve_assignments(
                 _assignment(reviewer, "supplement", (qualification.SUPPLEMENT_REASON_CODE,))
                 for reviewer in supplements
             ),
+        )
+        validate_evidence_compatibility(
+            subject, verified.packet, [item.evidence_delivery for item in assignments]
+        )
+        return assignments
+
+    if review_class == REPLAY:
+        strong = qualification.focused_reviewers(document, lead_family)[0]
+        _require_exact_roster(review_class, requested, (strong.reviewer_id,))
+        _require_grants(strong, verified.packet)
+        assignments = (
+            _assignment(strong, REPLAY_SELECTION_CLASS, (qualification.STRONG_REASON_CODE,)),
         )
         validate_evidence_compatibility(
             subject, verified.packet, [item.evidence_delivery for item in assignments]
@@ -1517,8 +1532,8 @@ def receipt_schema(document: Mapping[str, object]) -> dict[str, object]:
                 "enum": list(REVIEW_CLASSES),
                 "description": (
                     "Which resolution produced this receipt: one probed canary lane, the "
-                    "focused strong critic with its focused supplements, the complete selected "
-                    "council, or the complete fixed refutation pool."
+                    "focused strong critic with its focused supplements, one replay strong "
+                    "critic, the complete selected council, or the complete fixed refutation pool."
                 ),
             },
             "subject": {
@@ -2326,6 +2341,10 @@ def command_prepare(args: argparse.Namespace) -> str:
                 )
             reviewers = (
                 canary_reviewer(authority, args.lead_family, args.reviewer).reviewer_id,
+            )
+        elif args.review_class == REPLAY:
+            reviewers = (
+                qualification.focused_reviewers(authority, args.lead_family)[0].reviewer_id,
             )
         elif args.review_class == FOCUSED:
             reviewers = tuple(

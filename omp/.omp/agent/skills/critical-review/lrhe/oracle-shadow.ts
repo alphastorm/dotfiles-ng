@@ -74,7 +74,7 @@ interface OracleShadow {
 
 interface DispatchEnvelope {
 	schemaVersion: 2;
-	reviewClass: "focused" | "initial" | "targeted-refuter";
+	reviewClass: "focused" | "replay" | "initial" | "targeted-refuter";
 	subjectDigest: string;
 	receiptSha256: string;
 	oracleShadow: OracleShadow | null;
@@ -235,7 +235,12 @@ function parseShadow(value: unknown): OracleShadow | null {
 function parseEnvelope(value: Record<string, unknown>): DispatchEnvelope {
 	if (value.schemaVersion !== 2) throw new Error("Oracle shadow requires dispatch envelope schemaVersion 2");
 	const reviewClass = value.reviewClass;
-	if (reviewClass !== "focused" && reviewClass !== "initial" && reviewClass !== "targeted-refuter") {
+	if (
+		reviewClass !== "focused" &&
+		reviewClass !== "replay" &&
+		reviewClass !== "initial" &&
+		reviewClass !== "targeted-refuter"
+	) {
 		throw new Error("dispatch envelope reviewClass is invalid");
 	}
 	const shadow = parseShadow(value.oracleShadow);

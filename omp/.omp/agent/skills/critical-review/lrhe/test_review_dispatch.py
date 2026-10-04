@@ -61,6 +61,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
         qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
+    ("gpt", "replay", "claude-opus"): (
+        "review-claude-opus", "replay", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
+    ),
     ("gpt", "initial", "claude-opus"): (
         "review-claude-opus", "strong", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
@@ -113,6 +117,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
         qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
+    ("claude", "replay", "daybreak-blue"): (
+        "review-daybreak-blue", "replay", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
+    ),
     ("claude", "initial", "daybreak-blue"): (
         "review-daybreak-blue", "strong", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
@@ -138,10 +146,12 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
 EXPECTED_ARITY: dict[tuple[str, str], tuple[int, int]] = {
     ("gpt", "canary"): (1, 1),
     ("gpt", "focused"): (2, 2),
+    ("gpt", "replay"): (1, 1),
     ("gpt", "initial"): (4, 5),
     ("gpt", "targeted-refuter"): (1, 1),
     ("claude", "canary"): (1, 1),
     ("claude", "focused"): (2, 2),
+    ("claude", "replay"): (1, 1),
     ("claude", "initial"): (3, 4),
     ("claude", "targeted-refuter"): (1, 1),
 }
@@ -340,7 +350,7 @@ def council_material(tmp_path, authority) -> dict:
 
 
 def test_standing_matrix_is_exactly_the_configured_tuples(authority):
-    """Every valid tuple, and no others, across 4 families x 3 classes."""
+    """Every valid tuple, and no others, across all lead families and classes."""
 
     document = qualification.validate_qualification(authority)
     assert rd.lead_families(document) == EXPECTED_LEAD_FAMILIES
@@ -466,6 +476,57 @@ def test_receipt_schema_requires_the_whole_focused_roster(
             assignments=assignments,
         )
         assert receipt_validator.is_valid(document) is valid
+
+
+@pytest.mark.parametrize(
+    ("lead_family", "reviewer_id"),
+    (("gpt", "claude-opus"), ("claude", "daybreak-blue")),
+)
+def test_receipt_schema_limits_replay_to_one_distinct_strong_critic(
+    receipt_validator, packet_only_subject, lead_family: str, reviewer_id: str
+):
+    critic = _assignment(reviewer_id, EXPECTED_TUPLES[(lead_family, "replay", reviewer_id)])
+    supplement = _assignment("grok", EXPECTED_TUPLES[(lead_family, "focused", "grok")])
+    receipt = _receipt_document(
+        packet_only_subject,
+        lead_family=lead_family,
+        review_class="replay",
+        assignments=[critic],
+    )
+    assert receipt_validator.is_valid(receipt)
+    for assignments in (
+        [],
+        [critic, supplement],
+        [supplement],
+        [dict(critic, selectionClass="focused")],
+    ):
+        assert not receipt_validator.is_valid(dict(receipt, assignments=assignments))
+    assert not receipt_validator.is_valid(
+        dict(receipt, reviewClass="focused", assignments=[critic, supplement])
+    )
+
+
+@pytest.mark.parametrize("lead_family", EXPECTED_LEAD_FAMILIES)
+@pytest.mark.parametrize("review_class", ("canary", "focused", "initial", "targeted-refuter"))
+def test_pre_replay_receipts_remain_schema_valid(
+    receipt_validator, packet_only_subject, lead_family: str, review_class: str
+):
+    roster = [
+        _assignment(reviewer_id, row)
+        for (family, class_name, reviewer_id), row in EXPECTED_TUPLES.items()
+        if family == lead_family and class_name == review_class
+    ]
+    if review_class == "canary":
+        roster = roster[:1]
+    receipt = _receipt_document(
+        packet_only_subject,
+        lead_family=lead_family,
+        review_class=review_class,
+        assignments=roster,
+    )
+    receipt["schemaVersion"] = 1
+    receipt["panelId"] = "critical-review-primary-v9"
+    assert receipt_validator.is_valid(receipt)
 
 
 def test_receipt_schema_refuses_a_reviewer_that_class_never_dispatches(
@@ -1196,6 +1257,61 @@ def test_focused_refuses_a_packet_that_withholds_the_supplement_grant(
         )
 
 
+@pytest.mark.parametrize(
+    ("lead_family", "reviewer_id"),
+    (("gpt", "claude-opus"), ("claude", "daybreak-blue")),
+)
+@pytest.mark.parametrize("supplements", (["grok"], ["gemini", "grok"]))
+def test_replay_resolves_only_the_reciprocal_critic_without_supplement_grants(
+    material, authority, repository, lead_family: str, reviewer_id: str, supplements: list[str]
+):
+    authority["liveDispatch"]["byLeadFamily"][lead_family]["focusedSupplements"] = supplements
+    document = qualification.validate_qualification(authority)
+    packet_text = material["packet"].read_text(encoding="utf-8")
+    assert "- xai\n" in packet_text
+    material["packet"].write_text(packet_text.replace("- xai\n", ""), encoding="utf-8")
+    verified = rd.freeze_subject(
+        scope_path=material["scope"],
+        packet_path=material["packet"],
+        repository_path=repository["path"],
+        subject_commit=repository["commit"],
+        files=["src/dispatch.py"],
+    )
+    assert verified.record is None
+    assignments = rd.resolve_assignments(
+        document,
+        verified,
+        lead_family=lead_family,
+        review_class="replay",
+        reviewer_ids=[reviewer_id],
+        authority_path=rd.LIVE_AUTHORITY,
+        authority_sha256="0" * 64,
+    )
+    assert len(assignments) == 1
+    critic = assignments[0]
+    assert (
+        critic.agent,
+        critic.selection_class,
+        critic.role,
+        critic.independence_class,
+        critic.authority,
+    ) == EXPECTED_TUPLES[(lead_family, "replay", reviewer_id)]
+    assert critic.reason_codes == (qualification.STRONG_REASON_CODE,)
+    assert rd.roster_arity(document, lead_family, "replay") == (1, 1)
+    for supplement in supplements:
+        for requested in ([supplement], [reviewer_id, supplement]):
+            with pytest.raises(rd.DispatchError, match="complete resolved roster"):
+                rd.resolve_assignments(
+                    document,
+                    verified,
+                    lead_family=lead_family,
+                    review_class="replay",
+                    reviewer_ids=requested,
+                    authority_path=rd.LIVE_AUTHORITY,
+                    authority_sha256="0" * 64,
+                )
+
+
 def test_record_bound_classes_refuse_a_subject_without_a_record(material, authority):
     document = qualification.validate_qualification(authority)
     verified = rd.freeze_subject(scope_path=material["scope"], packet_path=material["packet"])
@@ -1228,10 +1344,12 @@ def test_an_unknown_review_class_is_refused(material, authority):
 
 
 # --------------------------------------------------------------------------
-# the whole focused path
+# the whole record-free path
 
 
-def _focused_prepare_args(tmp_path, material, repository):
+def _record_free_prepare_args(
+    tmp_path, material, repository, *, lead_family="gpt", review_class="focused"
+):
     paths = {
         "subject": tmp_path / "frozen-subject.json",
         "receipt": tmp_path / "resolver-receipt.json",
@@ -1250,9 +1368,9 @@ def _focused_prepare_args(tmp_path, material, repository):
         "--file",
         "src/dispatch.py",
         "--lead-family",
-        "gpt",
+        lead_family,
         "--review-class",
-        "focused",
+        review_class,
         "--subject",
         str(paths["subject"]),
         "--receipt",
@@ -1265,7 +1383,7 @@ def _focused_prepare_args(tmp_path, material, repository):
 def test_focused_prepare_rejects_every_reviewer_override(
     tmp_path, material, repository
 ):
-    paths, argv = _focused_prepare_args(tmp_path, material, repository)
+    paths, argv = _record_free_prepare_args(tmp_path, material, repository)
     with pytest.raises(SystemExit) as refusal:
         rd.main([*argv, "--reviewer", "gemini"])
     assert refusal.value.code == 2
@@ -1273,7 +1391,7 @@ def test_focused_prepare_rejects_every_reviewer_override(
 
 
 def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):
-    paths, argv = _focused_prepare_args(tmp_path, material, repository)
+    paths, argv = _record_free_prepare_args(tmp_path, material, repository)
     assert rd.main(argv) == 0
     emitted = json.loads(capsys.readouterr().out)["task_input"]
 
@@ -1335,6 +1453,65 @@ def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):
         == 1
     )
     assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    ("lead_family", "reviewer_id"),
+    (("gpt", "claude-opus"), ("claude", "daybreak-blue")),
+)
+def test_replay_prepare_end_to_end(
+    tmp_path, material, repository, capsys, lead_family: str, reviewer_id: str
+):
+    paths, argv = _record_free_prepare_args(
+        tmp_path, material, repository, lead_family=lead_family, review_class="replay"
+    )
+    assert rd.main(argv) == 0
+    emitted = json.loads(capsys.readouterr().out)["task_input"]
+    subject = json.loads(paths["subject"].read_text(encoding="utf-8"))
+    assert "recordPath" not in subject
+    receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
+    assert receipt["reviewClass"] == "replay"
+    assert [row["reviewer_id"] for row in receipt["assignments"]] == [reviewer_id]
+    assignment = receipt["assignments"][0]
+    assert (
+        assignment["agent"],
+        assignment["selectionClass"],
+        assignment["role"],
+        assignment["independence_class"],
+        assignment["authority"],
+    ) == EXPECTED_TUPLES[(lead_family, "replay", reviewer_id)]
+    envelope = json.loads(paths["envelope"].read_text(encoding="utf-8"))
+    assert envelope["reviewClass"] == "replay"
+    assert envelope["oracleShadow"] is None
+    assert [task["agent"] for task in emitted["tasks"]] == [assignment["agent"]]
+    assert "review_class=replay" in emitted["tasks"][0]["task"]
+    assert rd.main(
+        [
+            "verify-task",
+            "--envelope",
+            str(paths["envelope"]),
+            "--sha256",
+            _digest(paths["envelope"].read_text(encoding="utf-8")),
+        ]
+    ) == 0
+    assert json.loads(capsys.readouterr().out)["task_input"] == emitted
+
+
+@pytest.mark.parametrize(
+    ("lead_family", "reviewer_id"),
+    (("gpt", "claude-opus"), ("claude", "daybreak-blue")),
+)
+def test_replay_prepare_rejects_even_the_resolved_reviewer_override(
+    tmp_path, material, repository, lead_family: str, reviewer_id: str
+):
+    paths, argv = _record_free_prepare_args(
+        tmp_path, material, repository, lead_family=lead_family, review_class="replay"
+    )
+    for requested in (reviewer_id, "grok"):
+        with pytest.raises(SystemExit) as refusal:
+            rd.main([*argv, "--reviewer", requested])
+        assert refusal.value.code == 2
+        assert not any(path.exists() for path in paths.values())
 
 
 def _canary_prepare_args(tmp_path, material, repository, *, reviewer: str | None = "gemini"):
@@ -1526,14 +1703,14 @@ def test_cli_has_no_manual_dispatch_stage(legacy_command):
 
 
 def test_generated_artifacts_are_read_only_and_never_overwritten(tmp_path, material, repository):
-    paths, argv = _focused_prepare_args(tmp_path, material, repository)
+    paths, argv = _record_free_prepare_args(tmp_path, material, repository)
     assert rd.main(argv) == 0
     assert all(path.stat().st_mode & 0o777 == 0o444 for path in paths.values())
     assert rd.main(argv) == 1
 
 
 def test_a_receipt_naming_another_authority_is_refused(tmp_path, material, repository, capsys):
-    paths, argv = _focused_prepare_args(tmp_path, material, repository)
+    paths, argv = _record_free_prepare_args(tmp_path, material, repository)
     assert rd.main(argv) == 0
     capsys.readouterr()
     forged = json.loads(paths["receipt"].read_text(encoding="utf-8"))
