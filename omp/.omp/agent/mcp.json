@@ -5,7 +5,7 @@
       "type": "stdio",
       "command": "/Users/srs/RepoPrompt/repoprompt_ce_cli",
       "args": ["--backend", "app"],
-      "timeout": 1200000,
+      "timeout": 3600000,
       "instructions": false
     }
   },
