@@ -99,7 +99,8 @@ NON_EGRESS = frozenset({"none", "stub"})
 # `evidence=<path>:<line>` -- the anchor a reviewer claims to have read.
 ANCHOR = re.compile(r"\|evidence=([^\s|:]+):")
 
-TRACE_RECEIPT_SCHEMA = "lrhe-live-review-trace-v2"
+LEGACY_TRACE_RECEIPT_SCHEMA = "lrhe-live-review-trace-v2"
+TRACE_RECEIPT_SCHEMA = "lrhe-live-review-trace-v3"
 TRACE_RECEIPT_KEYS = {
     "schema",
     "result",
@@ -110,6 +111,7 @@ TRACE_RECEIPT_KEYS = {
     "evidence_delivery",
     "agent_tools",
     "served_models",
+    "served_oauth_pins",
     "declared_tools",
     "tool_attempts",
     "tool_executions",
@@ -122,6 +124,7 @@ TRACE_RECEIPT_KEYS = {
     "agent_definition_sha256",
     "observed_at",
 }
+TRACE_RECEIPT_V2_KEYS = TRACE_RECEIPT_KEYS - {"served_oauth_pins"}
 
 
 class OutputRefusal(RuntimeError):
@@ -910,6 +913,26 @@ def _trace_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _trace_oauth_pins(rows: list[dict[str, Any]], provider: str) -> dict[str, list[str]]:
+    """Retain every credential change in transcript order, without deduplication."""
+    pins: dict[str, list[str]] = {provider: []}
+    for row in rows:
+        if row.get("type") != "credential_pin":
+            continue
+        pin_provider, pin_hash = row.get("provider"), row.get("hash")
+        if (
+            not isinstance(pin_provider, str)
+            or not pin_provider.strip()
+            or not isinstance(pin_hash, str)
+            or re.fullmatch(r"[0-9a-f]{64}", pin_hash) is None
+        ):
+            raise TraceCanaryError(
+                "credential_pin must name a provider and a lowercase SHA-256 hash"
+            )
+        pins.setdefault(pin_provider, []).append(pin_hash)
+    return pins
+
+
 def _trace_tool_names(rows: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
     attempts: list[str] = []
     executions: list[str] = []
@@ -1102,6 +1125,7 @@ def capture_trace_receipt(
         "evidence_delivery": evidence_delivery,
         "agent_tools": agent_tools,
         "served_models": sorted(served),
+        "served_oauth_pins": _trace_oauth_pins(rows, requested_model.split("/", 1)[0]),
         "declared_tools": runtime_declared_tools,
         "tool_attempts": attempts,
         "tool_executions": executions,
@@ -1131,7 +1155,14 @@ def validate_trace_receipt(
         raise TraceCanaryError(f"canary receipt is unreadable: {exc}") from exc
     if not isinstance(receipt, dict):
         raise TraceCanaryError("canary receipt must be an object")
-    missing, extra = TRACE_RECEIPT_KEYS - set(receipt), set(receipt) - TRACE_RECEIPT_KEYS
+    schema = receipt.get("schema")
+    if schema == TRACE_RECEIPT_SCHEMA:
+        keys = TRACE_RECEIPT_KEYS
+    elif schema == LEGACY_TRACE_RECEIPT_SCHEMA:
+        keys = TRACE_RECEIPT_V2_KEYS
+    else:
+        raise TraceCanaryError(f"unsupported canary receipt schema {schema!r}")
+    missing, extra = keys - set(receipt), set(receipt) - keys
     if missing or extra:
         raise TraceCanaryError(
             f"canary receipt shape mismatch: missing={sorted(missing)}, extra={sorted(extra)}"
@@ -1142,7 +1173,7 @@ def validate_trace_receipt(
     required_tools = {"yield"} | ({"read"} if evidence_delivery == "repository" else set())
     sha = hashlib.sha256(agent_definition.read_bytes()).hexdigest()
     expected = {
-        "schema": TRACE_RECEIPT_SCHEMA,
+        "schema": schema,
         "result": "passed",
         "agent": agent,
         "requested_selector": selector,
@@ -1162,6 +1193,24 @@ def validate_trace_receipt(
         for key, value in expected.items()
         if receipt.get(key) != value
     ]
+    if schema == TRACE_RECEIPT_SCHEMA:
+        pins = receipt["served_oauth_pins"]
+        provider = requested_model.split("/", 1)[0]
+        if not isinstance(pins, dict) or provider not in pins:
+            failures.append("served_oauth_pins must map providers, including the lane provider")
+        elif any(
+            not isinstance(pin_provider, str)
+            or not pin_provider.strip()
+            or not isinstance(values, list)
+            or any(
+                not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+                for value in values
+            )
+            for pin_provider, values in pins.items()
+        ):
+            failures.append(
+                "served_oauth_pins must contain ordered lists of lowercase SHA-256 hashes"
+            )
     runtime_declared_tools = receipt.get("declared_tools")
     if (
         not isinstance(runtime_declared_tools, list)

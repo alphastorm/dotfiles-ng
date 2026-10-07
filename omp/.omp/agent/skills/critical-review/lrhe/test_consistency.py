@@ -710,6 +710,16 @@ def _fake_catalogue(path: Path, provider_id: str, models: list[dict]) -> None:
         con.close()
 
 
+_SYNTHETIC_OAUTH_ACCOUNT = {
+    "accountId": "synthetic-account",
+    "email": "reviewer@example.invalid",
+    "orgId": "synthetic-org",
+}
+_SYNTHETIC_OAUTH_PIN = hashlib.sha256(
+    b"anthropic\0synthetic-account\0reviewer@example.invalid\0synthetic-org\0"
+).hexdigest()
+
+
 def _qualification(path: Path, selector: str) -> None:
     data = path / "lrhe-data"
     data.mkdir(exist_ok=True)
@@ -861,6 +871,61 @@ def test_qualification_rejects_unknown_canary_authority(tmp_path):
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     document["canaryLedgers"]["live"]["authority"] = "live_qualification"
     with pytest.raises(qualification.QualificationError, match="authority must be one of"):
+        qualification.validate_qualification(document)
+
+
+def test_qualification_accepts_anthropic_oauth_account_and_unbound_lanes(tmp_path):
+    _qualification(tmp_path, "anthropic/claude-synthetic:max")
+    document = yaml.safe_load((tmp_path / "qualification.yml").read_text(encoding="utf-8"))
+    qualification.validate_qualification(document)
+    entry = document["reviewers"]["kimi"]
+    entry["provider_route"] = "anthropic"
+    entry["oauthAccount"] = dict(_SYNTHETIC_OAUTH_ACCOUNT)
+    qualification.validate_qualification(document)
+
+
+@pytest.mark.parametrize(
+    "account",
+    (
+        None,
+        [],
+        {},
+        {key: value for key, value in _SYNTHETIC_OAUTH_ACCOUNT.items() if key != "accountId"},
+        {key: value for key, value in _SYNTHETIC_OAUTH_ACCOUNT.items() if key != "email"},
+        {key: value for key, value in _SYNTHETIC_OAUTH_ACCOUNT.items() if key != "orgId"},
+        {**_SYNTHETIC_OAUTH_ACCOUNT, "projectId": "synthetic-project"},
+    ),
+)
+def test_qualification_rejects_incomplete_or_unknown_oauth_account_fields(tmp_path, account):
+    _qualification(tmp_path, "anthropic/claude-synthetic:max")
+    document = yaml.safe_load((tmp_path / "qualification.yml").read_text(encoding="utf-8"))
+    entry = document["reviewers"]["kimi"]
+    entry.update(provider_route="anthropic", oauthAccount=account)
+    with pytest.raises(qualification.QualificationError, match="reviewers.kimi.oauthAccount"):
+        qualification.validate_qualification(document)
+
+
+@pytest.mark.parametrize("field", ("accountId", "email", "orgId"))
+@pytest.mark.parametrize("value", ("", " ", None, 17, []))
+def test_qualification_requires_nonempty_oauth_account_strings(tmp_path, field, value):
+    _qualification(tmp_path, "anthropic/claude-synthetic:max")
+    document = yaml.safe_load((tmp_path / "qualification.yml").read_text(encoding="utf-8"))
+    entry = document["reviewers"]["kimi"]
+    entry.update(
+        provider_route="anthropic", oauthAccount={**_SYNTHETIC_OAUTH_ACCOUNT, field: value}
+    )
+    with pytest.raises(qualification.QualificationError, match="must be a non-empty string"):
+        qualification.validate_qualification(document)
+
+
+@pytest.mark.parametrize("provider", ("opencode-go", "google-antigravity", "xai-oauth"))
+def test_qualification_rejects_oauth_binding_on_non_anthropic_routes(tmp_path, provider):
+    _qualification(tmp_path, "anthropic/claude-synthetic:max")
+    document = yaml.safe_load((tmp_path / "qualification.yml").read_text(encoding="utf-8"))
+    document["reviewers"]["kimi"].update(
+        provider_route=provider, oauthAccount=dict(_SYNTHETIC_OAUTH_ACCOUNT)
+    )
+    with pytest.raises(qualification.QualificationError, match="only for provider_route anthropic"):
         qualification.validate_qualification(document)
 
 
@@ -1155,6 +1220,7 @@ def _trace_receipt(definition: Path, agent: str, selector: str, delivery: str) -
         "evidence_delivery": delivery,
         "agent_tools": canary._contract_tools(delivery),
         "served_models": [model],
+        "served_oauth_pins": {model.split("/", 1)[0]: []},
         "declared_tools": canary._declared_contract_tools(delivery),
         "tool_attempts": ["read", "yield"],
         "tool_executions": ["read", "yield"],
@@ -2752,7 +2818,13 @@ def test_a_lane_that_used_a_tool_fails_the_surface_probe(tmp_path):
     assert failures and "1 tool call" in failures[0]
 
 
-def _write_trace_agent(path: Path, selector: str, evidence_delivery: str = "inline") -> None:
+def _write_trace_agent(
+    path: Path,
+    selector: str,
+    evidence_delivery: str = "inline",
+    *,
+    agent: str = "review-grok",
+) -> None:
     tool_lines = (
         "tools: []\n"
         if evidence_delivery == "inline"
@@ -2764,10 +2836,10 @@ def _write_trace_agent(path: Path, selector: str, evidence_delivery: str = "inli
     marker = "CRITICAL_REVIEWER_INLINE_ISOLATED_V1\n" if evidence_delivery == "inline" else ""
     path.write_text(
         "---\n"
-        "name: review-grok\n"
+        f"name: {agent}\n"
         f"{tool_lines}"
         f"model: [{selector}]\n"
-        "thinkingLevel: xhigh\n"
+        f"thinkingLevel: {qualification.selector_thinking_level(selector)}\n"
         "output:\n"
         "  type: object\n"
         "  additionalProperties: false\n"
@@ -2787,12 +2859,16 @@ def _write_trace(
     path: Path,
     *,
     evidence_delivery: str = "inline",
-    served: str = "grok-4.5",
+    served: str | None = None,
     attempted: str | tuple[str, ...] = "yield",
     executed: str | tuple[str, ...] = "yield",
     runtime_extra_tools: tuple[str, ...] = (),
     emit_allowed_tools: bool = True,
+    selector: str = "xai-oauth/grok-4.5:xhigh",
+    credential_pins: tuple[tuple[str, str], ...] = (),
 ) -> None:
+    requested_model, effort = canary._selector_parts(selector)
+    provider, model = requested_model.split("/", 1)
     attempts = [attempted] if isinstance(attempted, str) else list(attempted)
     executions = [executed] if isinstance(executed, str) else list(executed)
     agent_tools = canary._contract_tools(evidence_delivery)
@@ -2800,12 +2876,12 @@ def _write_trace(
     rows = [
         {
             "type": "model_change",
-            "model": "xai-oauth/grok-4.5",
+            "model": requested_model,
             "timestamp": "2026-07-30T00:00:00Z",
         },
         {
             "type": "thinking_level_change",
-            "thinkingLevel": "xhigh",
+            "thinkingLevel": effort,
             "timestamp": "2026-07-30T00:00:01Z",
         },
         {
@@ -2814,13 +2890,22 @@ def _write_trace(
             **({"allowedTools": [*agent_tools, "yield"]} if emit_allowed_tools else {}),
             "timestamp": "2026-07-30T00:00:02Z",
         },
+        *[
+            {
+                "type": "credential_pin",
+                "provider": pin_provider,
+                "hash": pin_hash,
+                "timestamp": "2026-07-30T00:00:02Z",
+            }
+            for pin_provider, pin_hash in credential_pins
+        ],
         {
             "type": "message",
             "timestamp": "2026-07-30T00:00:03Z",
             "message": {
                 "role": "assistant",
-                "provider": "xai-oauth",
-                "model": served,
+                "provider": provider,
+                "model": model if served is None else served,
                 "content": [{"type": "toolCall", "name": name} for name in attempts],
             },
         },
@@ -2852,6 +2937,211 @@ def _write_trace(
         },
     ]
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+
+def _oauth_lane_fixture(tmp_path, monkeypatch) -> tuple[Path, Path, Path]:
+    selector = "anthropic/claude-opus-synthetic:max"
+    agent = "review-claude-opus"
+    _qualification(tmp_path, selector)
+    authority = tmp_path / "qualification.yml"
+    document = yaml.safe_load(authority.read_text(encoding="utf-8"))
+    entry = document["reviewers"].pop("kimi")
+    entry.update(
+        agent=agent,
+        model_family="claude",
+        correlation_group="claude-opus-synthetic",
+        provider_route="anthropic",
+        access_profile="anthropic-synthetic",
+        data_allowlist_key="anthropic",
+        oauthAccount=dict(_SYNTHETIC_OAUTH_ACCOUNT),
+        evidenceDelivery="inline",
+        tools=[],
+        canaryReceipt="lrhe-data/oauth-trace.json",
+    )
+    document["reviewers"]["claude-opus"] = entry
+    document["liveDispatch"]["evaluationOnly"] = ["claude-opus"]
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    definition = agents / f"{agent}.md"
+    trace = tmp_path / "trace.jsonl"
+    _write_trace_agent(definition, selector, agent=agent)
+    _write_trace(
+        trace, selector=selector, credential_pins=(("anthropic", _SYNTHETIC_OAUTH_PIN),)
+    )
+    receipt = canary.capture_trace_receipt(trace, definition, agent, selector, "inline")
+    receipt_path = tmp_path / entry["canaryReceipt"]
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    entry["canary"] = {
+        "evidenceDelivery": receipt["evidence_delivery"],
+        "agentTools": receipt["agent_tools"],
+        "declaredTools": receipt["declared_tools"],
+        "forbiddenToolAttempts": receipt["forbidden_tool_attempts"],
+        "forbiddenToolExecutions": receipt["forbidden_tool_executions"],
+        "fallbackUsed": receipt["fallback_used"],
+        "servedModel": receipt["served_models"][0],
+    }
+    authority.write_text(yaml.safe_dump(document), encoding="utf-8")
+    identity = "email:reviewer@example.invalid|org:synthetic-org"
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "task": {
+                    "agentModelOverrides": {agent: selector},
+                    "agentAccountPools": {agent: {"anthropic": [identity]}},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(preflight, "SKILL", tmp_path)
+    monkeypatch.setattr(preflight, "AGENTS", agents)
+    monkeypatch.setattr(preflight, "CONFIG", config_path)
+    return authority, receipt_path, config_path
+
+
+@pytest.mark.parametrize(
+    "pins", ((_SYNTHETIC_OAUTH_PIN,), ("b" * 64,), (_SYNTHETIC_OAUTH_PIN, "b" * 64, _SYNTHETIC_OAUTH_PIN))
+)
+def test_v3_trace_receipt_extracts_ordered_oauth_pins_per_provider(tmp_path, pins):
+    selector = "anthropic/claude-opus-synthetic:max"
+    agent = tmp_path / "agent.md"
+    trace = tmp_path / "trace.jsonl"
+    receipt_path = tmp_path / "receipt.json"
+    _write_trace_agent(agent, selector)
+    _write_trace(
+        trace,
+        selector=selector,
+        credential_pins=(("xai-oauth", "c" * 64), *(("anthropic", pin) for pin in pins)),
+    )
+    receipt = canary.capture_trace_receipt(trace, agent, "review-grok", selector, "inline")
+    assert receipt["schema"] == "lrhe-live-review-trace-v3"
+    assert receipt["served_oauth_pins"] == {"anthropic": list(pins), "xai-oauth": ["c" * 64]}
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    assert canary.validate_trace_receipt(
+        receipt_path, agent, "review-grok", selector, "inline"
+    ) == receipt
+
+
+@pytest.mark.parametrize("provider, pin", (("", "a" * 64), ("anthropic", ""), ("anthropic", "A" * 64)))
+def test_trace_receipt_rejects_malformed_credential_pin_entries(tmp_path, provider, pin):
+    selector = "anthropic/claude-opus-synthetic:max"
+    agent = tmp_path / "agent.md"
+    trace = tmp_path / "trace.jsonl"
+    _write_trace_agent(agent, selector)
+    _write_trace(trace, selector=selector, credential_pins=((provider, pin),))
+    with pytest.raises(canary.TraceCanaryError, match="credential_pin"):
+        canary.capture_trace_receipt(trace, agent, "review-grok", selector, "inline")
+
+
+@pytest.mark.parametrize(
+    "pins",
+    (None, {}, {"anthropic": "a" * 64}, {"anthropic": [17]}, {"anthropic": ["A" * 64]}),
+)
+def test_v3_trace_receipt_rejects_malformed_served_oauth_pins(tmp_path, monkeypatch, pins):
+    _, receipt_path, _ = _oauth_lane_fixture(tmp_path, monkeypatch)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["served_oauth_pins"] = pins
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(canary.TraceCanaryError, match="served_oauth_pins"):
+        canary.validate_trace_receipt(
+            receipt_path,
+            tmp_path / "agents/review-claude-opus.md",
+            "review-claude-opus",
+            "anthropic/claude-opus-synthetic:max",
+            "inline",
+        )
+
+
+def test_bound_oauth_lane_passes_with_its_only_pin_and_exact_config_pool(tmp_path, monkeypatch):
+    _oauth_lane_fixture(tmp_path, monkeypatch)
+    result = preflight.check_reviewer_evidence_contracts()
+    assert result.state == preflight.PASS, result.detail
+
+
+@pytest.mark.parametrize(
+    "pins", ([], ["b" * 64], [_SYNTHETIC_OAUTH_PIN, "b" * 64], [_SYNTHETIC_OAUTH_PIN] * 2)
+)
+def test_bound_oauth_lane_rejects_missing_wrong_or_rotated_pins(tmp_path, monkeypatch, pins):
+    _, receipt_path, _ = _oauth_lane_fixture(tmp_path, monkeypatch)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["served_oauth_pins"]["anthropic"] = pins
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    result = preflight.check_reviewer_evidence_contracts()
+    assert result.state == preflight.FAIL
+    assert "claude-opus: served anthropic OAuth pins" in result.detail
+    assert _SYNTHETIC_OAUTH_PIN[:12] in result.detail
+    assert _SYNTHETIC_OAUTH_ACCOUNT["email"] not in result.detail
+    assert _SYNTHETIC_OAUTH_ACCOUNT["orgId"] not in result.detail
+
+
+def test_bound_oauth_lane_rejects_a_v2_canary_receipt(tmp_path, monkeypatch):
+    _, receipt_path, _ = _oauth_lane_fixture(tmp_path, monkeypatch)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["schema"] = canary.LEGACY_TRACE_RECEIPT_SCHEMA
+    receipt.pop("served_oauth_pins")
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    result = preflight.check_reviewer_evidence_contracts()
+    assert result.state == preflight.FAIL
+    assert "claude-opus: oauthAccount requires a lrhe-live-review-trace-v3" in result.detail
+
+
+@pytest.mark.parametrize(
+    "pool",
+    (
+        None,
+        {},
+        {"other-provider": ["synthetic-other"]},
+        {"anthropic": []},
+        {"anthropic": ["email:other@example.invalid|org:other-synthetic-org"]},
+        {"anthropic": ["email:reviewer@example.invalid|org:synthetic-org", "synthetic-extra"]},
+        {"anthropic": "email:reviewer@example.invalid|org:synthetic-org"},
+    ),
+)
+def test_bound_oauth_lane_rejects_missing_or_extra_config_pool(tmp_path, monkeypatch, pool):
+    _, _, config_path = _oauth_lane_fixture(tmp_path, monkeypatch)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if pool is None:
+        config["task"].pop("agentAccountPools")
+    else:
+        config["task"]["agentAccountPools"]["review-claude-opus"] = pool
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    result = preflight.check_reviewer_evidence_contracts()
+    assert result.state == preflight.FAIL
+    assert "claude-opus: task.agentAccountPools['review-claude-opus'].anthropic" in result.detail
+    assert _SYNTHETIC_OAUTH_ACCOUNT["email"] not in result.detail
+    assert _SYNTHETIC_OAUTH_ACCOUNT["orgId"] not in result.detail
+
+
+def test_bound_oauth_lane_requires_a_canary_receipt(tmp_path, monkeypatch):
+    authority, _, _ = _oauth_lane_fixture(tmp_path, monkeypatch)
+    document = yaml.safe_load(authority.read_text(encoding="utf-8"))
+    for key in ("canaryReceipt", "evidenceDelivery", "tools", "canary"):
+        document["reviewers"]["claude-opus"].pop(key)
+    authority.write_text(yaml.safe_dump(document), encoding="utf-8")
+    result = preflight.check_reviewer_evidence_contracts()
+    assert result.state == preflight.FAIL
+    assert "claude-opus: oauthAccount requires a lrhe-live-review-trace-v3" in result.detail
+
+
+@pytest.mark.parametrize("legacy", (True, False))
+def test_unbound_lane_accepts_v2_or_v3_without_an_oauth_account_pool(tmp_path, monkeypatch, legacy):
+    authority, receipt_path, config_path = _oauth_lane_fixture(tmp_path, monkeypatch)
+    document = yaml.safe_load(authority.read_text(encoding="utf-8"))
+    document["reviewers"]["claude-opus"].pop("oauthAccount")
+    authority.write_text(yaml.safe_dump(document), encoding="utf-8")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if legacy:
+        receipt["schema"] = canary.LEGACY_TRACE_RECEIPT_SCHEMA
+        receipt.pop("served_oauth_pins")
+    else:
+        receipt["served_oauth_pins"]["anthropic"] = ["b" * 64]
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["task"].pop("agentAccountPools")
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    result = preflight.check_reviewer_evidence_contracts()
+    assert result.state == preflight.PASS, result.detail
 
 
 def test_trace_receipt_proves_exact_model_inline_surface_and_configured_schema(tmp_path):

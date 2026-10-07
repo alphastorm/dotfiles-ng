@@ -304,6 +304,10 @@ identity, transport, qualification,
 and capability evidence, while the resolver derives role, independence_class,
 and authority from the selected profile. Every live row uses task_agent and the
 same atomic Task envelope; OMP owns provider credentials and account rotation.
+An optional `oauthAccount: {accountId, email, orgId}` binds an Anthropic lane to
+one account: preflight requires its exact singleton `task.agentAccountPools`
+identity and a v3 canary whose served anthropic pins equal only that account's
+credential-pin hash. Unbound lanes keep native rotation and valid v2 receipts.
 The strong critic and supplements are pairwise distinct by model family and
 correlation group; the conditional architecture specialist may share lineage
 because it remains supplemental.
@@ -458,8 +462,8 @@ lexical matching can undercount a semantically correct review. Every gate uses i
 arithmetic over counted attempts rather than trusting a stated percentage.
 
 The cohort receipt does not replace per-attempt validation. Each completed attempt cites
-its own `lrhe-live-review-trace-v2` receipt by path and digest, and preflight validates
-each one through the existing `canary.validate_trace_receipt` — unchanged and unforked,
+its own `lrhe-live-review-trace-v2` or v3 receipt by path and digest, and preflight validates
+each one through the same `canary.validate_trace_receipt`,
 so served model, declared and executed tools, schema validity, and fallback are still
 judged by the one implementation that already judges them. A non-completed attempt may
 carry no receipt at all, which is why refusals cannot be hidden as passes. The cohort
@@ -473,8 +477,9 @@ lane whose standing already rests on an amendment, and chains that amendment. An
 parent charter and permits only an explicitly allowlisted selector-only delta.
 Both chained forms require the current trace to postdate the parent cohort and
 parent amendment. All three preserve the parent cohort bytes under their original
-hashes and require one fresh `lrhe-live-review-trace-v2` receipt against the
-current charter. Old attempts remain validated against the original parent
+hashes and require one fresh `lrhe-live-review-trace-v3` receipt against the
+current charter; retained v2 receipts remain valid for unbound lanes. Old attempts
+remain validated against the original parent
 snapshot and selector; they are never relabeled as current runs.
 
 The fresh trace proves only the changed execution boundary: exact served model,

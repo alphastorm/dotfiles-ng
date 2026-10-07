@@ -482,6 +482,28 @@ def check_reviewer_evidence_contracts() -> Result:
     for family, value in sorted(qualified.items()):
         if not isinstance(value, dict):
             continue
+        bound_pin = None
+        account = value.get("oauthAccount")
+        if isinstance(account, dict):
+            bound_pin = hashlib.sha256(
+                "\0".join(
+                    ("anthropic", account["accountId"], account["email"], account["orgId"], "")
+                ).encode("utf-8")
+            ).hexdigest()
+            identity = f"email:{account['email']}|org:{account['orgId']}"
+            pools = ((config or {}).get("task") or {}).get("agentAccountPools")
+            pool = pools.get(value.get("agent")) if isinstance(pools, dict) else None
+            anthropic_pool = pool.get("anthropic") if isinstance(pool, dict) else None
+            if anthropic_pool != [identity]:
+                problems.append(
+                    f"{family}: task.agentAccountPools[{value.get('agent')!r}].anthropic "
+                    f"must contain exactly the bound OAuth identity (pin {bound_pin[:12]}); "
+                    "pool is missing or mismatched"
+                )
+            if "canaryReceipt" not in value:
+                problems.append(
+                    f"{family}: oauthAccount requires a {canary.TRACE_RECEIPT_SCHEMA} canaryReceipt"
+                )
         if "canaryReceipt" not in value:
             # Shadow and evaluation lanes still resolve through their agent
             # definition; a silent model drift there corrupts every corpus row
@@ -581,6 +603,19 @@ def check_reviewer_evidence_contracts() -> Result:
         except canary.TraceCanaryError as exc:
             problems.append(f"{family}: {exc}")
             continue
+        if bound_pin is not None:
+            if receipt["schema"] != canary.TRACE_RECEIPT_SCHEMA:
+                problems.append(
+                    f"{family}: oauthAccount requires a {canary.TRACE_RECEIPT_SCHEMA} "
+                    f"canaryReceipt, got {receipt['schema']}"
+                )
+            else:
+                served_pins = receipt["served_oauth_pins"].get("anthropic", [])
+                if served_pins != [bound_pin]:
+                    problems.append(
+                        f"{family}: served anthropic OAuth pins "
+                        f"{[pin[:12] for pin in served_pins]} != bound [{bound_pin[:12]}]"
+                    )
         measured = value.get("canary")
         expected_summary = {
             "evidenceDelivery": receipt["evidence_delivery"],

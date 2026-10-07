@@ -597,6 +597,19 @@ def _identity(
         if not isinstance(value, str) or not value.strip():
             raise QualificationError(f"reviewers.{reviewer_id}.{field} must be a non-empty string")
         identity[field] = value.strip()
+    if "oauthAccount" in entry:
+        field = f"reviewers.{reviewer_id}.oauthAccount"
+        account = _mapping(entry["oauthAccount"], field)
+        if set(account) != {"accountId", "email", "orgId"}:
+            raise QualificationError(
+                f"{field} must contain exactly accountId, email, and orgId"
+            )
+        for key in ("accountId", "email", "orgId"):
+            value = account[key]
+            if not isinstance(value, str) or not value.strip():
+                raise QualificationError(f"{field}.{key} must be a non-empty string")
+        if identity["provider_route"] != "anthropic":
+            raise QualificationError(f"{field} is allowed only for provider_route anthropic")
     execution_mode = entry.get("execution_mode")
     if execution_mode not in EXECUTION_MODES:
         raise QualificationError(
