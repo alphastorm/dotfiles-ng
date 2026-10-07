@@ -103,10 +103,16 @@ function install_brew_packages() {
     wget \
     zsh
 
-  brew install --cask \
-    codex \
-    font-meslo-lg-nerd-font \
-    keybase
+  brew install --cask codex
+  # A font and a desktop app serve a GUI login. Over SSH on a headless host
+  # there is none, and keybase's postflight would install its helper anyway.
+  if [ "$(launchctl managername 2>/dev/null)" = Aqua ]; then
+    brew install --cask \
+      font-meslo-lg-nerd-font \
+      keybase
+  else
+    echo "note: skipping desktop casks font-meslo-lg-nerd-font and keybase outside a GUI session" >&2
+  fi
 
   # Language servers omp/.omp/agent/lsp.json launches, several by their
   # /opt/homebrew/bin path.
