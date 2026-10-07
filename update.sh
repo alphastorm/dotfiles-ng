@@ -1,11 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")" || exit
-git pull --ff-only
+# --no-rebase: the global pull.rebase=true would refuse any unstaged change,
+# even one the fast-forward never touches.
+git pull --ff-only --no-rebase
 # setup.sh stows the private checkout too, so a host that pulls only this one
 # installs a stale half. Its runtime-worktree branches sync at OMP session start.
 private_dir=${DOTFILES_PRIVATE_DIR:-"$HOME/.dotfiles-private"}
 if [ -d "$private_dir/.git" ]; then
-  git -C "$private_dir" pull --ff-only
+  git -C "$private_dir" pull --ff-only --no-rebase
 fi
 ./setup.sh
