@@ -656,6 +656,9 @@ EOF
   # operation. That is exactly how five agent definitions ended up unstowable, three
   # of them dangling and silently not loading. The public package above already
   # unstows first; do the same here so a rerun repairs rather than jams.
+  # Skill installers write into ~/.agents too, and this package ships only its
+  # rules, so the directory itself stays real (see the pre-create list above).
+  mkdir -p "$HOME/.agents"
   stow -R -d "$private_dir" -t "$HOME" omp-private
   # Code Mode rejects optional extension targets that group or other users may
   # rewrite. Normalize the source package after stow because the live entries are
