@@ -30,7 +30,8 @@ export interface RuntimeWorktree {
 // Directories OMP's own writers own. setup.sh's ensure_runtime_worktree keeps
 // each one a git worktree of the private repository, so a change there is backed
 // up only once it is committed and pushed from inside the directory -- and the
-// private checkout's own `git status` never shows it. Session start does both.
+// private checkout's own `git status` never shows it. Every host pushes to the
+// same branch. Session start commits, takes in the other hosts' commits, pushes.
 const RUNTIME_WORKTREES: readonly RuntimeWorktree[] = [
 	{ rel: ".omp/agent/managed-skills", scope: "docs(skills)", noun: "skills" },
 	{ rel: ".omp/plugins", scope: "chore(plugins)", noun: "files" },
@@ -141,21 +142,21 @@ async function collectConflicts(home: string): Promise<string[]> {
 	return found.flat();
 }
 
-/** A runtime worktree holding changes its upstream does not have yet. */
+/** A runtime worktree to bring level with the branch every host saves to. */
 export interface Pending {
 	tree: RuntimeWorktree;
 	dir: string;
 	/** Entries `git status` lists. */
 	changes: number;
-	/** Commits the upstream lacks. */
+	/** Commits the upstream lacks, as of the last fetch. */
 	ahead: number;
 	/** Why only a person can save it, when only a person can. */
 	blocker?: string;
 }
 
-export async function inspectRuntimeWorktrees(home: string): Promise<{ broken: string[]; pending: Pending[] }> {
+export async function inspectRuntimeWorktrees(home: string): Promise<{ broken: string[]; trees: Pending[] }> {
 	const broken: string[] = [];
-	const pending: Pending[] = [];
+	const trees: Pending[] = [];
 	await Promise.all(
 		RUNTIME_WORKTREES.map(async tree => {
 			const dir = join(home, tree.rel);
@@ -175,21 +176,20 @@ export async function inspectRuntimeWorktrees(home: string): Promise<{ broken: s
 			const entries = lines.filter(line => line && !line.startsWith("#"));
 			const ahead = Number(/^# branch\.ab \+(\d+) /m.exec(status.stdout)?.[1] ?? 0);
 			const upstream = lines.some(line => line.startsWith("# branch.upstream "));
-			if (entries.length === 0 && ahead === 0 && upstream) return;
 			let blocker: string | undefined;
 			// A rebase in progress detaches HEAD; committing into it or into a conflict
 			// would take over someone's half-finished work.
 			if (lines.includes("# branch.head (detached)")) blocker = "detached HEAD";
 			else if (entries.some(line => line.startsWith("u "))) blocker = "unresolved conflicts";
 			else if (!upstream) blocker = "no upstream";
-			pending.push({ tree, dir, changes: entries.length, ahead, blocker });
+			trees.push({ tree, dir, changes: entries.length, ahead, blocker });
 		}),
 	);
-	return { broken, pending };
+	return { broken, trees };
 }
 
-// Another OMP session started at the same moment and is saving the same worktree.
-const CONTENDED = /index\.lock|cannot lock ref|nothing to commit/;
+// Another OMP session on this host is saving the same worktree right now.
+const CONTENDED = /index\.lock|cannot lock ref|nothing to commit|already a rebase-(?:merge|apply) directory/;
 
 /** The line of git's output that says what went wrong. */
 function failure(result: RunResult | undefined): string {
@@ -216,12 +216,20 @@ function commitMessage(
 	return { subject, body: ["Saved by the stow-health extension at session start.", "", ...listing].join("\n") };
 }
 
+async function countCommits(dir: string, range: string): Promise<number> {
+	const result = await run("git", ["-C", dir, "rev-list", "--count", range]);
+	return result?.code === 0 ? Number(result.stdout.trim()) : 0;
+}
+
 /**
- * Commit everything OMP's writers left in a runtime worktree and push its branch
- * to the upstream. `saved` or `unsaved` is one notification line; neither is set
- * when there was nothing to do or another session got there first.
+ * Commit everything OMP's writers left in a runtime worktree, take in what other
+ * hosts pushed to its branch, and push the result. Each of `saved`, `received`
+ * and `unsaved` is one notification line; none is set when there was nothing to
+ * do, nothing was at risk, or another session got there first.
  */
-export async function saveRuntimeWorktree(item: Pending): Promise<{ saved?: string; unsaved?: string }> {
+export async function syncRuntimeWorktree(
+	item: Pending,
+): Promise<{ saved?: string; received?: string; unsaved?: string }> {
 	const where = `~/${item.tree.rel}`;
 	let uncommitted = item.changes;
 	let ahead = item.ahead;
@@ -251,13 +259,33 @@ export async function saveRuntimeWorktree(item: Pending): Promise<{ saved?: stri
 		}
 		uncommitted = 0;
 	}
-	if (ahead === 0) return {};
+	// Every host saves to this branch. Replaying this host's commits onto what the
+	// others pushed keeps the push a fast-forward, and this host loads what they
+	// learned at its next session. Rebasing re-signs those commits.
+	const known = await run("git", ["-C", item.dir, "rev-parse", "--verify", "--quiet", "@{upstream}"]);
+	const pull = await run("git", ["-C", item.dir, "pull", "--rebase", "--no-autostash", "--quiet"], 120_000);
+	if (pull?.code !== 0) {
+		const output = pull ? `${pull.stderr}\n${pull.stdout}` : "";
+		if (CONTENDED.test(output)) return {};
+		// This pull's own stopped rebase: undo it so the commit stays as it was.
+		await run("git", ["-C", item.dir, "rebase", "--abort"]);
+		// Nothing here that the remote lacks, as when the host is offline.
+		if (ahead === 0) return {};
+		return unsaved(/^CONFLICT/m.test(output) ? "conflicts with another host's change" : `pull failed: ${failure(pull)}`);
+	}
+	const received = known?.code === 0 ? await countCommits(item.dir, `${known.stdout.trim()}..@{upstream}`) : 0;
+	const receivedLine = received > 0 ? `${where}: ${received} commit${received === 1 ? "" : "s"}` : undefined;
+	ahead = await countCommits(item.dir, "@{upstream}..HEAD");
+	if (ahead === 0) return receivedLine ? { received: receivedLine } : {};
 	// `upstream`, whatever push.default says: this branch, to the branch it tracks.
 	const push = await run("git", ["-C", item.dir, "-c", "push.default=upstream", "push", "--quiet"], 120_000);
-	if (push?.code !== 0) return CONTENDED.test(failure(push)) ? {} : unsaved(`push failed: ${failure(push)}`);
+	if (push?.code !== 0) {
+		if (CONTENDED.test(failure(push))) return receivedLine ? { received: receivedLine } : {};
+		return { received: receivedLine, ...unsaved(`push failed: ${failure(push)}`) };
+	}
 	const pushed = `pushed ${ahead} commit${ahead === 1 ? "" : "s"}`;
-	if (committed === 0) return { saved: `${where}: ${pushed}` };
-	return { saved: `${where}: committed ${committed} change${committed === 1 ? "" : "s"}, ${pushed}` };
+	const saved = committed === 0 ? `${where}: ${pushed}` : `${where}: committed ${committed} change${committed === 1 ? "" : "s"}, ${pushed}`;
+	return { saved, received: receivedLine };
 }
 
 /**
@@ -272,8 +300,9 @@ export async function saveRuntimeWorktree(item: Pending): Promise<{ saved?: stri
  *   the whole package: every `omp plugin install` did this to bun.lock until
  *   ~/.omp/plugins became a worktree.
  * - A runtime worktree that stopped being one. Changes OMP's writers leave in
- *   one are committed and pushed here, so nobody has to remember to; only what
- *   that cannot save -- a rebase in progress, a rejected push -- is reported.
+ *   one are committed, replayed onto what other hosts pushed, and pushed here,
+ *   so nobody has to remember to; only what that cannot save -- a rebase in
+ *   progress, a conflict with another host, a rejected push -- is reported.
  *
  * Session start is the right moment to check, because it is exactly when the
  * configuration is loaded and someone is there to read the result.
@@ -320,13 +349,22 @@ export default function stowHealth(pi: ExtensionAPI): void {
 				"warning",
 			);
 		}
-		if (runtime.pending.length > 0) {
-			// Signing can wait on pinentry and pushing on the network, so the save
-			// runs past session start and reports when it is done.
-			void Promise.all(runtime.pending.map(saveRuntimeWorktree))
+		if (runtime.trees.length > 0) {
+			// Signing can wait on pinentry and pulling or pushing on the network, so
+			// the sync runs past session start and reports when it is done.
+			void Promise.all(runtime.trees.map(syncRuntimeWorktree))
 				.then(outcomes => {
-					const saved = outcomes.flatMap(outcome => (outcome.saved ? [`  ${outcome.saved}`] : []));
-					const unsaved = outcomes.flatMap(outcome => (outcome.unsaved ? [`  ${outcome.unsaved}`] : []));
+					const lines = (key: "saved" | "received" | "unsaved") =>
+						outcomes.flatMap(outcome => (outcome[key] ? [`  ${outcome[key]}`] : []));
+					const received = lines("received");
+					const saved = lines("saved");
+					const unsaved = lines("unsaved");
+					if (received.length > 0) {
+						ctx.ui.notify(
+							`Took in OMP runtime state another host saved; new sessions load it:\n${received.join("\n")}`,
+							"info",
+						);
+					}
 					if (saved.length > 0) ctx.ui.notify(`Backed up OMP runtime state:\n${saved.join("\n")}`, "info");
 					if (unsaved.length > 0) {
 						ctx.ui.notify(

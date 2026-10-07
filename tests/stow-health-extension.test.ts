@@ -9,7 +9,7 @@ import { join } from "node:path";
 import {
 	collectDangling,
 	inspectRuntimeWorktrees,
-	saveRuntimeWorktree,
+	syncRuntimeWorktree,
 } from "../omp/.omp/agent/extensions/stow-health.ts";
 
 const homes: string[] = [];
@@ -42,7 +42,7 @@ test("reports a stow link whose package file is gone, not a runtime link that ne
 	expect(await collectDangling(join(home, ".omp"), [pkg])).toEqual([join(agents, "moved.md")]);
 });
 
-describe("runtime worktree backup", () => {
+describe("runtime worktree sync", () => {
 	const saved = { ...process.env };
 
 	beforeAll(async () => {
@@ -77,18 +77,31 @@ describe("runtime worktree backup", () => {
 		return { home, remote, skills };
 	}
 
+	/** Another host: its own clone of the same branch, tracking the same remote. */
+	async function otherHost(remote: string): Promise<{ home: string; skills: string }> {
+		const home = await newHome();
+		const skills = join(home, ".omp", "agent", "managed-skills");
+		await mkdir(join(home, ".omp", "agent"), { recursive: true });
+		git(home, "clone", "--quiet", "--branch", "omp-managed-skills", remote, skills);
+		return { home, skills };
+	}
+
+	async function sync(home: string) {
+		const { trees } = await inspectRuntimeWorktrees(home);
+		expect(trees).toHaveLength(1);
+		return syncRuntimeWorktree(trees[0]);
+	}
+
 	test("commits what a writer left and pushes it to the tracked branch", async () => {
 		const { home, remote, skills } = await skillsHome();
 		await mkdir(join(skills, "new-skill"));
 		await writeFile(join(skills, "new-skill", "SKILL.md"), "new\n");
 
-		const { pending } = await inspectRuntimeWorktrees(home);
-		expect(pending).toHaveLength(1);
-		expect(await saveRuntimeWorktree(pending[0])).toEqual({
+		expect(await sync(home)).toEqual({
 			saved: "~/.omp/agent/managed-skills: committed 1 change, pushed 1 commit",
 		});
 		expect(git(remote, "log", "-1", "--format=%s", "omp-managed-skills")).toBe("docs(skills): add new-skill");
-		expect((await inspectRuntimeWorktrees(home)).pending).toEqual([]);
+		expect(git(skills, "status", "--porcelain")).toBe("");
 	});
 
 	test("leaves a worktree with a detached HEAD to a person", async () => {
@@ -97,11 +110,57 @@ describe("runtime worktree backup", () => {
 		await writeFile(join(skills, "seed", "SKILL.md"), "half-rebased\n");
 		const before = git(remote, "rev-parse", "omp-managed-skills");
 
-		const { pending } = await inspectRuntimeWorktrees(home);
-		expect(await saveRuntimeWorktree(pending[0])).toEqual({
+		expect(await sync(home)).toEqual({
 			unsaved: "~/.omp/agent/managed-skills: 1 uncommitted (detached HEAD)",
 		});
 		expect(git(skills, "status", "--porcelain")).toBe("M seed/SKILL.md");
 		expect(git(remote, "rev-parse", "omp-managed-skills")).toBe(before);
+	});
+
+	test("takes in a skill another host pushed", async () => {
+		const a = await skillsHome();
+		const b = await otherHost(a.remote);
+		await mkdir(join(a.skills, "from-a"));
+		await writeFile(join(a.skills, "from-a", "SKILL.md"), "a\n");
+		await sync(a.home);
+
+		expect(await sync(b.home)).toEqual({ received: "~/.omp/agent/managed-skills: 1 commit" });
+		expect(git(b.skills, "rev-parse", "HEAD")).toBe(git(a.remote, "rev-parse", "omp-managed-skills"));
+		expect(git(b.skills, "show", "HEAD:from-a/SKILL.md")).toBe("a");
+	});
+
+	test("puts its own skill on top of another host's before pushing", async () => {
+		const a = await skillsHome();
+		const b = await otherHost(a.remote);
+		await mkdir(join(a.skills, "from-a"));
+		await writeFile(join(a.skills, "from-a", "SKILL.md"), "a\n");
+		await sync(a.home);
+		await mkdir(join(b.skills, "from-b"));
+		await writeFile(join(b.skills, "from-b", "SKILL.md"), "b\n");
+
+		expect(await sync(b.home)).toEqual({
+			saved: "~/.omp/agent/managed-skills: committed 1 change, pushed 1 commit",
+			received: "~/.omp/agent/managed-skills: 1 commit",
+		});
+		expect(git(a.remote, "log", "--format=%s", "omp-managed-skills")).toBe(
+			"docs(skills): add from-b\ndocs(skills): add from-a\nseed",
+		);
+	});
+
+	test("keeps its commit unpushed when it conflicts with another host's", async () => {
+		const a = await skillsHome();
+		const b = await otherHost(a.remote);
+		await writeFile(join(a.skills, "seed", "SKILL.md"), "a's version\n");
+		await sync(a.home);
+		const pushedByA = git(a.remote, "rev-parse", "omp-managed-skills");
+		await writeFile(join(b.skills, "seed", "SKILL.md"), "b's version\n");
+
+		expect(await sync(b.home)).toEqual({
+			unsaved: "~/.omp/agent/managed-skills: 1 unpushed (conflicts with another host's change)",
+		});
+		expect(git(b.skills, "branch", "--show-current")).toBe("omp-managed-skills");
+		expect(git(b.skills, "show", "HEAD:seed/SKILL.md")).toBe("b's version");
+		expect(git(b.skills, "status", "--porcelain")).toBe("");
+		expect(git(a.remote, "rev-parse", "omp-managed-skills")).toBe(pushedByA);
 	});
 });
