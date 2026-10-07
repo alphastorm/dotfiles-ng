@@ -72,7 +72,11 @@ echo "package manager: $PACKAGE_MANAGER"
 
 function install_brew_packages() {
   echo "installing homebrew packages..."
-  HOMEBREW_NO_AUTO_UPDATE=1 brew install \
+  # Install, never upgrade: a formula already present stays at its version. A
+  # Homebrew shared with other accounts must not have their toolchains moved by
+  # this script.
+  local -x HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_UPGRADE=1
+  brew install \
     bat \
     cmake \
     coreutils \
@@ -99,14 +103,14 @@ function install_brew_packages() {
     wget \
     zsh
 
-  HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask \
+  brew install --cask \
     codex \
     font-meslo-lg-nerd-font \
     keybase
 
   # Language servers omp/.omp/agent/lsp.json launches, several by their
   # /opt/homebrew/bin path.
-  HOMEBREW_NO_AUTO_UPDATE=1 brew install \
+  brew install \
     bash-language-server \
     cmake-language-server \
     dockerfile-language-server \
@@ -166,16 +170,6 @@ function install_login_shell() {
   local user zsh_path current_shell passwd_entry
 
   user=$(whoami)
-  zsh_path=$(command -v zsh)
-  if [ -z "$zsh_path" ] || ! [ -x "$zsh_path" ]; then
-    echo "error: zsh is unavailable after package installation." >&2
-    return 1
-  fi
-
-  if ! grep -Fxq "$zsh_path" /etc/shells; then
-    printf '%s\n' "$zsh_path" | sudo tee -a /etc/shells >/dev/null
-  fi
-
   if [ "$PLATFORM" == osx ]; then
     current_shell=$(dscl . -read "/Users/$user" UserShell)
     current_shell=${current_shell#UserShell: }
@@ -186,10 +180,21 @@ function install_login_shell() {
     }
     IFS=: read -r _ _ _ _ _ _ current_shell <<< "$passwd_entry"
   fi
-
-  if [ "$current_shell" != "$zsh_path" ]; then
-    sudo chsh -s "$zsh_path" "$user"
+  # Any zsh the system lists is a login shell this configuration supports, so a
+  # host already on /bin/zsh keeps it rather than needing sudo to switch builds.
+  if [ "${current_shell##*/}" = zsh ] && [ -x "$current_shell" ] && grep -Fxq "$current_shell" /etc/shells; then
+    return 0
   fi
+
+  zsh_path=$(command -v zsh)
+  if [ -z "$zsh_path" ] || ! [ -x "$zsh_path" ]; then
+    echo "error: zsh is unavailable after package installation." >&2
+    return 1
+  fi
+  if ! grep -Fxq "$zsh_path" /etc/shells; then
+    printf '%s\n' "$zsh_path" | sudo tee -a /etc/shells >/dev/null
+  fi
+  sudo chsh -s "$zsh_path" "$user"
 }
 
 function install_common_settings() {
@@ -228,8 +233,10 @@ function install_osx_settings() {
   defaults write -g com.apple.trackpad.scaling 1
   # disable mouse acceleration
   defaults write .GlobalPreferences com.apple.mouse.scaling -1
-  # enable dark mode
-  osascript -e 'tell application "System Events" to tell appearance preferences to set dark mode to true'
+  # enable dark mode; System Events exists only inside a GUI login, which an
+  # SSH session on a host nobody is logged in to graphically lacks
+  osascript -e 'tell application "System Events" to tell appearance preferences to set dark mode to true' ||
+    echo "note: dark mode not set: no GUI session reachable from here" >&2
   # RepoPrompt CE runs Codex from the codex cask. It launches the exact path its
   # Settings stored, and a versioned Caskroom path disappears on `brew upgrade`,
   # so point it at the cask's link. RepoPrompt reads this at its next launch.
@@ -281,7 +288,10 @@ function install_lspmux_agent() {
     mkdir -p "$HOME/Library/LaunchAgents"
     ln -s "$source" "$target"
   fi
-  if ! launchctl print "$domain/$LSPMUX_LABEL" >/dev/null 2>&1; then
+  if ! launchctl print "$domain" >/dev/null 2>&1; then
+    # No GUI login (an SSH session): launchd loads the link at the next one.
+    echo "note: no $domain session; lspmux starts at the next GUI login" >&2
+  elif ! launchctl print "$domain/$LSPMUX_LABEL" >/dev/null 2>&1; then
     launchctl bootstrap "$domain" "$target"
   fi
 }
