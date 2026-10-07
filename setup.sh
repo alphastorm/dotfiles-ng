@@ -666,6 +666,12 @@ EOF
   if [ "$OS" == "Darwin" ]; then
     stow -R -d "$private_dir" -t "$HOME" zsh-private
   fi
+  # This public checkout's pre-push hook lives in the private one, beside the
+  # list of private names it keeps out of public commits: published, that list
+  # would itself leak what it protects.
+  if [ -x "$private_dir/hooks/public-pre-push" ]; then
+    ln -sfn "$private_dir/hooks/public-pre-push" "$(git rev-parse --git-path hooks)/pre-push"
+  fi
 }
 
 # run main installation
