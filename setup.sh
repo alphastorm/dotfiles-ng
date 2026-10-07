@@ -103,6 +103,10 @@ function install_brew_packages() {
     wget \
     zsh
 
+  # OMP's plugin manager runs `bun` from PATH, as does install_omp_plugins. A
+  # host that already has a bun keeps the one it has.
+  command -v bun >/dev/null 2>&1 || brew install bun
+
   brew install --cask codex
   # A font and a desktop app serve a GUI login. Over SSH on a headless host
   # there is none, and keybase's postflight would install its helper anyway.
@@ -677,6 +681,23 @@ EOF
   fi
 }
 
+# The omp-plugins worktree records package.json and bun.lock; node_modules is
+# each host's own, and nothing here built it. A new host therefore started
+# without omp-oracle, and Code Mode, which loads it only paired with the
+# critical-review policy, dropped both with a warning at every launch.
+function install_omp_plugins() {
+  local plugins_dir=$HOME/.omp/plugins
+  [ -f "$plugins_dir/package.json" ] || return 0 # no private repository
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "note: bun not found; skipping the OMP plugins in $plugins_dir" >&2
+    return 0
+  fi
+  echo "installing OMP plugins..."
+  # Frozen: exactly what the branch records. A bun.lock rewritten here would be
+  # committed and pushed to every host at the next session start.
+  (cd "$plugins_dir" && bun install --frozen-lockfile)
+}
+
 # run main installation
 echo "dotfiles path: $SCRIPTDIR"
 
@@ -699,6 +720,7 @@ install_common_settings
 install_language_tooling
 stow_dotfiles
 stow_private_dotfiles
+install_omp_plugins
 check_key_dirs
 install_zplug
 install_zplug_plugins
