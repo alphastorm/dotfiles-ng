@@ -106,10 +106,11 @@ function install_brew_packages() {
   brew install --cask codex
   # A font and a desktop app serve a GUI login. Over SSH on a headless host
   # there is none, and keybase's postflight would install its helper anyway.
+  # A Keybase.app installed outside Homebrew already serves; installing the cask
+  # over it fails, and adopting it needs sudo.
   if [ "$(launchctl managername 2>/dev/null)" = Aqua ]; then
-    brew install --cask \
-      font-meslo-lg-nerd-font \
-      keybase
+    brew install --cask font-meslo-lg-nerd-font
+    [ -d /Applications/Keybase.app ] || brew install --cask keybase
   else
     echo "note: skipping desktop casks font-meslo-lg-nerd-font and keybase outside a GUI session" >&2
   fi
