@@ -2,7 +2,6 @@
 **/sec/**/*.zshenv
 *.sec*
 .DS_Store
-**/.gnupg/random_seed
 /bin/
 !README.md
 !*example

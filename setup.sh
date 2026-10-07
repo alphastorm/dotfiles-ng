@@ -224,8 +224,74 @@ function install_common_settings() {
   fi
 }
 
+# Directories that hold private keys. A package may ship config files for one
+# (@mac/.gnupg holds gpg.conf and gpg-agent.conf), but stow folds a directory
+# that only one package owns into a single link, and a folded key directory
+# keeps every key it gains inside the checkout: ignored by git, yet copied by
+# any rsync or backup of the checkout. Each must be a real directory that stow
+# fills with per-file links.
+KEY_DIRS=(.gnupg .ssh)
+
+# Fails, naming each offender, when a key directory resolves into either
+# checkout, or a checkout's copy of one holds anything git does not track.
+function check_key_dirs() {
+  local checkout real dir stray failed=0
+  for checkout in "$PWD" "$PRIVATE_DIR"; do
+    [ -d "$checkout/.git" ] || continue
+    real=$(cd "$checkout" && pwd -P)
+    for dir in "${KEY_DIRS[@]}"; do
+      if [ -L "$HOME/$dir" ] && [[ "$(cd "$HOME/$dir" && pwd -P)/" == "$real/"* ]]; then
+        echo "error: ~/$dir links into $checkout, so the keys it gains are stored there" >&2
+        failed=1
+      fi
+      stray=$(git -C "$checkout" ls-files --others -- "*/$dir/*")
+      if [ -n "$stray" ]; then
+        printf 'error: untracked files in a key directory of %s:\n%s\n' "$checkout" "$stray" >&2
+        failed=1
+      fi
+    done
+  done
+  if [ "$failed" = 1 ]; then
+    echo "./setup.sh moves GnuPG's state into a real ~/.gnupg; move anything else by hand" >&2
+    return 1
+  fi
+}
+
+# Turns a ~/.gnupg folded into @mac back into a real directory. It runs before
+# `stow -D @mac`, which would drop the fold's link and leave gpgconf unable to
+# reach the agent whose sockets sit in the fold.
+function ensure_gnupg_home() {
+  local package=@mac/.gnupg entry name
+  if [ -L "$HOME/.gnupg" ] && [ "$(cd "$HOME/.gnupg" && pwd -P)" = "$(cd "$package" && pwd -P)" ]; then
+    if command -v gpgconf >/dev/null; then
+      gpgconf --kill all
+    fi
+    rm "$HOME/.gnupg"
+  fi
+  mkdir -p "$HOME/.gnupg"
+  chmod 700 "$HOME/.gnupg"
+  # Everything in the package that git does not track is GnuPG's own state.
+  while IFS= read -r entry; do
+    name=${entry##*/}
+    if git ls-files --error-unmatch -- "$package/$name" >/dev/null 2>&1; then
+      continue
+    fi
+    case $name in
+      S.* | .#lk*) rm -f "$entry" ;; # the stopped agent's sockets, stale lock files
+      *)
+        if [ -e "$HOME/.gnupg/$name" ]; then
+          echo "error: both $entry and ~/.gnupg/$name exist; merge them by hand" >&2
+          return 1
+        fi
+        mv "$entry" "$HOME/.gnupg/"
+        ;;
+    esac
+  done < <(find "$package" -mindepth 1 -maxdepth 1)
+}
+
 function install_osx_settings() {
   echo "installing osx settings..."
+  ensure_gnupg_home
   stow -D -t "$HOME" @mac
   mkdir -p "$HOME/.zsh"
   stow -S -t "$HOME" @mac
@@ -608,7 +674,8 @@ echo "dotfiles path: $SCRIPTDIR"
 # every conflict listed, instead of partway through.
 preflight_stow
 if [ -n "$CHECK_ONLY" ]; then
-  echo "check passed: every package would restow without a conflict"
+  check_key_dirs
+  echo "check passed: every package would restow without a conflict, and no key directory is in a checkout"
   exit 0
 fi
 
@@ -622,6 +689,7 @@ install_common_settings
 install_language_tooling
 stow_dotfiles
 stow_private_dotfiles
+check_key_dirs
 install_zplug
 install_zplug_plugins
 install_vim_plug
