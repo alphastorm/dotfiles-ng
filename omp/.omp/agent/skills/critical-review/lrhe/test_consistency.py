@@ -918,7 +918,10 @@ def test_qualification_requires_nonempty_oauth_account_strings(tmp_path, field, 
         qualification.validate_qualification(document)
 
 
-@pytest.mark.parametrize("provider", ("opencode-go", "google-antigravity", "xai-oauth"))
+@pytest.mark.parametrize(
+    "provider",
+    ("opencode-go", "google-antigravity", "xai-oauth", "anthropic-custom", "anthropic ", " anthropic"),
+)
 def test_qualification_rejects_oauth_binding_on_non_anthropic_routes(tmp_path, provider):
     _qualification(tmp_path, "anthropic/claude-synthetic:max")
     document = yaml.safe_load((tmp_path / "qualification.yml").read_text(encoding="utf-8"))
