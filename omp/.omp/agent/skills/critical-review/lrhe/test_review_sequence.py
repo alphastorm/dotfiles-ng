@@ -1674,22 +1674,6 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
     live = root["liveDispatch"]
     profiles = live["byLeadFamily"]
 
-    assert profiles == {
-        "gpt": {
-            "strongCritic": ["claude-opus"],
-            "supplements": ["gemini", "grok"],
-            "focusedSupplements": ["grok"],
-            "leadFamilySecurity": ["daybreak-blue"],
-            "architectureSpecialists": ["claude"],
-        },
-        "claude": {
-            "strongCritic": ["daybreak-blue"],
-            "supplements": ["gemini", "grok"],
-            "focusedSupplements": ["grok"],
-            "leadFamilySecurity": [],
-            "architectureSpecialists": ["claude"],
-        },
-    }
     assigned = {*live["targetedRefuters"], *live["evaluationOnly"], *live["disabled"]}
     for lead_family, profile in profiles.items():
         assert reviewer_entries[profile["strongCritic"][0]]["model_family"] != lead_family

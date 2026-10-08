@@ -53,11 +53,11 @@ reviewer prose:
   security domains, authorization proofs, and security-looking paths do not
   exclude it;
 - leadFamilySecurity explicitly selects qualified Daybreak Blue on every GPT
-  full council, with same_lineage_blind_sample and supplemental_evidence standing.
-  This reuses its existing security qualification and exact model/access profile;
-  it never substitutes for Opus or becomes a same-family ordinary supplement.
-  The Claude profile has no lead-family security member; focused reciprocal
-  critics and targeted refuters are unchanged;
+  full council and CVP-bound Mythos 5.1 on every Claude full council, with
+  same_lineage_blind_sample and supplemental_evidence standing. Each lane keeps
+  its own security qualification and exact model/access profile; it never
+  substitutes for the strong critic or becomes a same-family ordinary
+  supplement. Focused reciprocal critics and targeted refuters are unchanged;
 - ChatGPT Pro Web through pi-oracle remains outside liveDispatch but is attempted
   asynchronously for every full council. The separate oracleShadow authority has
   no standing and no effect on closure, retries, or reviewer substitution. It is
@@ -843,7 +843,8 @@ binding does not apply to it.
    needed; the evidence-contract gate should then fail only on that lane's
    receipt pins.
 3. Probe under a lead family whose profile configures the lane (`claude-opus` is
-   configured only under `gpt`) with a neutral registered probe, for example
+   configured only under `gpt`, `claude-mythos` only under `claude`) with a
+   neutral registered probe, for example
    `--probe live-repository-v3 --fixture lrhe-data/repository-canary-auth.py`.
    `trace-dispatch` refuses a probe that restates resolver-owned standing, which
    rules out `live-repository-v16` and `daybreak-live-repository-v2`. From eval,

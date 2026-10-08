@@ -101,6 +101,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-grok", "canary", qualification.SUPPLEMENT_ROLE,
         qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
+    ("claude", "canary", "claude-mythos"): (
+        "review-claude-mythos", "canary", qualification.LEAD_FAMILY_SECURITY_ROLE,
+        qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
     ("claude", "canary", "claude"): (
         "review-claude-fable", "canary", qualification.ARCHITECTURE_ROLE,
         qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
@@ -133,6 +137,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
         qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
+    ("claude", "initial", "claude-mythos"): (
+        "review-claude-mythos", "supplement", qualification.LEAD_FAMILY_SECURITY_ROLE,
+        qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
     ("claude", "initial", "claude"): (
         "review-claude-fable", "conditional", qualification.ARCHITECTURE_ROLE,
         qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
@@ -152,7 +160,7 @@ EXPECTED_ARITY: dict[tuple[str, str], tuple[int, int]] = {
     ("claude", "canary"): (1, 1),
     ("claude", "focused"): (2, 2),
     ("claude", "replay"): (1, 1),
-    ("claude", "initial"): (3, 4),
+    ("claude", "initial"): (4, 5),
     ("claude", "targeted-refuter"): (1, 1),
 }
 

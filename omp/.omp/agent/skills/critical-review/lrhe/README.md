@@ -289,8 +289,10 @@ profiles exist, and each has four explicit groups:
   are cross-family supplemental evidence; Gemini supplies a fast sanity pass and
   Grok supplies cheap decorrelated coverage;
 - leadFamilySecurity selects the qualified Daybreak security lane for GPT full
-  councils only, as same_lineage_blind_sample and supplemental_evidence. It reuses
-  the existing qualified scope and exact model/access contract, not a new canary;
+  councils and the CVP-bound Mythos 5.1 security lane for Claude full councils,
+  as same_lineage_blind_sample and supplemental_evidence. Daybreak reuses its
+  existing qualified scope and exact model/access contract; Mythos carries its
+  own canary receipt;
 - architectureSpecialists is record-selected. Fable is default-on for eligible
   design, architecture-heavy initial, material-redesign, and founder-requested councils, but always
   carries supplemental authority. Security domains, authorization proofs, and

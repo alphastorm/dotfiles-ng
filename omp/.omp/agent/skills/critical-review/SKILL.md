@@ -132,7 +132,7 @@ The resolver uses four explicit profile groups, not one role per model:
 |---|---|---|---|
 | strongCritic | Opus 5.5 through the CVP-approved route | Daybreak Blue | reciprocal cross-family independent evidence |
 | supplements | Gemini 3.8 Flash and Grok 4.7 | Gemini 3.8 Flash and Grok 4.7 | always-on cross-family supplemental evidence |
-| leadFamilySecurity | qualified Daybreak Blue | none configured | always-on same-lineage blind sample; supplemental evidence only |
+| leadFamilySecurity | qualified Daybreak Blue | Mythos 5.1 through the CVP-approved route | always-on same-lineage blind sample; supplemental evidence only |
 | architectureSpecialists | Fable 5.1 when eligible | Fable 5.1 when eligible | record-selected supplemental architecture synthesis, security-touching subjects included |
 
 The strong critic and supplements must be pairwise distinct by model family and
@@ -143,11 +143,12 @@ security-looking paths no longer exclude it. It may identify vulnerabilities it
 finds but never writes exploits, and it never becomes the council's security lane.
 
 GPT full councils include Daybreak through the explicit leadFamilySecurity group,
-reusing its qualified security scope and exact model/access contract. Its
-same_lineage_blind_sample and supplemental_evidence standing never supplies
-independent assurance, replaces Opus, or relaxes the cross-family rules for
-ordinary supplements. No same-family security lane is configured for Claude.
-Focused reciprocal critics and the targeted-refuter pool are unchanged.
+reusing its qualified security scope and exact model/access contract. Claude full
+councils include Mythos 5.1 through the same group, bound to the CVP account like
+Opus. That same_lineage_blind_sample and supplemental_evidence standing never
+supplies independent assurance, replaces the strong critic, or relaxes the
+cross-family rules for ordinary supplements. Focused reciprocal critics and the
+targeted-refuter pool are unchanged.
 
 ChatGPT Pro Web through pinned pi-oracle is an asynchronous shadow on every full
 council, outside the resolver roster. It has no council standing, never blocks

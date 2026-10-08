@@ -2019,7 +2019,7 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
             "strongCritic": ["daybreak-blue"],
             "supplements": ["gemini", "grok"],
             "focusedSupplements": ["grok"],
-            "leadFamilySecurity": [],
+            "leadFamilySecurity": ["claude-mythos"],
             "architectureSpecialists": ["claude"],
         },
     }
@@ -2030,7 +2030,7 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
             "grok",
         ]
 
-    for reviewer_id in ("daybreak-blue", "claude-opus"):
+    for reviewer_id in ("daybreak-blue", "claude-opus", "claude-mythos"):
         entry = document["reviewers"][reviewer_id]
         assert entry["dispatchEnabled"] is True
         assert entry["execution_mode"] == "task_agent"
@@ -2041,7 +2041,8 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
         assert "independence_class" not in entry
         assert "authority" not in entry
         assert "blockers" not in entry
-    assert document["reviewers"]["claude-opus"]["access_profile"] == ("anthropic-cvp-approved-org")
+    for reviewer_id in ("claude-opus", "claude-mythos"):
+        assert document["reviewers"][reviewer_id]["access_profile"] == "anthropic-cvp-approved-org"
     # Reviewing security-touching subjects never promotes Fable to a security lane.
     fable_scopes = document["reviewers"]["claude"]["qualification"]["scopes"]
     assert fable_scopes["security-review"]["status"] == "ineligible"
