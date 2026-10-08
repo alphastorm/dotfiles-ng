@@ -105,6 +105,7 @@ subscription; the qualification resolver and panel manifest remain authoritative
 ## Quick start
 
 ```bash
+# setup.sh creates this venv wherever uv is installed; by hand:
 uv venv --python 3.13 .venv                        # pinned; see requirements.txt
 VIRTUAL_ENV=.venv uv pip install -r requirements.txt
 

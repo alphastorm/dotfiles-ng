@@ -87,18 +87,22 @@ function install_brew_packages() {
     httpie \
     hugo \
     jq \
+    just \
     lsd \
+    mise \
     node \
     pinentry \
     pinentry-mac \
     pngquant \
     pnpm \
     python-setuptools \
+    python@3.13 \
     ripgrep \
     semgrep \
     shellcheck \
     stow \
     tree \
+    uv \
     vim \
     wget \
     zsh
@@ -324,6 +328,22 @@ function install_osx_settings() {
 function install_linux_settings() {
   echo "installing linux settings..."
   stow -R -t "$HOME" @linux
+}
+
+# rustup's own installer, which keeps toolchains under ~/.cargo and ~/.rustup.
+# zsh/.zshenv already puts ~/.cargo/bin on PATH, so it leaves profiles alone.
+function install_rustup() {
+  export PATH="$HOME/.cargo/bin:$PATH"
+  if command -v rustup >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "installing rustup..."
+  local installer
+  installer=$(curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs) || {
+    echo "error: failed to download the rustup installer." >&2
+    return 1
+  }
+  sh -c "$installer" rustup-init -y --no-modify-path
 }
 
 # rust-analyzer is a rustup component. lspmux shares one rust-analyzer per
@@ -698,6 +718,29 @@ function install_omp_plugins() {
   (cd "$plugins_dir" && bun install --frozen-lockfile)
 }
 
+# Steps that name private repositories live in the private checkout, beside the
+# denylist that keeps those names out of this one.
+function run_private_setup() {
+  if [ -x "$PRIVATE_DIR/hooks/public-setup" ]; then
+    "$PRIVATE_DIR/hooks/public-setup"
+  fi
+}
+
+# The critical-review resolver and the LRHE harness run from lrhe/.venv, the
+# interpreter the review policy pins. requirements.txt is the recipe.
+function install_lrhe_venv() {
+  local lrhe="$PWD/omp/.omp/agent/skills/critical-review/lrhe"
+
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "note: uv not found; skipping the critical-review harness venv" >&2
+    return 0
+  fi
+  echo "installing the critical-review harness venv..."
+  # --clear replaces a venv whose interpreter is gone.
+  [ -x "$lrhe/.venv/bin/python" ] || uv venv --clear --python 3.13 "$lrhe/.venv"
+  uv pip install --python "$lrhe/.venv/bin/python" -r "$lrhe/requirements.txt"
+}
+
 # run main installation
 echo "dotfiles path: $SCRIPTDIR"
 
@@ -717,11 +760,16 @@ install_login_shell
 
 install_common_settings
 "install_${PLATFORM}_settings"
+if [ "$PLATFORM" = osx ]; then
+  install_rustup
+fi
 install_language_tooling
 stow_dotfiles
 stow_private_dotfiles
 install_omp_plugins
 check_key_dirs
+run_private_setup
+install_lrhe_venv
 install_zplug
 install_zplug_plugins
 install_vim_plug
