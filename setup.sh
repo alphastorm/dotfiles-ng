@@ -377,6 +377,9 @@ function install_lspmux_agent() {
   local domain
   domain="gui/$(id -u)"
 
+  # config.toml (@mac) listens in ~/Library/Caches/lspmux, and lspmux does not
+  # create that directory: without it the server exits 1 every ten seconds.
+  mkdir -p "$HOME/Library/Caches/lspmux"
   if ! [ -L "$target" ] || [ "$(readlink "$target")" != "$source" ]; then
     if [ -e "$target" ] || [ -L "$target" ]; then
       echo "error: refusing to replace $target; remove it and rerun" >&2
