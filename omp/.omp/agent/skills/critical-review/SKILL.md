@@ -244,6 +244,8 @@ A charter change then lands as a `lrhe-charter-standing-amendment-v1` document b
 
 A model or effort change is the same boundary: repin the lane everywhere it is bound, take one fresh canary trace of the new definition on a neutral probe, and bind that trace directly as its `canaryReceipt`, retiring any `charterAmendment` chain. A cohort-qualified lane instead crosses only an allowlisted point release through the model-upgrade standing amendment. The live protocol lists the bind points and selector rules.
 
+A lane bound to one OAuth account by `oauthAccount` never takes a `charterAmendment`: every charter or model change binds its fresh `lrhe-live-review-trace-v3` trace directly as `canaryReceipt`, because only that receipt is held to the bound account's credential pin.
+
 ## Lead verification and dispositions
 
 After an initial council, the lead directly verifies and dispositions every finding. Implement confirmed, in-scope P0/P1 rows whose final disposition is `mitigate`; implement a lower-severity item only when the lead verifies that it violates the current contract or is the smallest proportional closure of the same defect class. `accept`, `defer`, and `reject` rows create no remediation implementation. Batch the complete selected mitigation set into one remediation epoch; never create one epoch per comment or fix iteration. One still-disputed P0/P1 may reach one targeted refuter; otherwise the lead records ledger dispositions and closes the sequence without a user prompt.

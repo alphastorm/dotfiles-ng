@@ -569,12 +569,14 @@ agent's configured schema stays authoritative. OMP owns credential selection
 inside the provider route, including sibling-account rotation on account-scoped
 TAC denials for unbound lanes; dispatch implements no second retry policy. A lane
 with `oauthAccount: {accountId, email, orgId}` is the exception: it must use the
-`anthropic` provider route and is served only by that account through
-`task.agentAccountPools[<lane agent>].anthropic`, whose exact singleton value is
-`["email:<email>|org:<orgId>"]`. Preflight requires a
+`anthropic` provider route and an `anthropic/` model selector, and is served only
+by that account through `task.agentAccountPools[<lane agent>].anthropic`, whose
+exact singleton value is `["email:<email>|org:<orgId>"]`. Preflight requires a
 `lrhe-live-review-trace-v3` canary whose ordered served anthropic pins equal only
 that account's credential-pin hash: SHA-256 of
-`"anthropic\0" + accountId + "\0" + email + "\0" + orgId + "\0"`.
+`"anthropic\0" + accountId + "\0" + email + "\0" + orgId + "\0"`. A bound lane
+binds each charter's v3 trace directly as `canaryReceipt` and never carries a
+`charterAmendment`, whose current trace is not held to that pin.
 Unbound lanes retain native credential rotation and may keep their v2 receipts.
 A served model that differs from the manifest's exact selector is still invalid.
 Every live reviewer selector, plus a held lane being qualified, must also have an

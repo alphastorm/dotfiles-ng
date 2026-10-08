@@ -306,10 +306,12 @@ identity, transport, qualification,
 and capability evidence, while the resolver derives role, independence_class,
 and authority from the selected profile. Every live row uses task_agent and the
 same atomic Task envelope; OMP owns provider credentials and account rotation.
-An optional `oauthAccount: {accountId, email, orgId}` binds an Anthropic lane to
-one account: preflight requires its exact singleton `task.agentAccountPools`
-identity and a v3 canary whose served anthropic pins equal only that account's
-credential-pin hash. Unbound lanes keep native rotation and valid v2 receipts.
+An optional `oauthAccount: {accountId, email, orgId}` binds an Anthropic lane
+(`anthropic` route and `anthropic/` selector) to one account: preflight requires
+its exact singleton `task.agentAccountPools` identity and a v3 canary whose
+served anthropic pins equal only that account's credential-pin hash, bound
+directly as `canaryReceipt` rather than through a `charterAmendment`. Unbound
+lanes keep native rotation and valid v2 receipts.
 The strong critic and supplements are pairwise distinct by model family and
 correlation group; the conditional architecture specialist may share lineage
 because it remains supplemental.

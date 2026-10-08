@@ -932,6 +932,18 @@ def test_qualification_rejects_oauth_binding_on_non_anthropic_routes(tmp_path, p
         qualification.validate_qualification(document)
 
 
+def test_qualification_rejects_oauth_binding_on_a_non_anthropic_model_selector(tmp_path):
+    _qualification(tmp_path, "anthropic/claude-synthetic:max")
+    document = yaml.safe_load((tmp_path / "qualification.yml").read_text(encoding="utf-8"))
+    document["reviewers"]["kimi"].update(
+        provider_route="anthropic",
+        model="xai-oauth/grok-synthetic:xhigh",
+        oauthAccount=dict(_SYNTHETIC_OAUTH_ACCOUNT),
+    )
+    with pytest.raises(qualification.QualificationError, match="anthropic/ model selector"):
+        qualification.validate_qualification(document)
+
+
 def test_preflight_resolves_selectors_through_the_hashed_provider_key(tmp_path, monkeypatch):
     """qualification.yml cannot assert that its own selectors exist.
 
@@ -3126,6 +3138,18 @@ def test_bound_oauth_lane_requires_a_canary_receipt(tmp_path, monkeypatch):
     result = preflight.check_reviewer_evidence_contracts()
     assert result.state == preflight.FAIL
     assert "claude-opus: oauthAccount requires a lrhe-live-review-trace-v3" in result.detail
+
+
+def test_bound_oauth_lane_rejects_a_charter_amendment(tmp_path, monkeypatch):
+    """An amendment's current trace never carries the bound-pin proof."""
+
+    authority, _, _ = _oauth_lane_fixture(tmp_path, monkeypatch)
+    document = yaml.safe_load(authority.read_text(encoding="utf-8"))
+    document["reviewers"]["claude-opus"]["charterAmendment"] = "lrhe-data/oauth.amendment.json"
+    authority.write_text(yaml.safe_dump(document), encoding="utf-8")
+    result = preflight.check_reviewer_evidence_contracts()
+    assert result.state == preflight.FAIL
+    assert "claude-opus: oauthAccount binds each charter" in result.detail
 
 
 @pytest.mark.parametrize("legacy", (True, False))

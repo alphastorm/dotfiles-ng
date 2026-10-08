@@ -608,8 +608,14 @@ def _identity(
             value = account[key]
             if not isinstance(value, str) or not value.strip():
                 raise QualificationError(f"{field}.{key} must be a non-empty string")
-        if entry.get("provider_route") != "anthropic":
-            raise QualificationError(f"{field} is allowed only for provider_route anthropic")
+        model = entry.get("model")
+        if entry.get("provider_route") != "anthropic" or not (
+            isinstance(model, str) and model.startswith("anthropic/")
+        ):
+            raise QualificationError(
+                f"{field} is allowed only for provider_route anthropic with an "
+                "anthropic/ model selector"
+            )
     execution_mode = entry.get("execution_mode")
     if execution_mode not in EXECUTION_MODES:
         raise QualificationError(

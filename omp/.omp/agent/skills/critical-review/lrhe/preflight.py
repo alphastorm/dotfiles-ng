@@ -504,6 +504,13 @@ def check_reviewer_evidence_contracts() -> Result:
                 problems.append(
                     f"{family}: oauthAccount requires a {canary.TRACE_RECEIPT_SCHEMA} canaryReceipt"
                 )
+            if "charterAmendment" in value:
+                # An amendment's current trace is never held to the bound pin,
+                # so a bound lane binds each charter's trace as canaryReceipt.
+                problems.append(
+                    f"{family}: oauthAccount binds each charter's {canary.TRACE_RECEIPT_SCHEMA} "
+                    "trace directly as canaryReceipt; charterAmendment is not accepted"
+                )
         if "canaryReceipt" not in value:
             # Shadow and evaluation lanes still resolve through their agent
             # definition; a silent model drift there corrupts every corpus row
