@@ -21,7 +21,7 @@ const MAX_DEPTH = 3;
 
 export interface RuntimeWorktree {
 	rel: string;
-	/** Conventional Commits type and scope of the commits session start makes. */
+	/** Conventional Commits type and scope of runtime sync commits. */
 	scope: string;
 	/** What the subject counts when it has no room to list names. */
 	noun: string;
@@ -31,7 +31,7 @@ export interface RuntimeWorktree {
 // each one a git worktree of the private repository, so a change there is backed
 // up only once it is committed and pushed from inside the directory -- and the
 // private checkout's own `git status` never shows it. Every host pushes to the
-// same branch. Session start commits, takes in the other hosts' commits, pushes.
+// same branch. Setup and interactive sessions converge through the same sync.
 const RUNTIME_WORKTREES: readonly RuntimeWorktree[] = [
 	{ rel: ".omp/agent/managed-skills", scope: "docs(skills)", noun: "skills" },
 	{ rel: ".omp/plugins", scope: "chore(plugins)", noun: "files" },
@@ -263,7 +263,12 @@ export async function syncRuntimeWorktree(
 	// others pushed keeps the push a fast-forward, and this host loads what they
 	// learned at its next session. Rebasing re-signs those commits.
 	const known = await run("git", ["-C", item.dir, "rev-parse", "--verify", "--quiet", "@{upstream}"]);
-	const pull = await run("git", ["-C", item.dir, "pull", "--rebase", "--no-autostash", "--quiet"], 120_000);
+	// A cached resolution is still a conflict: only a person may resolve it.
+	const pull = await run(
+		"git",
+		["-C", item.dir, "-c", "rerere.enabled=false", "-c", "rerere.autoupdate=false", "pull", "--rebase", "--no-autostash", "--quiet"],
+		120_000,
+	);
 	if (pull?.code !== 0) {
 		const output = pull ? `${pull.stderr}\n${pull.stdout}` : "";
 		if (CONTENDED.test(output)) return {};
@@ -288,6 +293,88 @@ export async function syncRuntimeWorktree(
 	return { saved, received: receivedLine };
 }
 
+async function convergeRuntimeWorktrees(home: string) {
+	const runtime = await inspectRuntimeWorktrees(home);
+	const outcomes = await Promise.all(runtime.trees.map(syncRuntimeWorktree));
+	return { ...runtime, outcomes };
+}
+
+// Extension instances in one process must not compete for the same Git index.
+let runtimeConvergenceInFlight = false;
+
+export async function coalesceRuntimeConvergence(converge: () => Promise<void>): Promise<void> {
+	if (runtimeConvergenceInFlight) return;
+	runtimeConvergenceInFlight = true;
+	try {
+		await converge();
+	} finally {
+		runtimeConvergenceInFlight = false;
+	}
+}
+
+function notifyRuntimeConvergence(
+	runtime: Awaited<ReturnType<typeof convergeRuntimeWorktrees>>,
+	notify: (message: string, level: "info" | "warning") => void,
+): void {
+	if (runtime.broken.length > 0) {
+		notify(
+			`${runtime.broken.join(" and ")} must be a git worktree of the private repository: ` +
+				"OMP writes there, and a stow link or stray directory breaks that.\nRepair: cd ~/.dotfiles && ./setup.sh",
+			"warning",
+		);
+	}
+	const lines = (key: "saved" | "received" | "unsaved") =>
+		runtime.outcomes.flatMap(outcome => (outcome[key] ? [`  ${outcome[key]}`] : []));
+	const received = lines("received");
+	const saved = lines("saved");
+	const unsaved = lines("unsaved");
+	if (received.length > 0) {
+		notify(
+			`Took in OMP runtime state another host saved; new sessions load it:\n${received.join("\n")}`,
+			"info",
+		);
+	}
+	if (saved.length > 0) notify(`Backed up OMP runtime state:\n${saved.join("\n")}`, "info");
+	if (unsaved.length > 0) {
+		notify(
+			`OMP runtime state not backed up — commit and push from inside each directory:\n${unsaved.join("\n")}`,
+			"warning",
+		);
+	}
+}
+
+async function syncRuntimeWorktreesCLI(args: string[]): Promise<number> {
+	if (args.length !== 1 || args[0] !== "--sync-runtime-worktrees") {
+		console.error("Usage: bun omp/.omp/agent/extensions/stow-health.ts --sync-runtime-worktrees");
+		return 2;
+	}
+	const home = homedir();
+	const privateDir = process.env.DOTFILES_PRIVATE_DIR ?? join(home, ".dotfiles-private");
+	if (!existsSync(privateDir)) {
+		console.log(`skip: private repository absent: ${privateDir}`);
+		return 0;
+	}
+	const runtime = await convergeRuntimeWorktrees(home);
+	let failed = false;
+	for (const tree of RUNTIME_WORKTREES) {
+		const where = `~/${tree.rel}`;
+		const index = runtime.trees.findIndex(item => item.tree === tree);
+		if (runtime.broken.includes(where) || index < 0) {
+			const reason = runtime.broken.includes(where) ? "not a git worktree" : "missing or unreadable worktree";
+			console.log(`${where}: broken: ${reason}; run ./setup.sh`);
+			failed = true;
+			continue;
+		}
+		const outcome = runtime.outcomes[index];
+		const states = (["saved", "received", "unsaved"] as const).flatMap(key =>
+			outcome[key] ? [`${key}: ${outcome[key].slice(where.length + 2)}`] : [],
+		);
+		console.log(`${where}: ${states.length > 0 ? states.join("; ") : "clean"}`);
+		if (outcome.unsaved) failed = true;
+	}
+	return failed ? 1 : 0;
+}
+
 /**
  * Warn when stowed configuration has drifted from what setup.sh maintains.
  *
@@ -304,24 +391,27 @@ export async function syncRuntimeWorktree(
  *   so nobody has to remember to; only what that cannot save -- a rebase in
  *   progress, a conflict with another host, a rejected push -- is reported.
  *
- * Session start is the right moment to check, because it is exactly when the
- * configuration is loaded and someone is there to read the result.
+ * Check configuration when it loads; converge runtime edits throughout a long
+ * interactive session as well, without repeating the configuration scans.
  */
 export default function stowHealth(pi: ExtensionAPI): void {
+	let timer: ReturnType<typeof setInterval> | undefined;
+	let shutdown = false;
 	pi.on("session_start", async (_event, ctx) => {
 		// Nobody reads a notification without a UI; print mode and subagents skip
 		// the walk and the subprocesses.
 		if (!ctx.hasUI) return;
+		shutdown = false;
 		const home = homedir();
 		const root = join(home, ".omp");
-		const [broken, conflicts, runtime] = await Promise.all([
+		const [broken, conflicts] = await Promise.all([
 			collectDangling(
 				root,
 				stowPackages(home).map(([dir, name]) => resolve(dir, name)),
 			),
 			collectConflicts(home),
-			inspectRuntimeWorktrees(home),
 		]);
+		if (shutdown) return;
 		const repair = "Repair: cd ~/.dotfiles && ./setup.sh";
 
 		if (broken.length > 0) {
@@ -342,45 +432,35 @@ export default function stowHealth(pi: ExtensionAPI): void {
 				"warning",
 			);
 		}
-		if (runtime.broken.length > 0) {
-			ctx.ui.notify(
-				`${runtime.broken.join(" and ")} must be a git worktree of the private repository: ` +
-					`OMP writes there, and a stow link or stray directory breaks that.\n${repair}`,
-				"warning",
-			);
-		}
-		if (runtime.trees.length > 0) {
-			// Signing can wait on pinentry and pulling or pushing on the network, so
-			// the sync runs past session start and reports when it is done.
-			void Promise.all(runtime.trees.map(syncRuntimeWorktree))
-				.then(outcomes => {
-					const lines = (key: "saved" | "received" | "unsaved") =>
-						outcomes.flatMap(outcome => (outcome[key] ? [`  ${outcome[key]}`] : []));
-					const received = lines("received");
-					const saved = lines("saved");
-					const unsaved = lines("unsaved");
-					if (received.length > 0) {
-						ctx.ui.notify(
-							`Took in OMP runtime state another host saved; new sessions load it:\n${received.join("\n")}`,
-							"info",
-						);
-					}
-					if (saved.length > 0) ctx.ui.notify(`Backed up OMP runtime state:\n${saved.join("\n")}`, "info");
-					if (unsaved.length > 0) {
-						ctx.ui.notify(
-							`OMP runtime state not backed up — commit and push from inside each directory:\n${unsaved.join("\n")}`,
-							"warning",
-						);
-					}
-				})
-				.catch((error: unknown) => {
-					// Detached: an escaped rejection would take the session down with it.
-					try {
-						ctx.ui.notify(`Backing up OMP runtime state failed: ${String(error)}`, "warning");
-					} catch {
-						// the session has already ended
-					}
-				});
-		}
+		// Signing and networking can wait, so neither start nor ticks await them.
+		const converge = () =>
+			coalesceRuntimeConvergence(async () => {
+				const runtime = await convergeRuntimeWorktrees(home);
+				notifyRuntimeConvergence(runtime, (message, level) => ctx.ui.notify(message, level));
+			})
+			.catch((error: unknown) => {
+				// Detached: an escaped rejection would take the session down with it.
+				try {
+					ctx.ui.notify(`Backing up OMP runtime state failed: ${String(error)}`, "warning");
+				} catch {
+					// the session has already ended
+				}
+			});
+		void converge();
+		if (timer) clearInterval(timer);
+		timer = setInterval(() => void converge(), 15 * 60_000);
+		timer.unref();
+	});
+	pi.on("session_shutdown", () => {
+		shutdown = true;
+		if (timer) clearInterval(timer);
+		timer = undefined;
+	});
+}
+
+// A promise chain, not top-level await: OMP also loads this file as an extension.
+if (import.meta.main) {
+	void syncRuntimeWorktreesCLI(process.argv.slice(2)).then(code => {
+		process.exitCode = code;
 	});
 }

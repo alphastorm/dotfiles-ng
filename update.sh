@@ -5,7 +5,8 @@ cd "$(dirname "$0")" || exit
 # even one the fast-forward never touches.
 git pull --ff-only --no-rebase
 # setup.sh stows the private checkout too, so a host that pulls only this one
-# installs a stale half. Its runtime-worktree branches sync at OMP session start.
+# installs a stale half. Runtime branches converge in setup.sh below and in
+# interactive OMP sessions at start and every 15 minutes.
 private_dir=${DOTFILES_PRIVATE_DIR:-"$HOME/.dotfiles-private"}
 if [ -d "$private_dir/.git" ]; then
   git -C "$private_dir" pull --ff-only --no-rebase

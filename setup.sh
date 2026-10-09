@@ -704,6 +704,11 @@ EOF
   fi
 }
 
+# Tracked plugin files must converge before installing their frozen dependencies.
+function sync_omp_runtime_worktrees() {
+  bun omp/.omp/agent/extensions/stow-health.ts --sync-runtime-worktrees
+}
+
 # The omp-plugins worktree records package.json and bun.lock; node_modules is
 # each host's own, and nothing here built it. A new host therefore started
 # without omp-oracle, and Code Mode, which loads it only paired with the
@@ -717,7 +722,7 @@ function install_omp_plugins() {
   fi
   echo "installing OMP plugins..."
   # Frozen: exactly what the branch records. A bun.lock rewritten here would be
-  # committed and pushed to every host at the next session start.
+  # committed and pushed to every host by runtime convergence.
   (cd "$plugins_dir" && bun install --frozen-lockfile)
 }
 
@@ -769,6 +774,7 @@ fi
 install_language_tooling
 stow_dotfiles
 stow_private_dotfiles
+sync_omp_runtime_worktrees
 install_omp_plugins
 check_key_dirs
 run_private_setup
