@@ -483,20 +483,23 @@ def check_reviewer_evidence_contracts() -> Result:
         if not isinstance(value, dict):
             continue
         bound_pin = None
+        provider = value.get("provider_route")
         account = value.get("oauthAccount")
         if isinstance(account, dict):
+            # qualification admits oauthAccount only on an OAUTH_ACCOUNT_ROUTES
+            # route, which is also OMP's pin domain and account-pool key.
             bound_pin = hashlib.sha256(
                 "\0".join(
-                    ("anthropic", account["accountId"], account["email"], account["orgId"], "")
+                    (provider, account["accountId"], account["email"], account["orgId"], "")
                 ).encode("utf-8")
             ).hexdigest()
             identity = f"email:{account['email']}|org:{account['orgId']}"
             pools = ((config or {}).get("task") or {}).get("agentAccountPools")
             pool = pools.get(value.get("agent")) if isinstance(pools, dict) else None
-            anthropic_pool = pool.get("anthropic") if isinstance(pool, dict) else None
-            if anthropic_pool != [identity]:
+            provider_pool = pool.get(provider) if isinstance(pool, dict) else None
+            if provider_pool != [identity]:
                 problems.append(
-                    f"{family}: task.agentAccountPools[{value.get('agent')!r}].anthropic "
+                    f"{family}: task.agentAccountPools[{value.get('agent')!r}].{provider} "
                     f"must contain exactly the bound OAuth identity (pin {bound_pin[:12]}); "
                     "pool is missing or mismatched"
                 )
@@ -617,10 +620,10 @@ def check_reviewer_evidence_contracts() -> Result:
                     f"canaryReceipt, got {receipt['schema']}"
                 )
             else:
-                served_pins = receipt["served_oauth_pins"].get("anthropic", [])
+                served_pins = receipt["served_oauth_pins"].get(provider, [])
                 if served_pins != [bound_pin]:
                     problems.append(
-                        f"{family}: served anthropic OAuth pins "
+                        f"{family}: served {provider} OAuth pins "
                         f"{[pin[:12] for pin in served_pins]} != bound [{bound_pin[:12]}]"
                     )
         measured = value.get("canary")

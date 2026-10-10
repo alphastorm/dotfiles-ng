@@ -715,9 +715,32 @@ _SYNTHETIC_OAUTH_ACCOUNT = {
     "email": "reviewer@example.invalid",
     "orgId": "synthetic-org",
 }
-_SYNTHETIC_OAUTH_PIN = hashlib.sha256(
-    b"anthropic\0synthetic-account\0reviewer@example.invalid\0synthetic-org\0"
-).hexdigest()
+
+
+def _synthetic_oauth_pin(route: str) -> str:
+    """OMP's credential pin for the synthetic account; the route is its hash domain."""
+    return hashlib.sha256(
+        f"{route}\0synthetic-account\0reviewer@example.invalid\0synthetic-org\0".encode()
+    ).hexdigest()
+
+
+_SYNTHETIC_OAUTH_PIN = _synthetic_oauth_pin("anthropic")
+# One synthetic bound lane per route that admits oauthAccount:
+# reviewer id, agent, selector on that route, model family.
+_OAUTH_LANES = {
+    "anthropic": (
+        "claude-opus",
+        "review-claude-opus",
+        "anthropic/claude-opus-synthetic:max",
+        "claude",
+    ),
+    "openai-codex": (
+        "daybreak-blue",
+        "review-daybreak-blue",
+        "openai-codex/gpt-synthetic:max",
+        "gpt",
+    ),
+}
 
 
 def _qualification(path: Path, selector: str) -> None:
@@ -874,12 +897,13 @@ def test_qualification_rejects_unknown_canary_authority(tmp_path):
         qualification.validate_qualification(document)
 
 
-def test_qualification_accepts_anthropic_oauth_account_and_unbound_lanes(tmp_path):
-    _qualification(tmp_path, "anthropic/claude-synthetic:max")
+@pytest.mark.parametrize("route", sorted(_OAUTH_LANES))
+def test_qualification_accepts_oauth_account_on_its_routes_and_unbound_lanes(tmp_path, route):
+    _qualification(tmp_path, _OAUTH_LANES[route][2])
     document = yaml.safe_load((tmp_path / "qualification.yml").read_text(encoding="utf-8"))
     qualification.validate_qualification(document)
     entry = document["reviewers"]["kimi"]
-    entry["provider_route"] = "anthropic"
+    entry["provider_route"] = route
     entry["oauthAccount"] = dict(_SYNTHETIC_OAUTH_ACCOUNT)
     qualification.validate_qualification(document)
 
@@ -919,28 +943,47 @@ def test_qualification_requires_nonempty_oauth_account_strings(tmp_path, field, 
 
 
 @pytest.mark.parametrize(
-    "provider",
-    ("opencode-go", "google-antigravity", "xai-oauth", "anthropic-custom", "anthropic ", " anthropic"),
+    ("route", "selector"),
+    (
+        ("opencode-go", "opencode-go/kimi-k3"),
+        ("google-antigravity", "google-antigravity/gemini-synthetic:high"),
+        ("xai-oauth", "xai-oauth/grok-synthetic:xhigh"),
+        ("openai", "openai/gpt-synthetic:max"),
+        ("anthropic-custom", "anthropic-custom/claude-synthetic:max"),
+        ("openai-codex-custom", "openai-codex-custom/gpt-synthetic:max"),
+        ("anthropic ", "anthropic/claude-synthetic:max"),
+        (" openai-codex", "openai-codex/gpt-synthetic:max"),
+    ),
 )
-def test_qualification_rejects_oauth_binding_on_non_anthropic_routes(tmp_path, provider):
-    _qualification(tmp_path, "anthropic/claude-synthetic:max")
+def test_qualification_rejects_oauth_binding_on_other_routes(tmp_path, route, selector):
+    _qualification(tmp_path, selector)
     document = yaml.safe_load((tmp_path / "qualification.yml").read_text(encoding="utf-8"))
     document["reviewers"]["kimi"].update(
-        provider_route=provider, oauthAccount=dict(_SYNTHETIC_OAUTH_ACCOUNT)
+        provider_route=route, oauthAccount=dict(_SYNTHETIC_OAUTH_ACCOUNT)
     )
-    with pytest.raises(qualification.QualificationError, match="only for provider_route anthropic"):
+    with pytest.raises(
+        qualification.QualificationError, match="only for provider_route anthropic or openai-codex"
+    ):
         qualification.validate_qualification(document)
 
 
-def test_qualification_rejects_oauth_binding_on_a_non_anthropic_model_selector(tmp_path):
-    _qualification(tmp_path, "anthropic/claude-synthetic:max")
+@pytest.mark.parametrize(
+    ("route", "selector"),
+    (
+        ("anthropic", "xai-oauth/grok-synthetic:xhigh"),
+        ("anthropic", "openai-codex/gpt-synthetic:max"),
+        ("openai-codex", "anthropic/claude-synthetic:max"),
+        ("openai-codex", "openai/gpt-synthetic:max"),
+        ("openai-codex", "openai-codex-custom/gpt-synthetic:max"),
+    ),
+)
+def test_qualification_rejects_oauth_binding_on_a_selector_off_its_route(tmp_path, route, selector):
+    _qualification(tmp_path, selector)
     document = yaml.safe_load((tmp_path / "qualification.yml").read_text(encoding="utf-8"))
     document["reviewers"]["kimi"].update(
-        provider_route="anthropic",
-        model="xai-oauth/grok-synthetic:xhigh",
-        oauthAccount=dict(_SYNTHETIC_OAUTH_ACCOUNT),
+        provider_route=route, oauthAccount=dict(_SYNTHETIC_OAUTH_ACCOUNT)
     )
-    with pytest.raises(qualification.QualificationError, match="anthropic/ model selector"):
+    with pytest.raises(qualification.QualificationError, match="model selector on that route"):
         qualification.validate_qualification(document)
 
 
@@ -2122,7 +2165,11 @@ def test_lead_relative_reviewer_charters_cannot_self_promote():
     assert front["name"] == "review-daybreak-blue"
     assert front["model"] == [entry["model"]]
     assert front["thinkingLevel"] == "max"
-    assert "gpt-daybreak-blue-latest" not in model_overrides
+    selector_model, _effort = canary._selector_parts(entry["model"])
+    assert selector_model.split("/", 1)[1] not in model_overrides
+    # Daybreak is an account entitlement, not a model: the lane's model can be
+    # served by accounts without it, so only the binding keeps the lane on it.
+    assert entry.get("oauthAccount"), "daybreak-blue must be bound to its entitled account"
     assert tuple(front["tools"]) == qualification.READ_ONLY_REPOSITORY_TOOLS
     assert task["agentModelOverrides"][entry["agent"]] == entry["model"]
     assert (entry["agent"] in task["disabledAgents"]) is (not entry["dispatchEnabled"])
@@ -2955,34 +3002,33 @@ def _write_trace(
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
 
-def _oauth_lane_fixture(tmp_path, monkeypatch) -> tuple[Path, Path, Path]:
-    selector = "anthropic/claude-opus-synthetic:max"
-    agent = "review-claude-opus"
+def _oauth_lane_fixture(tmp_path, monkeypatch, route="anthropic") -> tuple[Path, Path, Path]:
+    reviewer, agent, selector, family = _OAUTH_LANES[route]
     _qualification(tmp_path, selector)
     authority = tmp_path / "qualification.yml"
     document = yaml.safe_load(authority.read_text(encoding="utf-8"))
     entry = document["reviewers"].pop("kimi")
     entry.update(
         agent=agent,
-        model_family="claude",
-        correlation_group="claude-opus-synthetic",
-        provider_route="anthropic",
-        access_profile="anthropic-synthetic",
-        data_allowlist_key="anthropic",
+        model_family=family,
+        correlation_group=f"{reviewer}-synthetic",
+        provider_route=route,
+        access_profile=f"{route}-synthetic",
+        data_allowlist_key=route,
         oauthAccount=dict(_SYNTHETIC_OAUTH_ACCOUNT),
         evidenceDelivery="inline",
         tools=[],
         canaryReceipt="lrhe-data/oauth-trace.json",
     )
-    document["reviewers"]["claude-opus"] = entry
-    document["liveDispatch"]["evaluationOnly"] = ["claude-opus"]
+    document["reviewers"][reviewer] = entry
+    document["liveDispatch"]["evaluationOnly"] = [reviewer]
     agents = tmp_path / "agents"
     agents.mkdir()
     definition = agents / f"{agent}.md"
     trace = tmp_path / "trace.jsonl"
     _write_trace_agent(definition, selector, agent=agent)
     _write_trace(
-        trace, selector=selector, credential_pins=(("anthropic", _SYNTHETIC_OAUTH_PIN),)
+        trace, selector=selector, credential_pins=((route, _synthetic_oauth_pin(route)),)
     )
     receipt = canary.capture_trace_receipt(trace, definition, agent, selector, "inline")
     receipt_path = tmp_path / entry["canaryReceipt"]
@@ -3004,7 +3050,7 @@ def _oauth_lane_fixture(tmp_path, monkeypatch) -> tuple[Path, Path, Path]:
             {
                 "task": {
                     "agentModelOverrides": {agent: selector},
-                    "agentAccountPools": {agent: {"anthropic": [identity]}},
+                    "agentAccountPools": {agent: {route: [identity]}},
                 }
             }
         ),
@@ -3069,24 +3115,38 @@ def test_v3_trace_receipt_rejects_malformed_served_oauth_pins(tmp_path, monkeypa
         )
 
 
-def test_bound_oauth_lane_passes_with_its_only_pin_and_exact_config_pool(tmp_path, monkeypatch):
-    _oauth_lane_fixture(tmp_path, monkeypatch)
+@pytest.mark.parametrize("route", sorted(_OAUTH_LANES))
+def test_bound_oauth_lane_passes_with_its_only_pin_and_exact_config_pool(
+    tmp_path, monkeypatch, route
+):
+    _oauth_lane_fixture(tmp_path, monkeypatch, route)
     result = preflight.check_reviewer_evidence_contracts()
     assert result.state == preflight.PASS, result.detail
 
 
-@pytest.mark.parametrize(
-    "pins", ([], ["b" * 64], [_SYNTHETIC_OAUTH_PIN, "b" * 64], [_SYNTHETIC_OAUTH_PIN] * 2)
-)
-def test_bound_oauth_lane_rejects_missing_wrong_or_rotated_pins(tmp_path, monkeypatch, pins):
-    _, receipt_path, _ = _oauth_lane_fixture(tmp_path, monkeypatch)
+@pytest.mark.parametrize("route", sorted(_OAUTH_LANES))
+@pytest.mark.parametrize("shape", ("missing", "wrong", "extra", "repeated", "other-route"))
+def test_bound_oauth_lane_rejects_missing_wrong_or_rotated_pins(
+    tmp_path, monkeypatch, route, shape
+):
+    _, receipt_path, _ = _oauth_lane_fixture(tmp_path, monkeypatch, route)
+    pin = _synthetic_oauth_pin(route)
+    other = next(name for name in _OAUTH_LANES if name != route)
+    pins = {
+        "missing": [],
+        "wrong": ["b" * 64],
+        "extra": [pin, "b" * 64],
+        "repeated": [pin, pin],
+        # The same account hashed under the other route is another credential.
+        "other-route": [_synthetic_oauth_pin(other)],
+    }[shape]
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    receipt["served_oauth_pins"]["anthropic"] = pins
+    receipt["served_oauth_pins"][route] = pins
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
     result = preflight.check_reviewer_evidence_contracts()
     assert result.state == preflight.FAIL
-    assert "claude-opus: served anthropic OAuth pins" in result.detail
-    assert _SYNTHETIC_OAUTH_PIN[:12] in result.detail
+    assert f"{_OAUTH_LANES[route][0]}: served {route} OAuth pins" in result.detail
+    assert pin[:12] in result.detail
     assert _SYNTHETIC_OAUTH_ACCOUNT["email"] not in result.detail
     assert _SYNTHETIC_OAUTH_ACCOUNT["orgId"] not in result.detail
 
@@ -3102,29 +3162,38 @@ def test_bound_oauth_lane_rejects_a_v2_canary_receipt(tmp_path, monkeypatch):
     assert "claude-opus: oauthAccount requires a lrhe-live-review-trace-v3" in result.detail
 
 
+@pytest.mark.parametrize("route", sorted(_OAUTH_LANES))
 @pytest.mark.parametrize(
     "pool",
     (
         None,
         {},
         {"other-provider": ["synthetic-other"]},
-        {"anthropic": []},
-        {"anthropic": ["email:other@example.invalid|org:other-synthetic-org"]},
-        {"anthropic": ["email:reviewer@example.invalid|org:synthetic-org", "synthetic-extra"]},
-        {"anthropic": "email:reviewer@example.invalid|org:synthetic-org"},
+        {"<other-route>": ["email:reviewer@example.invalid|org:synthetic-org"]},
+        {"<route>": []},
+        {"<route>": ["email:other@example.invalid|org:other-synthetic-org"]},
+        {"<route>": ["email:reviewer@example.invalid|org:synthetic-org", "synthetic-extra"]},
+        {"<route>": "email:reviewer@example.invalid|org:synthetic-org"},
     ),
 )
-def test_bound_oauth_lane_rejects_missing_or_extra_config_pool(tmp_path, monkeypatch, pool):
-    _, _, config_path = _oauth_lane_fixture(tmp_path, monkeypatch)
+def test_bound_oauth_lane_rejects_missing_or_extra_config_pool(tmp_path, monkeypatch, route, pool):
+    reviewer, agent, _selector, _family = _OAUTH_LANES[route]
+    _, _, config_path = _oauth_lane_fixture(tmp_path, monkeypatch, route)
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     if pool is None:
         config["task"].pop("agentAccountPools")
     else:
-        config["task"]["agentAccountPools"]["review-claude-opus"] = pool
+        names = {
+            "<route>": route,
+            "<other-route>": next(name for name in _OAUTH_LANES if name != route),
+        }
+        config["task"]["agentAccountPools"][agent] = {
+            names.get(key, key): value for key, value in pool.items()
+        }
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
     result = preflight.check_reviewer_evidence_contracts()
     assert result.state == preflight.FAIL
-    assert "claude-opus: task.agentAccountPools['review-claude-opus'].anthropic" in result.detail
+    assert f"{reviewer}: task.agentAccountPools[{agent!r}].{route}" in result.detail
     assert _SYNTHETIC_OAUTH_ACCOUNT["email"] not in result.detail
     assert _SYNTHETIC_OAUTH_ACCOUNT["orgId"] not in result.detail
 

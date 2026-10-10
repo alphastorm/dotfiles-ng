@@ -98,6 +98,11 @@ REVIEWER_IDENTITY_FIELDS = (
     "data_allowlist_key",
 )
 
+# Provider routes whose OMP OAuth identity is `email:<email>|org:<orgId>` and
+# whose credential pin hashes `provider\0accountId\0email\0orgId\0`; an
+# `oauthAccount` binding is only verifiable on these.
+OAUTH_ACCOUNT_ROUTES = ("anthropic", "openai-codex")
+
 EXECUTION_MODES = ("task_agent",)
 
 CROSS_FAMILY = "cross_family"
@@ -608,13 +613,14 @@ def _identity(
             value = account[key]
             if not isinstance(value, str) or not value.strip():
                 raise QualificationError(f"{field}.{key} must be a non-empty string")
+        route = entry.get("provider_route")
         model = entry.get("model")
-        if entry.get("provider_route") != "anthropic" or not (
-            isinstance(model, str) and model.startswith("anthropic/")
+        if route not in OAUTH_ACCOUNT_ROUTES or not (
+            isinstance(model, str) and model.startswith(f"{route}/")
         ):
             raise QualificationError(
-                f"{field} is allowed only for provider_route anthropic with an "
-                "anthropic/ model selector"
+                f"{field} is allowed only for provider_route "
+                f"{' or '.join(OAUTH_ACCOUNT_ROUTES)} with a model selector on that route"
             )
     execution_mode = entry.get("execution_mode")
     if execution_mode not in EXECUTION_MODES:

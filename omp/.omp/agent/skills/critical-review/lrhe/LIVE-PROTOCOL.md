@@ -569,12 +569,13 @@ agent's configured schema stays authoritative. OMP owns credential selection
 inside the provider route, including sibling-account rotation on account-scoped
 TAC denials for unbound lanes; dispatch implements no second retry policy. A lane
 with `oauthAccount: {accountId, email, orgId}` is the exception: it must use the
-`anthropic` provider route and an `anthropic/` model selector, and is served only
-by that account through `task.agentAccountPools[<lane agent>].anthropic`, whose
-exact singleton value is `["email:<email>|org:<orgId>"]`. Preflight requires a
-`lrhe-live-review-trace-v3` canary whose ordered served anthropic pins equal only
-that account's credential-pin hash: SHA-256 of
-`"anthropic\0" + accountId + "\0" + email + "\0" + orgId + "\0"`. A bound lane
+`anthropic` or `openai-codex` provider route with a model selector on that route,
+and is served only by that account through
+`task.agentAccountPools[<lane agent>][<provider_route>]`, whose exact singleton
+value is `["email:<email>|org:<orgId>"]`. Preflight requires a
+`lrhe-live-review-trace-v3` canary whose ordered served pins for that route equal
+only that account's credential-pin hash: SHA-256 of
+`provider_route + "\0" + accountId + "\0" + email + "\0" + orgId + "\0"`. A bound lane
 binds each charter's v3 trace directly as `canaryReceipt` and never carries a
 `charterAmendment`, whose current trace is not held to that pin.
 Unbound lanes retain native credential rotation and may keep their v2 receipts.
@@ -786,10 +787,10 @@ New receipts use `lrhe-live-review-trace-v3`: every v2 field plus
 `served_oauth_pins`, a provider-to-ordered-hash-list mapping extracted from the
 child transcript's `credential_pin` entries, including the lane's provider
 (an empty list when none were observed). Pins are never deduplicated. A lane
-with `oauthAccount` requires exactly its account's one anthropic credential pin
-and the singleton `task.agentAccountPools` binding above; a missing pin, another
-account, or any rotation fails preflight. Existing v2 receipts remain valid only
-for unbound lanes.
+with `oauthAccount` requires exactly its account's one credential pin on its
+provider route and the singleton `task.agentAccountPools` binding above; a
+missing pin, another account, or any rotation fails preflight. Existing v2
+receipts remain valid only for unbound lanes.
 
 ```bash
 ./lrhe/canary.py trace-receipt --trace <session.jsonl> \

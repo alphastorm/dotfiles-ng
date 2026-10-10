@@ -306,12 +306,12 @@ identity, transport, qualification,
 and capability evidence, while the resolver derives role, independence_class,
 and authority from the selected profile. Every live row uses task_agent and the
 same atomic Task envelope; OMP owns provider credentials and account rotation.
-An optional `oauthAccount: {accountId, email, orgId}` binds an Anthropic lane
-(`anthropic` route and `anthropic/` selector) to one account: preflight requires
-its exact singleton `task.agentAccountPools` identity and a v3 canary whose
-served anthropic pins equal only that account's credential-pin hash, bound
-directly as `canaryReceipt` rather than through a `charterAmendment`. Unbound
-lanes keep native rotation and valid v2 receipts.
+An optional `oauthAccount: {accountId, email, orgId}` binds an `anthropic` or
+`openai-codex` lane, with a selector on that route, to one account: preflight
+requires its exact singleton `task.agentAccountPools` identity under the route
+and a v3 canary whose served pins for the route equal only that account's
+credential-pin hash, bound directly as `canaryReceipt` rather than through a
+`charterAmendment`. Unbound lanes keep native rotation and valid v2 receipts.
 The strong critic and supplements are pairwise distinct by model family and
 correlation group; the conditional architecture specialist may share lineage
 because it remains supplemental.
@@ -411,45 +411,35 @@ testable on its own.
 
 ### Daybreak native Task lane
 
-Daybreak Blue is an entitlement alias, not another generic Sol invocation. Its
-named agent requests openai-codex/gpt-daybreak-blue-latest:max and fixes the
-read-only tools and structured finding schema. It is the reciprocal strong critic
-for Claude leads and is absent from the default GPT-led roster, whose accountable
-lead already supplies the GPT family. The generated receipt supplies standing;
-the reviewer never recomputes it.
+Daybreak Blue is a Codex account entitlement, not a model. Its named agent
+requests openai-codex/gpt-6-sol:max and fixes the read-only tools and structured
+finding schema. OMP adds `access_programs: {cyber: daybreak_blue}` to a Codex
+request whenever model discovery reports that the serving account may use
+Daybreak Blue on that model. GPT-6 Sol is served by every Codex account but
+carries Daybreak only on the entitled one, so the lane is bound to that account
+through `oauthAccount`; unbound, OMP could rotate it onto a standard account and
+the review would run without Daybreak. It is the reciprocal strong critic for
+Claude leads and the leadFamilySecurity blind sample for GPT leads. The generated
+receipt supplies standing; the reviewer never recomputes it.
 
-OMP 17.2.15 preserves the Responses Lite `reasoning.context=all_turns`
-requirement for the opaque alias. On 2026-08-12 the lane passed all three
-authorized response probes and one exact repository trace at Max with no model
-fallback or forbidden tool use. Qualification establishes lane capability;
-profile selection establishes standing.
-
-The Codex catalog advertises distinct `xhigh` and `max` tiers for this alias.
-Current OMP Codex discovery reduces that metadata to a reasoning boolean, then
-infers the generic ladder from the opaque Daybreak id and drops `max`. The
-private `models.yml` uses OMP's native per-model override to restore the
-provider-advertised `low` through `max` ladder. Preflight proves that the local
-OMP selector resolves against the effective catalog; the required harmless
-canary separately proves the provider-served identity before activation. Remove
-the override once OMP preserves `supported_reasoning_levels` for entitlement
-aliases.
+The account binding proves which credential served the review, not that the
+backend granted the program. OMP drops an access program the backend rejects,
+logs `Codex rejected the requested access program; retrying without it`, and
+replays the request as standard, so a revoked entitlement surfaces in the OMP log
+rather than as a failed review.
 
 The lane uses the same `task_agent` execution mode as every other reviewer. It
-has no named OMP profile, copied credential database, account witness, profile
-canary, or bespoke worker. OMP 17.2.12 and later classify Codex
-`cyber_policy`/Trusted Access for Cyber denials as account-scoped and rotate
-through sibling `openai-codex` credentials before higher-level model/provider
-fallback. The council delegates that transport behavior to OMP instead of
-duplicating it.
+has no named OMP profile, copied credential database, profile canary, or bespoke
+worker.
 
-Qualification remains explicit and lane-scoped. Live activation requires the
-three response probes plus a validated repository trace to prove exact served
-model, schema, and read-only conduct; preflight must resolve the exact selector;
-and every dispatched packet must carry both `openai` in
+Qualification remains explicit and lane-scoped. Live activation requires a
+validated repository trace proving the exact served model, the bound account's
+credential pin, the schema, and read-only conduct; preflight must resolve the
+exact selector; and every dispatched packet must carry both `openai` in
 `provider_data_allowlist` and `daybreak-blue` in
-`reviewer_access_profile_allowlist`. Native account rotation answers which
-credential can serve the request. It does not grant the vendor or lane
-authorization needed to send the packet.
+`reviewer_access_profile_allowlist`. The account binding answers which credential
+serves the request. It does not grant the vendor or lane authorization needed to
+send the packet.
 
 
 
