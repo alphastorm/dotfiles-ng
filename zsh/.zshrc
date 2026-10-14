@@ -351,13 +351,12 @@ if [[ -d ${HOMEBREW_PREFIX:-/opt/homebrew}/opt/llvm/bin ]]; then
   path=("${HOMEBREW_PREFIX:-/opt/homebrew}/opt/llvm/bin" $path)
 fi
 
-# Prefer user-installed tools, including the gateway-compatible OMP build.
+# Prefer user-installed tools, including an explicitly activated stock OMP.
 path=("$HOME/.local/bin" $path)
 
 
 # oh-my-pi
 export PI_BASH_NO_LOGIN=1
-export OMP_CODE_MODE_OMP_BIN="$HOME/.local/lib/omp-code-mode/omp"
 
 # To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
