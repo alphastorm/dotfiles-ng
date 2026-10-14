@@ -15,7 +15,8 @@ Usage: install-stock-omp.sh [--stage | --check | --select VERSION | --rollback] 
                   back up an existing regular launcher under omp-stock/backup/.
   --help          Show this help.
 OMP_STOCK_PIN may name a different pin (including file:// release fixtures).
-Each staged version retains its pin so older versions can be verified on rollback.
+Each staged version retains the pin that staged it: selection verifies against that
+pin, and a version is never restaged from a different pin.
 USAGE
 }
 
@@ -107,11 +108,17 @@ cleanup() {
 trap cleanup EXIT
 
 stage() {
-  local destination="$root/$version"
+  local destination="$root/$version" retained="$root/$version/stock-runtime.json"
   ! [ -L "$destination" ] || die "refusing a linked version directory: $destination"
   if [ -x "$destination/omp" ] && verify_sha256 "$sha256" "$destination/omp" &&
-     cmp -s "$pin" "$destination/stock-runtime.json"; then
+     cmp -s "$pin" "$retained"; then
     return 0
+  fi
+  # A version directory belongs to the pin that staged it. Restaging it from
+  # another pin (an exported OMP_STOCK_PIN, a fixture) would swap the bytes an
+  # already selected or activated launcher resolves to.
+  if [ -e "$retained" ] && ! cmp -s "$pin" "$retained"; then
+    die "refusing to restage $version under a different pin: $retained"
   fi
   ! [ -d "$destination/omp" ] || die "refusing a binary directory: $destination/omp"
   mkdir -p "$root"
@@ -122,20 +129,26 @@ stage() {
   chmod 0755 "$temporary_dir/omp"
   cp "$pin" "$temporary_dir/stock-runtime.json"
   mkdir -p "$destination"
+  # Pin first, binary last: a version is complete only once its binary lands,
+  # so a present binary always has its retained pin beside it.
+  mv -f "$temporary_dir/stock-runtime.json" "$retained"
   mv -f "$temporary_dir/omp" "$destination/omp"
-  mv -f "$temporary_dir/stock-runtime.json" "$destination/stock-runtime.json"
   rmdir "$temporary_dir"
   temporary_dir=
 }
 
 verify_version() (
-  local selected=$1
+  local selected=$1 retained
   validate_version "$selected"
-  if [ "$selected" != "$pinned_version" ]; then
-    load_pin "$root/$selected/stock-runtime.json"
-  fi
-  [ "$version" = "$selected" ] || die "staged pin does not name version $selected"
   ! [ -L "$root/$selected" ] || die "refusing a linked version directory"
+  retained="$root/$selected/stock-runtime.json"
+  [ -f "$retained" ] && ! [ -L "$retained" ] || die "missing retained pin: $retained"
+  if [ "$selected" = "$pinned_version" ]; then
+    cmp -s "$pin" "$retained" || die "retained pin for $selected differs from the pin in use: $retained"
+  else
+    load_pin "$retained"
+  fi
+  [ "$version" = "$selected" ] || die "retained pin does not name version $selected"
   [ -x "$root/$selected/omp" ] || die "missing executable: $root/$selected/omp"
   verify_sha256 "$sha256" "$root/$selected/omp" || die "stock OMP checksum mismatch: $selected"
 )
@@ -178,11 +191,16 @@ select_version() {
   verify_version "$selected"
   current=$(link_version "$root/current")
   [ "$current" != "$selected" ] || return 0
+  # Refuse an unusable previous selector before anything changes, then move
+  # current first: if the previous rename fails, the selection still holds and
+  # previous keeps pointing at an older verified version.
   if [ -n "$current" ]; then
     link_version "$root/previous" >/dev/null
-    atomic_link "$current" "$root/previous"
   fi
   atomic_link "$selected" "$root/current"
+  if [ -n "$current" ]; then
+    atomic_link "$current" "$root/previous"
+  fi
 }
 
 activate_bin() {
