@@ -687,9 +687,8 @@ EOF
   # rules, so the directory itself stays real (see the pre-create list above).
   mkdir -p "$HOME/.agents"
   stow -R -d "$private_dir" -t "$HOME" omp-private
-  # Code Mode rejects optional extension targets that group or other users may
-  # rewrite. Normalize the source package after stow because the live entries are
-  # symlinks into this checkout and therefore inherit its modes.
+  # Extensions are executable configuration. Keep their source package unwritable
+  # by group/other users: the stowed entries inherit the checkout file modes.
   if [ -d "$private_dir/omp-private/.omp/agent/extensions" ]; then
     chmod -R go-w "$private_dir/omp-private/.omp/agent/extensions"
   fi
@@ -710,9 +709,8 @@ function sync_omp_runtime_worktrees() {
 }
 
 # The omp-plugins worktree records package.json and bun.lock; node_modules is
-# each host's own, and nothing here built it. A new host therefore started
-# without omp-oracle, and Code Mode, which loads it only paired with the
-# critical-review policy, dropped both with a warning at every launch.
+# each host's own, and nothing here built it. Install dependencies locally so
+# stock OMP can load the configured plugins on a new host.
 function install_omp_plugins() {
   local plugins_dir=$HOME/.omp/plugins
   [ -f "$plugins_dir/package.json" ] || return 0 # no private repository
@@ -724,14 +722,6 @@ function install_omp_plugins() {
   # Frozen: exactly what the branch records. A bun.lock rewritten here would be
   # committed and pushed to every host by runtime convergence.
   (cd "$plugins_dir" && bun install --frozen-lockfile)
-}
-
-# Steps that name private repositories live in the private checkout, beside the
-# denylist that keeps those names out of this one.
-function run_private_setup() {
-  if [ -x "$PRIVATE_DIR/hooks/public-setup" ]; then
-    "$PRIVATE_DIR/hooks/public-setup"
-  fi
 }
 
 # The critical-review resolver and the LRHE harness run from lrhe/.venv, the
@@ -774,10 +764,13 @@ fi
 install_language_tooling
 stow_dotfiles
 stow_private_dotfiles
+# Stage/select the stock pin after stow. The ambient ~/.local/bin/omp is left
+# alone until an operator explicitly runs scripts/install-stock-omp.sh --activate-bin.
+scripts/install-stock-omp.sh --stage
+scripts/install-stock-omp.sh --select "$(jq -er .version omp/.omp/stock-runtime.json)"
 sync_omp_runtime_worktrees
 install_omp_plugins
 check_key_dirs
-run_private_setup
 install_lrhe_venv
 install_zplug
 install_zplug_plugins
