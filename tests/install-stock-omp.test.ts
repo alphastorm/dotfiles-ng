@@ -173,6 +173,64 @@ test("refuses unstaged and corrupted selections and a rollback without a previou
 	expect(await readlink(join(f.root, "current"))).toBe("18.10.4");
 });
 
+test("never restages a version from a different pin, and that pin cannot select the staged bytes", async () => {
+	const f = await fixture();
+	f.ok();
+	// Same version, different asset bytes and checksum: an exported fixture pin.
+	const other = Buffer.from("#!/bin/sh\nprintf 'omp/other\\n'\n");
+	await writeFile(join(f.releases, "v18.10.4", "omp-darwin-arm64"), other);
+	await writeFile(join(f.releases, "v18.10.4", "omp-linux-arm64"), other);
+	await f.writePin("18.10.4", createHash("sha256").update(other).digest("hex"));
+	const before = await snapshot(f.root);
+	for (const args of [["--stage"], [], ["--select", "18.10.4"], ["--check"]]) {
+		const result = f.run(...args);
+		expect({ args, status: result.status }).toEqual({ args, status: 1 });
+		expect(result.stderr).toMatch(/different pin|differs from the pin/);
+	}
+	expect(await snapshot(f.root)).toEqual(before);
+	expect(await readFile(join(f.root, "18.10.4", "omp"))).toEqual(executable);
+});
+
+test("a version without its retained pin is refused until stage repairs it", async () => {
+	const f = await fixture();
+	f.ok("--stage");
+	await rm(join(f.root, "18.10.4", "stock-runtime.json"));
+	const select = f.run("--select", "18.10.4");
+	expect(select.status).not.toBe(0);
+	expect(select.stderr).toContain("retained pin");
+	expect(f.run("--check").status).not.toBe(0);
+	expect(await exists(join(f.root, "current"))).toBe(false);
+	f.ok("--stage");
+	expect(await readFile(join(f.root, "18.10.4", "stock-runtime.json"))).toEqual(await readFile(f.pin));
+	f.ok("--select", "18.10.4");
+	expect(await readlink(join(f.root, "current"))).toBe("18.10.4");
+});
+
+test("a failed previous rename leaves the new selection in place; select recovers the older version", async () => {
+	const f = await fixture("18.10.3");
+	f.ok();
+	await f.writePin("18.10.4");
+	f.ok("--stage");
+	// Shadow mv: fail only the rename onto previous, delegate everything else.
+	const shadow = join(f.home, "shadow-bin");
+	await mkdir(shadow);
+	await writeFile(join(shadow, "mv"), '#!/bin/bash\ncase "${@: -1}" in */previous) echo "mv: injected failure" >&2; exit 1 ;; esac\nexec /bin/mv "$@"\n');
+	await chmod(join(shadow, "mv"), 0o755);
+	const result = spawnSync("/bin/bash", [script, "--select", "18.10.4"], {
+		env: { HOME: f.home, PATH: `${shadow}:${process.env.PATH}`, OMP_STOCK_PIN: f.pin },
+		encoding: "utf8",
+	});
+	expect(result.status).not.toBe(0);
+	expect(result.stderr).toContain("injected failure");
+	expect(await readlink(join(f.root, "current"))).toBe("18.10.4");
+	expect(await exists(join(f.root, "previous"))).toBe(false);
+	expect((await readdir(f.root)).filter(name => name.startsWith(".omp-link."))).toEqual([]);
+	expect(f.run("--rollback").status).not.toBe(0);
+	f.ok("--select", "18.10.3");
+	expect(await readlink(join(f.root, "current"))).toBe("18.10.3");
+	expect(await readlink(join(f.root, "previous"))).toBe("18.10.4");
+});
+
 test("activation backs up an existing regular launcher and atomically links the selected stock binary", async () => {
 	const f = await fixture();
 	const bin = join(f.home, ".local", "bin", "omp");

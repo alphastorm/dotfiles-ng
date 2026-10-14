@@ -766,8 +766,10 @@ stow_dotfiles
 stow_private_dotfiles
 # Stage/select the stock pin after stow. The ambient ~/.local/bin/omp is left
 # alone until an operator explicitly runs scripts/install-stock-omp.sh --activate-bin.
-scripts/install-stock-omp.sh --stage
-scripts/install-stock-omp.sh --select "$(jq -er .version omp/.omp/stock-runtime.json)"
+# The committed pin only: an OMP_STOCK_PIN left exported by a test or fixture
+# run must not decide what this host stages or selects.
+env -u OMP_STOCK_PIN scripts/install-stock-omp.sh --stage
+env -u OMP_STOCK_PIN scripts/install-stock-omp.sh --select "$(jq -er .version omp/.omp/stock-runtime.json)"
 sync_omp_runtime_worktrees
 install_omp_plugins
 check_key_dirs
