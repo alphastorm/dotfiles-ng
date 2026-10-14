@@ -111,6 +111,10 @@ function install_brew_packages() {
   # host that already has a bun keeps the one it has.
   command -v bun >/dev/null 2>&1 || brew install bun
 
+  # Upstream OMP from its author's tap. Like every formula here it is installed,
+  # never upgraded; the operator's routine `brew upgrade` tracks new releases.
+  brew install can1357/tap/omp
+
   brew install --cask codex
   # A font and a desktop app serve a GUI login. Over SSH on a headless host
   # there is none, and keybase's postflight would install its helper anyway.
@@ -764,12 +768,6 @@ fi
 install_language_tooling
 stow_dotfiles
 stow_private_dotfiles
-# Stage/select the stock pin after stow. The ambient ~/.local/bin/omp is left
-# alone until an operator explicitly runs scripts/install-stock-omp.sh --activate-bin.
-# The committed pin only: an OMP_STOCK_PIN left exported by a test or fixture
-# run must not decide what this host stages or selects.
-env -u OMP_STOCK_PIN scripts/install-stock-omp.sh --stage
-env -u OMP_STOCK_PIN scripts/install-stock-omp.sh --select "$(jq -er .version omp/.omp/stock-runtime.json)"
 sync_omp_runtime_worktrees
 install_omp_plugins
 check_key_dirs
