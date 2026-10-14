@@ -111,9 +111,10 @@ function install_brew_packages() {
   # host that already has a bun keeps the one it has.
   command -v bun >/dev/null 2>&1 || brew install bun
 
-  # Upstream OMP from its author's tap. Like every formula here it is installed,
-  # never upgraded; the operator's routine `brew upgrade` tracks new releases.
+  # Upstream OMP from its author's tap, pinned: a routine `brew upgrade` skips
+  # it, and scripts/upgrade-omp.sh upgrades, verifies and re-pins it.
   brew install can1357/tap/omp
+  brew pin can1357/tap/omp
 
   brew install --cask codex
   # A font and a desktop app serve a GUI login. Over SSH on a headless host
