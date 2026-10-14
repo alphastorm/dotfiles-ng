@@ -161,11 +161,13 @@ atomic_link() {
   temporary_dir=$(mktemp -d "$directory/.omp-link.XXXXXX")
   ln -s "$target" "$temporary_dir/link"
   # mv normally follows a destination symlink to a directory. Both variants
-  # below rename over the link itself, without an unlink/relink gap.
-  if [ "$os" = Darwin ]; then
-    mv -fh "$temporary_dir/link" "$link"
-  else
+  # below rename over the link itself, without an unlink/relink gap. Pick the
+  # flag by the mv implementation on PATH (GNU coreutils may shadow BSD mv on
+  # Darwin), not by the host OS.
+  if mv --version 2>/dev/null | grep -q "GNU coreutils"; then
     mv -fT "$temporary_dir/link" "$link"
+  else
+    mv -fh "$temporary_dir/link" "$link"
   fi
   rmdir "$temporary_dir"
   temporary_dir=
