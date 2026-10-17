@@ -47,7 +47,7 @@ const CANONICAL_INPUT = {
 	i: INTENT,
 	tasks: [
 		{ agent: "review-claude-opus", task: receipt("review-claude-opus") },
-		{ agent: "review-gemini", task: receipt("review-gemini") },
+		{ agent: "review-gemini-argon", task: receipt("review-gemini-argon") },
 	],
 };
 
@@ -403,7 +403,7 @@ describe("protected task calls", () => {
 				task_input: {
 					context,
 					i,
-					tasks: [{ agent: "review-gemini", task: "no receipt" }],
+					tasks: [{ agent: "review-gemini-argon", task: "no receipt" }],
 				},
 			}),
 			JSON.stringify({

@@ -22,8 +22,8 @@ refused.
 
 `resolve_assignments` derives every standing field from the fixed live
 authority. Initial standing comes only from the manifest re-resolved during
-freeze; focused standing names the reciprocal strong critic and the profile's
-configured focused supplements; replay standing names only that strong critic;
+freeze; focused standing names every strong critic and the profile's configured
+focused supplements; replay standing names only the reciprocal strong critic;
 targeted refutation uses the complete fixed pool. Receipts bind the subject,
 authority, both resolvers, and all schemas.
 
@@ -1255,6 +1255,18 @@ def canary_reviewer(
     )
 
 
+def _focused_selection(reviewer: qualification.LiveReviewer) -> tuple[str, str]:
+    """Map focused standing from the resolver role, never roster position."""
+
+    if reviewer.role == qualification.STRONG_ROLE:
+        return FOCUSED_SELECTION_CLASS, qualification.STRONG_REASON_CODE
+    if reviewer.role == qualification.SUPPLEMENT_ROLE:
+        return "supplement", qualification.SUPPLEMENT_REASON_CODE
+    raise DispatchError(
+        f"focused reviewer {reviewer.reviewer_id!r} has unsupported role {reviewer.role!r}"
+    )
+
+
 def class_candidates(
     document: Mapping[str, object], lead_family: str, review_class: str
 ) -> tuple[Standing, ...]:
@@ -1266,13 +1278,12 @@ def class_candidates(
             for reviewer in _canary_pool(document, lead_family)
         )
     if review_class == FOCUSED:
-        strong, *supplements = qualification.focused_reviewers(document, lead_family)
-        return (
-            _standing(lead_family, FOCUSED, strong, FOCUSED_SELECTION_CLASS),
-            *(_standing(lead_family, FOCUSED, reviewer, "supplement") for reviewer in supplements),
+        return tuple(
+            _standing(lead_family, FOCUSED, reviewer, _focused_selection(reviewer)[0])
+            for reviewer in qualification.focused_reviewers(document, lead_family)
         )
     if review_class == REPLAY:
-        strong = qualification.focused_reviewers(document, lead_family)[0]
+        strong = qualification.strong_reviewers(document, lead_family)[0]
         return (_standing(lead_family, REPLAY, strong, REPLAY_SELECTION_CLASS),)
     if review_class == TARGETED_REFUTER:
         return tuple(
@@ -1467,28 +1478,25 @@ def resolve_assignments(
         return assignments
 
     if review_class == FOCUSED:
-        strong, *supplements = qualification.focused_reviewers(document, lead_family)
+        focused = qualification.focused_reviewers(document, lead_family)
         _require_exact_roster(
             review_class,
             requested,
-            (strong.reviewer_id, *(reviewer.reviewer_id for reviewer in supplements)),
+            tuple(reviewer.reviewer_id for reviewer in focused),
         )
-        for reviewer in (strong, *supplements):
+        resolved = []
+        for reviewer in focused:
             _require_grants(reviewer, verified.packet)
-        assignments = (
-            _assignment(strong, FOCUSED_SELECTION_CLASS, (qualification.STRONG_REASON_CODE,)),
-            *(
-                _assignment(reviewer, "supplement", (qualification.SUPPLEMENT_REASON_CODE,))
-                for reviewer in supplements
-            ),
-        )
+            selection_class, reason_code = _focused_selection(reviewer)
+            resolved.append(_assignment(reviewer, selection_class, (reason_code,)))
+        assignments = tuple(resolved)
         validate_evidence_compatibility(
             subject, verified.packet, [item.evidence_delivery for item in assignments]
         )
         return assignments
 
     if review_class == REPLAY:
-        strong = qualification.focused_reviewers(document, lead_family)[0]
+        strong = qualification.strong_reviewers(document, lead_family)[0]
         _require_exact_roster(review_class, requested, (strong.reviewer_id,))
         _require_grants(strong, verified.packet)
         assignments = (
@@ -1690,7 +1698,7 @@ def receipt_schema(document: Mapping[str, object]) -> dict[str, object]:
                 "enum": list(REVIEW_CLASSES),
                 "description": (
                     "Which resolution produced this receipt: one probed canary lane, the "
-                    "focused strong critic with its focused supplements, one replay strong "
+                    "focused strong critics with their focused supplements, one replay strong "
                     "critic, the complete selected council, or the complete fixed refutation pool."
                 ),
             },
@@ -2504,7 +2512,7 @@ def command_prepare(args: argparse.Namespace) -> str:
             )
         elif args.review_class == REPLAY:
             reviewers = (
-                qualification.focused_reviewers(authority, args.lead_family)[0].reviewer_id,
+                qualification.strong_reviewers(authority, args.lead_family)[0].reviewer_id,
             )
         elif args.review_class == FOCUSED:
             reviewers = tuple(

@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Fail-closed reader for lead-relative critical-review qualification.
 
-Schema v12 selects one live profile for one of two qualified accountable lead
+Schema v13 selects one live profile for one of two qualified accountable lead
 families: GPT/ChatGPT or Claude. Each profile declares strongCritic, always-on
 supplements, focusedSupplements, explicit leadFamilySecurity, and record-selected
-architectureSpecialists. The strong critic is reciprocal cross-family
-independent evidence. Gemini Flash and Grok are cross-family supplemental
-evidence; focusedSupplements names which of them also sit on every focused
-review, with the same standing. Qualified lead-family security is a same-lineage
-blind sample, never an independent anchor. Eligible Fable architecture synthesis
-is always supplemental, with lead-relative lineage recorded honestly.
+architectureSpecialists. Every strong critic is required cross-family independent
+evidence: the reciprocal critic first, then Gemini 4 Argon under either lead.
+Grok is cross-family supplemental evidence; focusedSupplements names which
+supplements also sit on every focused review, with the same standing. Qualified
+lead-family security is a same-lineage blind sample, never an independent anchor.
+Eligible Fable architecture synthesis is always supplemental, with lead-relative
+lineage recorded honestly.
 
 Reviewer identity is not model lineage. The reviewers mapping key is the
 reviewer_id, the only join key for manifests, dispatch, and findings.
@@ -70,10 +71,10 @@ from review_sequence import (
     select_review_action,
 )
 
-SCHEMA_VERSION = 12
-# Pinned beside the schema version so activation is atomic: a v12 resolver and
-# v9 panel definition cannot half-agree about lead eligibility or reviewer tiers.
-LIVE_PANEL_ID = "critical-review-primary-v9"
+SCHEMA_VERSION = 13
+# Pinned beside the schema version so activation is atomic: a v13 resolver and
+# v10 panel definition cannot half-agree about strong-critic cardinality.
+LIVE_PANEL_ID = "critical-review-primary-v10"
 MANIFEST_SCHEMA_VERSION = 10
 DEFAULT_QUALIFICATION = Path.home() / ".omp/agent/skills/critical-review/qualification.yml"
 # The manifest records which resolver bytes produced its roster. This is
@@ -795,10 +796,10 @@ def validate_qualification(document: object) -> Mapping[str, object]:
         active_profile = bool(
             groups["strongCritic"] or groups["supplements"] or groups["leadFamilySecurity"]
         )
-        if active_profile and len(groups["strongCritic"]) != 1:
+        if active_profile and not groups["strongCritic"]:
             raise QualificationError(
                 f"liveDispatch.byLeadFamily.{lead_family}.strongCritic must select "
-                "exactly one reciprocal strong critic"
+                "at least one strong critic"
             )
         if active_profile and not groups["supplements"]:
             raise QualificationError(
@@ -1088,17 +1089,17 @@ def strong_reviewers(
 def focused_reviewers(
     document: Mapping[str, object], lead_family: str
 ) -> tuple[LiveReviewer, ...]:
-    """Return the focused roster: the reciprocal strong critic, then focusedSupplements.
+    """Return every strong critic in profile order, then focusedSupplements.
 
     Each focused supplement is the same profile's `supplements` member, so it carries
-    exactly the supplemental standing of its council seat and never the anchor's.
+    exactly the supplemental standing of its council seat and never a strong critic's.
     """
 
     candidates = strong_reviewers(document, lead_family)
-    if len(candidates) != 1:
+    if not candidates:
         raise QualificationError(
-            f"liveDispatch.byLeadFamily.{lead_family}.strongCritic must resolve exactly one "
-            f"focused reviewer, got {[reviewer.reviewer_id for reviewer in candidates]}"
+            f"liveDispatch.byLeadFamily.{lead_family}.strongCritic must resolve "
+            "at least one strong critic for focused review"
         )
     supplements = {
         reviewer.reviewer_id: reviewer
@@ -1108,7 +1109,7 @@ def focused_reviewers(
         _profile(document, lead_family).get(FOCUSED_SUPPLEMENTS),
         f"liveDispatch.byLeadFamily.{lead_family}.{FOCUSED_SUPPLEMENTS}",
     )
-    return (candidates[0], *(supplements[reviewer_id] for reviewer_id in focused))
+    return (*candidates, *(supplements[reviewer_id] for reviewer_id in focused))
 
 
 def global_reviewers(
@@ -1291,7 +1292,7 @@ def _selected(
     """Emit one roster row, joined by reviewer_id and never by lineage.
 
     Lineage metadata rides along so a later audit can ask what a result was worth
-    without re-reading private configuration. The strong critic and supplements
+    without re-reading private configuration. The strong critics and supplements
     are pairwise distinct; an architecture specialist may intentionally share
     model_family or correlation_group with another row. execution_mode is
     resolved here so every dispatcher uses the same native Task-agent path

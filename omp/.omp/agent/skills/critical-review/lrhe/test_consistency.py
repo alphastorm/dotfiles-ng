@@ -95,7 +95,6 @@ SKILL_OWNED_CONTROLS = (
 # to read these, and a control stated in both documents is one that will drift.
 LIVE_PROTOCOL_OWNED_MECHANICS = (
     "`livedispatch` is the sole authoritative live panel definition",
-    "strongcritic selects exactly one reciprocal cross-family assurance anchor",
     "match access_profile, not provider_route",
     "`provider_data_allowlist` and `reviewer_access_profile_allowlist` from the complete deterministic candidate set",
     "is missing, never approved",
@@ -1926,18 +1925,18 @@ _FABLE_SUPPLEMENTAL_ENTRY = {
 }
 _SUPPLEMENT_ENTRY = {
     **_OPUS_ENTRY,
-    "reviewer_id": "gemini",
-    "model_family": "gemini",
-    "correlation_group": "gemini-3.7-flash",
-    "provider_route": "google-antigravity",
-    "access_profile": "google-antigravity-default",
-    "data_allowlist_key": "google",
+    "reviewer_id": "grok",
+    "model_family": "grok",
+    "correlation_group": "grok-4.7",
+    "provider_route": "xai-oauth",
+    "access_profile": "xai-oauth-default",
+    "data_allowlist_key": "xai",
     "role": qualification.SUPPLEMENT_ROLE,
     "independence_class": qualification.CROSS_FAMILY,
     "authority": qualification.SUPPLEMENTAL_EVIDENCE,
-    "agent": "review-gemini",
-    "lens": "whole_repo",
-    "model": "google-antigravity/gemini-3.7-flash:high",
+    "agent": "review-grok",
+    "lens": "adversarial",
+    "model": "xai-oauth/grok-4.7:xhigh",
     "selectionClass": "supplement",
     "reasonCodes": [qualification.SUPPLEMENT_REASON_CODE],
 }
@@ -2064,28 +2063,38 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
     assert live["panelId"] == qualification.LIVE_PANEL_ID
     assert profiles == {
         "gpt": {
-            "strongCritic": ["claude-opus"],
-            "supplements": ["gemini", "grok"],
+            "strongCritic": ["claude-opus", "gemini-argon"],
+            "supplements": ["grok"],
             "focusedSupplements": ["grok"],
             "leadFamilySecurity": ["daybreak-blue"],
             "architectureSpecialists": ["claude"],
         },
         "claude": {
-            "strongCritic": ["daybreak-blue"],
-            "supplements": ["gemini", "grok"],
+            "strongCritic": ["daybreak-blue", "gemini-argon"],
+            "supplements": ["grok"],
             "focusedSupplements": ["grok"],
             "leadFamilySecurity": ["claude-mythos"],
             "architectureSpecialists": ["claude"],
         },
     }
     for lead_family, profile in profiles.items():
-        assert document["reviewers"][profile["strongCritic"][0]]["model_family"] != lead_family
+        assert all(
+            document["reviewers"][item]["model_family"] != lead_family
+            for item in profile["strongCritic"]
+        )
         assert [document["reviewers"][item]["model_family"] for item in profile["supplements"]] == [
-            "gemini",
             "grok",
         ]
 
-    for reviewer_id in ("daybreak-blue", "claude-opus", "claude-mythos"):
+    assert live["targetedRefuters"] == ["glm"]
+    assert live["evaluationOnly"] == ["kimi", "deepseek"]
+    assert live["disabled"] == ["minimax", "gemini"]
+    flash = document["reviewers"]["gemini"]
+    assert flash["dispatchEnabled"] is False
+    assert flash["evaluationEnabled"] is False
+    assert not {"evidenceDelivery", "tools", "canaryReceipt"} & flash.keys()
+    assert document["reviewers"]["gemini-argon"]["evaluationEnabled"] is False
+    for reviewer_id in ("daybreak-blue", "claude-opus", "claude-mythos", "gemini-argon"):
         entry = document["reviewers"][reviewer_id]
         assert entry["dispatchEnabled"] is True
         assert entry["execution_mode"] == "task_agent"
@@ -2123,7 +2132,7 @@ def test_every_review_lane_returns_its_verdict_inline():
     document = _live_document()
     nonblocking = []
     for reviewer_id, entry in document["reviewers"].items():
-        if entry["execution_mode"] != "task_agent":
+        if not entry["dispatchEnabled"] or entry["execution_mode"] != "task_agent":
             continue
         front = canary._agent_frontmatter(preflight.AGENTS / f"{entry['agent']}.md")
         if front.get("blocking") is not True:
@@ -2136,11 +2145,15 @@ def test_reviewer_agent_names_are_stable_lanes_with_exact_model_selectors():
     """Versions stay auditable in selectors without churning agent identity."""
 
     document = _live_document()
+    config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))
+    task = config["task"]
     version_token = re.compile(
         r"(?:^|-)(?:v?\d+(?:[.-]\d+)+|latest|k\d+)(?:-|$)",
         re.IGNORECASE,
     )
     for reviewer_id, entry in document["reviewers"].items():
+        if not (entry["dispatchEnabled"] or entry["evaluationEnabled"]):
+            continue
         agent = entry["agent"]
         assert agent.startswith("review-"), reviewer_id
         assert not version_token.search(agent), (
@@ -2149,6 +2162,12 @@ def test_reviewer_agent_names_are_stable_lanes_with_exact_model_selectors():
         front = canary._agent_frontmatter(preflight.AGENTS / f"{agent}.md")
         assert front["name"] == agent
         assert front["model"] == [entry["model"]]
+        if entry["dispatchEnabled"]:
+            assert task["agentModelOverrides"][agent] == entry["model"]
+            assert agent not in task["disabledAgents"]
+    flash = document["reviewers"]["gemini"]
+    assert flash["agent"] in task["disabledAgents"]
+    assert flash["agent"] not in task["agentModelOverrides"]
 
 
 @needs_agents
@@ -3555,10 +3574,10 @@ def test_probe_subject_grants_only_the_probed_lane(tmp_path):
     send the reviewer at a mutable tree.
     """
 
-    entry = qualification.reviewers(_live_document())["gemini"]
+    entry = qualification.reviewers(_live_document())["gemini-argon"]
     subject = canary.materialize_probe_subject(
         tmp_path / "probe",
-        reviewer_id="gemini",
+        reviewer_id="gemini-argon",
         lead_family="gpt",
         version="live-repository-v6",
         fixture=canary.DATA / "repository-canary-parse.py",
@@ -3588,7 +3607,7 @@ def test_probe_refuses_a_fixture_its_instructions_never_name(tmp_path):
     with pytest.raises(canary.TraceCanaryError, match="never names"):
         canary.materialize_probe_subject(
             tmp_path / "mismatched",
-            reviewer_id="gemini",
+            reviewer_id="gemini-argon",
             lead_family="gpt",
             version="live-repository-v6",
             fixture=canary.DATA / "repository-canary-auth.py",

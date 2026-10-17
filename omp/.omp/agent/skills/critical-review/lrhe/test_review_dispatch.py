@@ -33,9 +33,9 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-claude-opus", "canary", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
-    ("gpt", "canary", "gemini"): (
-        "review-gemini", "canary", qualification.SUPPLEMENT_ROLE,
-        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ("gpt", "canary", "gemini-argon"): (
+        "review-gemini-argon", "canary", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
     ("gpt", "canary", "grok"): (
         "review-grok", "canary", qualification.SUPPLEMENT_ROLE,
@@ -57,6 +57,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-claude-opus", "focused", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
+    ("gpt", "focused", "gemini-argon"): (
+        "review-gemini-argon", "focused", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
+    ),
     ("gpt", "focused", "grok"): (
         "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
         qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
@@ -69,9 +73,9 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-claude-opus", "strong", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
-    ("gpt", "initial", "gemini"): (
-        "review-gemini", "supplement", qualification.SUPPLEMENT_ROLE,
-        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ("gpt", "initial", "gemini-argon"): (
+        "review-gemini-argon", "strong", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
     ("gpt", "initial", "grok"): (
         "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
@@ -93,9 +97,9 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-daybreak-blue", "canary", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
-    ("claude", "canary", "gemini"): (
-        "review-gemini", "canary", qualification.SUPPLEMENT_ROLE,
-        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ("claude", "canary", "gemini-argon"): (
+        "review-gemini-argon", "canary", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
     ("claude", "canary", "grok"): (
         "review-grok", "canary", qualification.SUPPLEMENT_ROLE,
@@ -117,6 +121,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-daybreak-blue", "focused", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
+    ("claude", "focused", "gemini-argon"): (
+        "review-gemini-argon", "focused", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
+    ),
     ("claude", "focused", "grok"): (
         "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
         qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
@@ -129,9 +137,9 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-daybreak-blue", "strong", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
-    ("claude", "initial", "gemini"): (
-        "review-gemini", "supplement", qualification.SUPPLEMENT_ROLE,
-        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ("claude", "initial", "gemini-argon"): (
+        "review-gemini-argon", "strong", qualification.STRONG_ROLE,
+        qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
     ("claude", "initial", "grok"): (
         "review-grok", "supplement", qualification.SUPPLEMENT_ROLE,
@@ -153,12 +161,12 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
 
 EXPECTED_ARITY: dict[tuple[str, str], tuple[int, int]] = {
     ("gpt", "canary"): (1, 1),
-    ("gpt", "focused"): (2, 2),
+    ("gpt", "focused"): (3, 3),
     ("gpt", "replay"): (1, 1),
     ("gpt", "initial"): (4, 5),
     ("gpt", "targeted-refuter"): (1, 1),
     ("claude", "canary"): (1, 1),
-    ("claude", "focused"): (2, 2),
+    ("claude", "focused"): (3, 3),
     ("claude", "replay"): (1, 1),
     ("claude", "initial"): (4, 5),
     ("claude", "targeted-refuter"): (1, 1),
@@ -468,15 +476,17 @@ def test_receipt_schema_admits_every_valid_tuple(receipt_validator, packet_only_
 def test_receipt_schema_requires_the_whole_focused_roster(
     receipt_validator, packet_only_subject, lead_family: str
 ):
-    """A focused receipt without its supplemental seat cannot even be recorded."""
+    """A focused receipt missing any required seat cannot even be recorded."""
 
     roster = [
         _assignment(reviewer_id, row)
         for (family, review_class, reviewer_id), row in EXPECTED_TUPLES.items()
         if family == lead_family and review_class == "focused"
     ]
-    assert [row["reviewer_id"] for row in roster][1:] == ["grok"]
-    for assignments, valid in ((roster, True), (roster[:1], False)):
+    assert [row["reviewer_id"] for row in roster][1:] == ["gemini-argon", "grok"]
+    cases = [(roster, True)]
+    cases.extend((roster[:index] + roster[index + 1:], False) for index in range(len(roster)))
+    for assignments, valid in cases:
         document = _receipt_document(
             packet_only_subject,
             lead_family=lead_family,
@@ -494,6 +504,7 @@ def test_receipt_schema_limits_replay_to_one_distinct_strong_critic(
     receipt_validator, packet_only_subject, lead_family: str, reviewer_id: str
 ):
     critic = _assignment(reviewer_id, EXPECTED_TUPLES[(lead_family, "replay", reviewer_id)])
+    argon = _assignment("gemini-argon", EXPECTED_TUPLES[(lead_family, "focused", "gemini-argon")])
     supplement = _assignment("grok", EXPECTED_TUPLES[(lead_family, "focused", "grok")])
     receipt = _receipt_document(
         packet_only_subject,
@@ -504,6 +515,9 @@ def test_receipt_schema_limits_replay_to_one_distinct_strong_critic(
     assert receipt_validator.is_valid(receipt)
     for assignments in (
         [],
+        [argon],
+        [dict(argon, selectionClass="replay")],
+        [critic, argon],
         [critic, supplement],
         [supplement],
         [dict(critic, selectionClass="focused")],
@@ -533,7 +547,7 @@ def test_pre_replay_receipts_remain_schema_valid(
         assignments=roster,
     )
     receipt["schemaVersion"] = 1
-    receipt["panelId"] = "critical-review-primary-v9"
+    receipt["panelId"] = qualification.LIVE_PANEL_ID
     assert receipt_validator.is_valid(receipt)
 
 
@@ -589,22 +603,18 @@ def test_receipt_schema_refuses_a_wrong_role(receipt_validator, packet_only_subj
 
 
 def test_receipt_schema_refuses_a_wrong_authority(receipt_validator, packet_only_subject):
-    agent, selection_class, role, independence_class, _authority = EXPECTED_TUPLES[
-        ("claude", "initial", "gemini")
+    complete = [
+        _assignment(reviewer_id, EXPECTED_TUPLES[("claude", "initial", reviewer_id)])
+        for reviewer_id in ("daybreak-blue", "gemini-argon", "grok", "claude-mythos")
     ]
     document = _receipt_document(
         packet_only_subject,
         lead_family="claude",
         review_class="initial",
-        assignments=[
-            _assignment("daybreak-blue", EXPECTED_TUPLES[("claude", "initial", "daybreak-blue")]),
-            _assignment(
-                "gemini",
-                (agent, selection_class, role, independence_class, qualification.INDEPENDENT_EVIDENCE),
-            ),
-            _assignment("grok", EXPECTED_TUPLES[("claude", "initial", "grok")]),
-        ],
+        assignments=complete,
     )
+    assert receipt_validator.is_valid(document)
+    complete[1]["authority"] = qualification.SUPPLEMENTAL_EVIDENCE
     assert not receipt_validator.is_valid(document)
 
 
@@ -613,7 +623,7 @@ def test_receipt_schema_refuses_an_incomplete_council(receipt_validator, packet_
 
     complete = [
         _assignment(reviewer_id, EXPECTED_TUPLES[("gpt", "initial", reviewer_id)])
-        for reviewer_id in ("claude-opus", "gemini", "grok", "daybreak-blue")
+        for reviewer_id in ("claude-opus", "gemini-argon", "grok", "daybreak-blue")
     ]
     assert receipt_validator.is_valid(
         _receipt_document(
@@ -634,7 +644,10 @@ def test_receipt_schema_refuses_an_incomplete_council(receipt_validator, packet_
 
 
 def test_task_input_uses_one_batch_shape_for_every_reviewer_count(tmp_path):
-    first = {"agent": "review-gemini", "task": f"{rd.RECEIPT_MARKER}\nreviewer_id=gemini\n"}
+    first = {
+        "agent": "review-gemini-argon",
+        "task": f"{rd.RECEIPT_MARKER}\nreviewer_id=gemini-argon\n",
+    }
     second = {"agent": "review-grok", "task": f"{rd.RECEIPT_MARKER}\nreviewer_id=grok\n"}
     envelope = (tmp_path / "dispatch.json").resolve()
     digest = "a" * 64
@@ -952,9 +965,12 @@ def test_prepare_enforces_packet_only_evidence_end_to_end(tmp_path, material, au
     assert refusal.out == ""
     assert not any(path.exists() for path in repository_only.values())
 
-    for reviewer_id in ("claude-opus", "grok"):
+    for reviewer_id in ("claude-opus", "gemini-argon", "grok"):
         authority["reviewers"][reviewer_id]["evidenceDelivery"] = "inline"
         authority["reviewers"][reviewer_id]["tools"] = []
+        authority["reviewers"][reviewer_id].setdefault(
+            "canaryReceipt", f"lrhe-data/{reviewer_id}-inline-trace.json"
+        )
     validated_authority = qualification.validate_qualification(authority)
     rd.LIVE_AUTHORITY.write_text(
         yaml.safe_dump(validated_authority, sort_keys=False), encoding="utf-8"
@@ -994,7 +1010,9 @@ def test_prepare_enforces_packet_only_evidence_end_to_end(tmp_path, material, au
     complete = output_paths(tmp_path / "complete")
     assert rd.main(prepare_args(inline_packet, complete)) == 0
     emitted = json.loads(capsys.readouterr().out)["task_input"]
-    assert [item["agent"] for item in emitted["tasks"]] == ["review-claude-opus", "review-grok"]
+    assert [item["agent"] for item in emitted["tasks"]] == [
+        "review-claude-opus", "review-gemini-argon", "review-grok"
+    ]
     # Nothing is retrieved for a packet-only subject, so the retrieval directive
     # would be an instruction about paths this reviewer must not open.
     assert all(rd.BATCHED_RETRIEVAL_DIRECTIVE not in item["task"] for item in emitted["tasks"])
@@ -1187,21 +1205,28 @@ def test_verify_subject_refuses_a_scope_or_packet_edited_after_freezing(material
 # resolving
 
 
-def test_focused_refuses_every_caller_selected_alternative(material, authority):
+@pytest.mark.parametrize(
+    ("lead_family", "reviewer_id"),
+    (("gpt", "claude-opus"), ("claude", "daybreak-blue")),
+)
+def test_focused_refuses_every_caller_selected_alternative(
+    material, authority, lead_family: str, reviewer_id: str
+):
     document = qualification.validate_qualification(authority)
     verified = rd.freeze_subject(scope_path=material["scope"], packet_path=material["packet"])
     for reviewer_ids in (
-        ["claude-opus"],
-        ["grok", "claude-opus"],
-        ["claude-opus", "gemini"],
-        ["claude-opus", "grok", "gemini"],
-        ["daybreak-blue", "grok"],
+        [reviewer_id],
+        [reviewer_id, "grok"],
+        [reviewer_id, "gemini-argon"],
+        ["gemini-argon", reviewer_id, "grok"],
+        [reviewer_id, "grok", "gemini-argon"],
+        [reviewer_id, "gemini", "grok"],
     ):
         with pytest.raises(rd.DispatchError, match="complete resolved roster"):
             rd.resolve_assignments(
                 document,
                 verified,
-                lead_family="gpt",
+                lead_family=lead_family,
                 review_class="focused",
                 reviewer_ids=reviewer_ids,
                 authority_path=rd.LIVE_AUTHORITY,
@@ -1213,7 +1238,7 @@ def test_focused_refuses_every_caller_selected_alternative(material, authority):
     ("lead_family", "reviewer_id"),
     (("gpt", "claude-opus"), ("claude", "daybreak-blue")),
 )
-def test_focused_roster_is_the_reciprocal_strong_critic_then_grok(
+def test_focused_roster_requires_independent_argon_after_the_reciprocal_critic(
     material, authority, repository, lead_family: str, reviewer_id: str
 ):
     document = qualification.validate_qualification(authority)
@@ -1224,42 +1249,62 @@ def test_focused_roster_is_the_reciprocal_strong_critic_then_grok(
         subject_commit=repository["commit"],
         files=["src/dispatch.py"],
     )
-    strong, supplement = rd.resolve_assignments(
+    strong, argon, supplement = rd.resolve_assignments(
         document,
         verified,
         lead_family=lead_family,
         review_class="focused",
-        reviewer_ids=[reviewer_id, "grok"],
+        reviewer_ids=[reviewer_id, "gemini-argon", "grok"],
         authority_path=rd.LIVE_AUTHORITY,
         authority_sha256="0" * 64,
     )
     assert strong.reason_codes == (qualification.STRONG_REASON_CODE,)
     assert strong.role == qualification.STRONG_ROLE
     assert strong.authority == qualification.INDEPENDENT_EVIDENCE
+    assert argon.reviewer_id == "gemini-argon"
+    assert argon.reason_codes == (qualification.STRONG_REASON_CODE,)
+    assert (
+        argon.agent,
+        argon.selection_class,
+        argon.role,
+        argon.independence_class,
+        argon.authority,
+    ) == EXPECTED_TUPLES[(lead_family, "focused", "gemini-argon")]
     assert supplement.reviewer_id == "grok"
     assert supplement.reason_codes == (qualification.SUPPLEMENT_REASON_CODE,)
     assert supplement.role == qualification.SUPPLEMENT_ROLE
     assert supplement.authority == qualification.SUPPLEMENTAL_EVIDENCE
 
 
-def test_focused_refuses_a_packet_that_withholds_the_supplement_grant(
-    tmp_path, material, authority
+@pytest.mark.parametrize(
+    ("lead_family", "reviewer_id"),
+    (
+        ("gpt", "claude-opus"), ("gpt", "gemini-argon"), ("gpt", "grok"),
+        ("claude", "daybreak-blue"), ("claude", "gemini-argon"), ("claude", "grok"),
+    ),
+)
+@pytest.mark.parametrize("grant_field", ("data_allowlist_key", "access_profile"))
+def test_focused_refuses_either_withheld_grant_for_every_seat(
+    tmp_path, material, authority, lead_family: str, reviewer_id: str, grant_field: str
 ):
-    """Grok's vendor grant is checked like the anchor's; it is never dropped."""
+    """Every focused seat needs both grants; an unauthorized seat is never dropped."""
 
     text = material["packet"].read_text(encoding="utf-8")
-    assert "- xai\n" in text
-    packet = tmp_path / "no-xai-packet.md"
-    packet.write_text(text.replace("- xai\n", ""), encoding="utf-8")
+    grant = f"- {authority['reviewers'][reviewer_id][grant_field]}\n"
+    assert grant in text
+    packet = tmp_path / "withheld-grant-packet.md"
+    packet.write_text(text.replace(grant, ""), encoding="utf-8")
     document = qualification.validate_qualification(authority)
     verified = rd.freeze_subject(scope_path=material["scope"], packet_path=packet)
-    with pytest.raises(rd.DispatchError, match=r"does not authorize reviewers\.grok"):
+    with pytest.raises(rd.DispatchError, match=rf"does not authorize reviewers\.{reviewer_id}"):
         rd.resolve_assignments(
             document,
             verified,
-            lead_family="gpt",
+            lead_family=lead_family,
             review_class="focused",
-            reviewer_ids=["claude-opus", "grok"],
+            reviewer_ids=[
+                row.reviewer_id for row in qualification.focused_reviewers(document, lead_family)
+            ],
             authority_path=rd.LIVE_AUTHORITY,
             authority_sha256="0" * 64,
         )
@@ -1269,15 +1314,19 @@ def test_focused_refuses_a_packet_that_withholds_the_supplement_grant(
     ("lead_family", "reviewer_id"),
     (("gpt", "claude-opus"), ("claude", "daybreak-blue")),
 )
-@pytest.mark.parametrize("supplements", (["grok"], ["gemini", "grok"]))
-def test_replay_resolves_only_the_reciprocal_critic_without_supplement_grants(
+@pytest.mark.parametrize("supplements", (["grok"], []))
+def test_replay_resolves_only_the_reciprocal_critic_without_other_focused_grants(
     material, authority, repository, lead_family: str, reviewer_id: str, supplements: list[str]
 ):
     authority["liveDispatch"]["byLeadFamily"][lead_family]["focusedSupplements"] = supplements
     document = qualification.validate_qualification(authority)
     packet_text = material["packet"].read_text(encoding="utf-8")
-    assert "- xai\n" in packet_text
-    material["packet"].write_text(packet_text.replace("- xai\n", ""), encoding="utf-8")
+    for other_reviewer in ("gemini-argon", "grok"):
+        for field in ("data_allowlist_key", "access_profile"):
+            grant = f"- {authority['reviewers'][other_reviewer][field]}\n"
+            assert grant in packet_text
+            packet_text = packet_text.replace(grant, "")
+    material["packet"].write_text(packet_text, encoding="utf-8")
     verified = rd.freeze_subject(
         scope_path=material["scope"],
         packet_path=material["packet"],
@@ -1306,8 +1355,8 @@ def test_replay_resolves_only_the_reciprocal_critic_without_supplement_grants(
     ) == EXPECTED_TUPLES[(lead_family, "replay", reviewer_id)]
     assert critic.reason_codes == (qualification.STRONG_REASON_CODE,)
     assert rd.roster_arity(document, lead_family, "replay") == (1, 1)
-    for supplement in supplements:
-        for requested in ([supplement], [reviewer_id, supplement]):
+    for other_reviewer in ("gemini-argon", "grok"):
+        for requested in ([other_reviewer], [reviewer_id, other_reviewer]):
             with pytest.raises(rd.DispatchError, match="complete resolved roster"):
                 rd.resolve_assignments(
                     document,
@@ -1393,7 +1442,7 @@ def test_focused_prepare_rejects_every_reviewer_override(
 ):
     paths, argv = _record_free_prepare_args(tmp_path, material, repository)
     with pytest.raises(SystemExit) as refusal:
-        rd.main([*argv, "--reviewer", "gemini"])
+        rd.main([*argv, "--reviewer", "gemini-argon"])
     assert refusal.value.code == 2
     assert not any(path.exists() for path in paths.values())
 
@@ -1409,7 +1458,9 @@ def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):
     assert subject["subjectCommit"] == repository["commit"]
     receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
     assert receipt["reviewClass"] == "focused"
-    assert [row["reviewer_id"] for row in receipt["assignments"]] == ["claude-opus", "grok"]
+    assert [row["reviewer_id"] for row in receipt["assignments"]] == [
+        "claude-opus", "gemini-argon", "grok"
+    ]
     for assignment in receipt["assignments"]:
         assert (
             assignment["agent"],
@@ -1436,7 +1487,9 @@ def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):
     assert approved == emitted
     assert set(approved) == {"i", "context", "tasks"}
     assert approved["i"] == rd.DISPATCH_TASK_INTENT
-    assert [item["agent"] for item in approved["tasks"]] == ["review-claude-opus", "review-grok"]
+    assert [item["agent"] for item in approved["tasks"]] == [
+        "review-claude-opus", "review-gemini-argon", "review-grok"
+    ]
     for item, assignment in zip(approved["tasks"], receipt["assignments"], strict=True):
         task = item["task"]
         assert task.startswith(f"{rd.RECEIPT_MARKER}\n")
@@ -1515,14 +1568,14 @@ def test_replay_prepare_rejects_even_the_resolved_reviewer_override(
     paths, argv = _record_free_prepare_args(
         tmp_path, material, repository, lead_family=lead_family, review_class="replay"
     )
-    for requested in (reviewer_id, "grok"):
+    for requested in (reviewer_id, "gemini-argon", "grok"):
         with pytest.raises(SystemExit) as refusal:
             rd.main([*argv, "--reviewer", requested])
         assert refusal.value.code == 2
         assert not any(path.exists() for path in paths.values())
 
 
-def _canary_prepare_args(tmp_path, material, repository, *, reviewer: str | None = "gemini"):
+def _canary_prepare_args(tmp_path, material, repository, *, reviewer: str | None = "gemini-argon"):
     paths = {
         "subject": tmp_path / "frozen-subject.json",
         "receipt": tmp_path / "resolver-receipt.json",
@@ -1565,10 +1618,10 @@ def test_canary_prepare_probes_one_named_lane(tmp_path, material, repository, ca
 
     receipt = json.loads(paths["receipt"].read_text(encoding="utf-8"))
     assert receipt["reviewClass"] == rd.CANARY
-    assert [row["reviewer_id"] for row in receipt["assignments"]] == ["gemini"]
+    assert [row["reviewer_id"] for row in receipt["assignments"]] == ["gemini-argon"]
     assignment = receipt["assignments"][0]
     agent, selection_class, role, independence_class, authority = EXPECTED_TUPLES[
-        ("gpt", "canary", "gemini")
+        ("gpt", "canary", "gemini-argon")
     ]
     assert (
         assignment["agent"],
@@ -1615,9 +1668,10 @@ def test_canary_prepare_refuses_an_unconfigured_lane_a_record_and_no_lane(
 ):
     """A probe names one configured lane and nothing else, and writes nothing when it cannot."""
 
-    paths, argv = _canary_prepare_args(tmp_path, material, repository, reviewer="minimax")
-    assert rd.main(argv) == 1
-    assert not any(path.exists() for path in paths.values())
+    for reviewer_id in ("minimax", "gemini"):
+        paths, argv = _canary_prepare_args(tmp_path, material, repository, reviewer=reviewer_id)
+        assert rd.main(argv) == 1
+        assert not any(path.exists() for path in paths.values())
 
     record = tmp_path / "canary-record.json"
     record.write_text('{"review_id": "probe"}\n', encoding="utf-8")

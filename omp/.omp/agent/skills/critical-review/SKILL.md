@@ -52,9 +52,9 @@ When the deterministic result is not a full council, stop before review ceremony
 
 #### Focused review routing
 
-Only GPT/ChatGPT and Claude are qualified accountable leads. A focused review uses exactly one reciprocal cross-family strong critic — review-claude-opus under CVP for a GPT lead and review-daybreak-blue for a Claude lead — plus the profile's `focusedSupplements`, which is review-grok for both leads. `qualification.yml` owns those profile entries, and `review_dispatch.py prepare --review-class focused` resolves both seats from the accountable lead family; the packet grants both seats' vendor and access profiles. The caller cannot name, replace, reorder, or add a reviewer.
+Only GPT/ChatGPT and Claude are qualified accountable leads. A focused review uses every strong critic — the reciprocal critic, review-claude-opus under CVP for a GPT lead or review-daybreak-blue for a Claude lead, and review-gemini-argon for both — plus the profile's `focusedSupplements`, which is review-grok for both leads. `qualification.yml` owns those profile entries, and `review_dispatch.py prepare --review-class focused` resolves all three seats in profile order from the accountable lead family; the packet grants every seat's vendor and access profiles. The caller cannot name, replace, reorder, or add a reviewer.
 
-The Grok seat keeps its council supplement's standing: cross-family supplemental evidence that never replaces the strong critic or counts toward the independent floor. Its findings get the same lead verification and disposition as any other; a missing, refused, or invalid Grok result is recorded and never blocks closure or triggers a substitute. Gemini remains a full-council supplement only. Review-claude-fable remains resolver-qualified architecture synthesis for full councils, not a focused shortcut. This routing does not modify the full council roster.
+Every strong critic is required cross-family independent evidence. Missing, refused, or invalid strong-critic results are missing, never approved. The Grok seat keeps its council supplement's standing: cross-family supplemental evidence that never replaces a strong critic or counts toward the independent floor. Its findings get the same lead verification and disposition as any other; a missing, refused, or invalid Grok result is recorded and never blocks closure or triggers a substitute. Review-claude-fable remains resolver-qualified architecture synthesis for full councils, not a focused shortcut. This routing does not modify the full council roster.
 
 Routing selects the reviewer; it never states the reviewer's standing. The emitted Task payload is submitted verbatim. The resolver emits `selectionClass`, `role`, `independence_class`, and `authority` from the live authority; the lead never writes, derives, or hand-copies a standing field, and a reviewer reached any other way is not a review.
 
@@ -140,12 +140,12 @@ The resolver uses four explicit profile groups, not one role per model:
 
 | Group | GPT lead | Claude lead | Standing |
 |---|---|---|---|
-| strongCritic | Opus 5.5 through the CVP-approved route | Daybreak Blue | reciprocal cross-family independent evidence |
-| supplements | Gemini 3.8 Flash and Grok 4.7 | Gemini 3.8 Flash and Grok 4.7 | always-on cross-family supplemental evidence |
+| strongCritic | Opus 5.5 through the CVP-approved route + Gemini 4 Argon | Daybreak Blue + Gemini 4 Argon | required cross-family independent evidence |
+| supplements | Grok 4.7 | Grok 4.7 | always-on cross-family supplemental evidence |
 | leadFamilySecurity | qualified Daybreak Blue | Mythos 5.1 through the CVP-approved route | always-on same-lineage blind sample; supplemental evidence only |
 | architectureSpecialists | Fable 5.1 when eligible | Fable 5.1 when eligible | record-selected supplemental architecture synthesis, security-touching subjects included |
 
-The strong critic and supplements must be pairwise distinct by model family and
+The strong critics and supplements must be pairwise distinct by model family and
 correlation group. Fable may intentionally share a lineage because its standing
 is always supplemental. Fable is eligible whenever the record names an
 architecture-lens domain; security domains, authorization proofs, and
@@ -157,8 +157,8 @@ reusing its qualified security scope and exact model/access contract. Claude ful
 councils include Mythos 5.1 through the same group, bound to the CVP account like
 Opus. That same_lineage_blind_sample and supplemental_evidence standing never
 supplies independent assurance, replaces the strong critic, or relaxes the
-cross-family rules for ordinary supplements. Focused reciprocal critics and the
-targeted-refuter pool are unchanged.
+cross-family rules for ordinary supplements. Focused reviews include every
+strong critic; reciprocal-only replay and the targeted-refuter pool are unchanged.
 
 ChatGPT Pro Web through pinned pi-oracle is an asynchronous shadow on every full
 council, outside the resolver roster. It has no council standing, never blocks

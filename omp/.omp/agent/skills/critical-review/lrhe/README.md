@@ -282,12 +282,11 @@ merge distinct configured lanes.
 Standing is lead-relative rather than reviewer-intrinsic. Only GPT and Claude
 profiles exist, and each has four explicit groups:
 
-- strongCritic selects one reciprocal cross-family independent reviewer: Opus
-  through the CVP-approved route for a GPT lead, or Daybreak Blue for a Claude
-  lead;
-- supplements selects Gemini 3.8 Flash and Grok 4.7 on every full council. Both
-  are cross-family supplemental evidence; Gemini supplies a fast sanity pass and
-  Grok supplies cheap decorrelated coverage;
+- strongCritic selects required cross-family independent reviewers: the reciprocal
+  critic first — Opus through the CVP-approved route for a GPT lead or Daybreak
+  Blue for a Claude lead — then Gemini 4 Argon for both leads;
+- supplements selects only Grok 4.7 on every full council, as cross-family
+  supplemental evidence for cheap decorrelated coverage;
 - leadFamilySecurity selects the qualified Daybreak security lane for GPT full
   councils and the CVP-bound Mythos 5.1 security lane for Claude full councils,
   as same_lineage_blind_sample and supplemental_evidence. Daybreak reuses its
@@ -312,14 +311,19 @@ requires its exact singleton `task.agentAccountPools` identity under the route
 and a v3 canary whose served pins for the route equal only that account's
 credential-pin hash, bound directly as `canaryReceipt` rather than through a
 `charterAmendment`. Unbound lanes keep native rotation and valid v2 receipts.
-The strong critic and supplements are pairwise distinct by model family and
+The strong critics and supplements are pairwise distinct by model family and
 correlation group; the conditional architecture specialist may share lineage
 because it remains supplemental.
 
-Focused review resolves the profile's reciprocal strong critic followed by its
+Focused review resolves every strong critic in profile order, then
 `focusedSupplements` (Grok for both leads), which must be members of the same
-profile's supplements and keep that supplemental standing. The caller never
-chooses a reviewer, and a supplement never replaces the strong critic.
+profile's supplements and keep that supplemental standing. Both focused rosters
+have three seats: the reciprocal critic, Gemini 4 Argon, and Grok. Every strong
+critic is required; missing, refused, or invalid results never count as approval.
+Grok stays nonblocking supplemental evidence. Replay remains one seat: only the
+first, reciprocal strong critic. The caller never chooses a reviewer, and a
+supplement never replaces a strong critic. The retired Gemini Flash lane is
+disabled, not evaluation-only.
 
 ChatGPT Pro Web remains deliberately outside liveDispatch. For ordinary cloud-permitted full councils, the generated packet grants let the separate `oracleShadow` authority attempt pinned pi-oracle `pro_extended` without a user prompt. Explicit provider restrictions may omit `openai` data egress or the exact `chatgpt-pro-web-asxst0rm` access profile. Its output has no reviewer standing, never blocks closure, receives no peer output, and never substitutes for a qualified lane. Missing grants and every operational failure are persisted as nonblocking outcomes under `lrhe-data/oracle-shadow/`, so browser automation can accumulate evidence without becoming part of the council availability contract.
 
@@ -352,8 +356,8 @@ Conflating experiment membership with live dispatch turns evaluation lanes into
 unapproved reviewers and makes independent roles look like votes. `panels.yaml`
 therefore owns experiments only; `qualification.yml` owns live dispatch.
 
-qualification.py fails closed unless schema version 12, panel v9, exactly the GPT
-and Claude lead profiles, one strong critic, nonempty supplements,
+qualification.py fails closed unless schema version 13, panel v10, exactly the GPT
+and Claude lead profiles, at least one strong critic, nonempty supplements,
 dispatch/evaluation flags, canary results, read-only proof, agents, and selectors
 are internally consistent. Each profile rejects a same-family strong critic or
 supplement, duplicate memberships, an unavailable strong floor, and a focused
@@ -364,6 +368,10 @@ the common schema/read-only gates and its passed architecture quality scope,
 the Fable 5 cohort that `fable-architecture-v2` names as its cohort policy, through
 a validated standing-amendment chain; its `security-review` scope stays ineligible.
 targeted-refuter returns only its separately configured global pool.
+
+The v13/panel-v10 activation changes strongCritic cardinality from one to
+one-or-more and focused selection from positional to role-based standing.
+Manifest schema version 10 and its shape are unchanged.
 
 `initial` is the full-council resolution, not a record mode: it resolves any record the
 gate answers `full-council` for: `design`, `initial`, `material-redesign`, or the

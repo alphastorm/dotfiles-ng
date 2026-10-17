@@ -37,16 +37,18 @@ reviewer prose:
   or substitute on the family;
 - manifest leadFamily records the supplied accountable lead lineage. Only gpt
   and claude profiles exist; Gemini and Grok cannot drive a council;
-- strongCritic selects exactly one reciprocal cross-family assurance anchor:
-  Opus CVP for a GPT lead or Daybreak Blue for a Claude lead;
-- supplements selects Gemini 3.8 Flash and Grok 4.7 on every full council.
-  They are cross-family supplemental evidence: useful for fast sanity and cheap
-  decorrelation, but unable to rescue the independent floor or break a dispute.
-  The strong critic and supplements are pairwise distinct by model family and
+- strongCritic selects one or more required cross-family independent reviewers:
+  the reciprocal critic first — Opus CVP for a GPT lead or Daybreak Blue for a
+  Claude lead — then Gemini 4 Argon for both leads. Every member sits on every
+  focused review and full council;
+- supplements selects Grok 4.7 on every full council. It is cross-family
+  supplemental evidence: useful for cheap decorrelation, but unable to rescue
+  the independent floor or break a dispute.
+  The strong critics and supplements are pairwise distinct by model family and
   correlation group;
 - focusedSupplements names the supplements that also sit on every focused
   review: Grok 4.7 for both leads. Each member must be in the same profile's
-  supplements and keeps that supplemental standing beside the strong critic;
+  supplements and keeps that supplemental standing beside every strong critic;
 - architectureSpecialists is additive and record-selected. Eligible Fable is
   supplemental whether cross-family or same-lineage, and its absence never
   shrinks the unconditional council. An architecture-lens domain activates it;
@@ -56,8 +58,8 @@ reviewer prose:
   full council and CVP-bound Mythos 5.1 on every Claude full council, with
   same_lineage_blind_sample and supplemental_evidence standing. Each lane keeps
   its own security qualification and exact model/access profile; it never
-  substitutes for the strong critic or becomes a same-family ordinary
-  supplement. Focused reciprocal critics and targeted refuters are unchanged;
+  substitutes for a strong critic or becomes a same-family ordinary supplement.
+  Reciprocal-only replay and targeted refuters are unchanged;
 - ChatGPT Pro Web through pi-oracle remains outside liveDispatch but is attempted
   asynchronously for every full council. The separate oracleShadow authority has
   no standing and no effect on closure, retries, or reviewer substitution. It is
@@ -70,7 +72,7 @@ reviewer prose:
 Before dispatch, in addition to the hosted-material floor in `SKILL.md`:
 
 1. Read skill://critical-review/qualification.yml. A reviewer is enabled only when its reviewer_id is in the selected profile or required global group, dispatchEnabled is true, its canary and read-only gates pass, and its exact selector resolves. Fable additionally needs a passed scope receipt for the requested architecture domain.
-2. For ordinary cloud-permitted work, populate `provider_data_allowlist` and `reviewer_access_profile_allowlist` from the complete deterministic candidate set for the selected class and lead-family profile. Match access_profile, not provider_route. An explicit provider restriction may only narrow those generated grants; it never triggers Ask or model substitution. A missing generated grant on the strong critic, an always-on supplement, or lead-family security fails resolution; a record-selected architecture specialist is skipped with every reason recorded.
+2. For ordinary cloud-permitted work, populate `provider_data_allowlist` and `reviewer_access_profile_allowlist` from the complete deterministic candidate set for the selected class and lead-family profile. Match access_profile, not provider_route. An explicit provider restriction may only narrow those generated grants; it never triggers Ask or model substitution. A missing generated grant on any strong critic, an always-on supplement, or lead-family security fails resolution; a record-selected architecture specialist is skipped with every reason recorded.
 
 A missing, disabled, timed-out, schema-invalid, restricted, or unqualified reviewer is missing, never approved. Do not substitute another model or ask the user to pick one. An architecture specialist the resolver did not select is not_selected/ineligible. Any selected supplemental_evidence row remains additive: it cannot rescue the independent floor, break a disagreement, or earn a retry that the strong critic would not get.
 
@@ -463,7 +465,7 @@ Evidence compatibility is executable policy:
   must carry the same complete bundle for that member, while every repository
   member still requires the bound commit and files.
 
-A focused preparation uses the same command with `--review-class focused`; the resolver infers the profile's reciprocal strong critic followed by its `focusedSupplements` and rejects any caller-supplied reviewer choice. It has no panel manifest. A targeted-refuter
+A focused preparation uses the same command with `--review-class focused`; the resolver infers every strong critic in profile order (the reciprocal critic, then Gemini 4 Argon), followed by its `focusedSupplements` (Grok), and rejects any caller-supplied reviewer choice. It has no panel manifest. A targeted-refuter
 preparation uses `--review-class targeted-refuter`, requires the remediation
 record, and infers the complete fixed pool; callers do not name or filter it.
 Packet, scope, repository, subject, receipt, and envelope arguments retain the
@@ -476,8 +478,9 @@ surface is internal `verify-task`, invoked by the Task policy gate against an
 existing `prepare` envelope.
 
 The review class is a completeness contract, not a label. `initial` is exactly
-the manifest's selected council; `focused` is exactly the reciprocal strong
-critic followed by the profile's `focusedSupplements`; `targeted-refuter` is the complete fixed refutation pool. Standing remains
+the manifest's selected council; `focused` is every strong critic in profile
+order followed by the profile's `focusedSupplements`; `replay` is only the first,
+reciprocal strong critic; `targeted-refuter` is the complete fixed refutation pool. Standing remains
 resolver-owned: `selectionClass`, `role`, `independence_class`, and `authority`
 come from the fixed live authority and cannot be caller-supplied.
 
@@ -501,7 +504,7 @@ it. Every `skipped` entry retains its sorted `reasonCodes` and is reported as
 ### Canonical Task boundary
 OMP uses one canonical batch Task shape for every review class: exactly `i`,
 `context`, and `tasks`. A targeted refuter is a one-item batch and a focused
-review is the strong critic plus its focused supplements; never add a padding
+review is every strong critic plus its focused supplements; never add a padding
 reviewer. `context` is:
 
 ```text
@@ -771,9 +774,9 @@ and disclosed to the reviewer — never by spawning a reviewer beside the dispat
 gate:
 
 ```bash
-./lrhe/canary.py trace-dispatch --reviewer gemini --lead-family gpt \
+./lrhe/canary.py trace-dispatch --reviewer gemini-argon --lead-family gpt \
   --probe live-repository-v6 --fixture lrhe-data/repository-canary-parse.py \
-  --workdir /tmp/critical-review-canary-gemini
+  --workdir /tmp/critical-review-canary-gemini-argon
 ```
 
 That commits the declared fixture into a throwaway repository, writes the probe
@@ -794,8 +797,8 @@ receipts remain valid only for unbound lanes.
 
 ```bash
 ./lrhe/canary.py trace-receipt --trace <session.jsonl> \
-  --agent-definition ~/.omp/agent/agents/review-gemini.md --agent review-gemini \
-  --selector google-antigravity/gemini-3.8-flash:high \
+  --agent-definition ~/.omp/agent/agents/review-gemini-argon.md --agent review-gemini-argon \
+  --selector google-antigravity/gemini-4-argon:high \
   --evidence-delivery repository \
   --out lrhe-data/standing-amendment-vN/<amendment-id>.trace-receipt.json
 ```

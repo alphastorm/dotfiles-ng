@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "lrhe/panel-selection.schema.json",
   "title": "Critical Review Panel Selection",
-  "description": "One resolver-owned council roster with one strong critic, cross-family supplements, explicitly qualified lead-family security, and record-selected architecture specialists, including on security-touching subjects.",
+  "description": "One resolver-owned council roster with one or more required strong critics, cross-family supplements, explicitly qualified lead-family security, and record-selected architecture specialists, including on security-touching subjects.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "schemaVersion": { "const": 10 },
-    "panelId": { "const": "critical-review-primary-v9" },
+    "panelId": { "const": "critical-review-primary-v10" },
     "mode": { "enum": ["initial", "targeted-refuter"] },
     "leadFamily": { "enum": ["gpt", "claude"] },
     "reviewRecordPath": { "type": "string", "pattern": "^/" },
