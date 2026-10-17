@@ -54,9 +54,8 @@ from pathlib import Path
 from typing import Mapping, Sequence, cast
 
 try:
-    from jsonschema import Draft202012Validator
-
     import qualification
+    from jsonschema import Draft202012Validator
 except ModuleNotFoundError:
     venv_python = Path(__file__).resolve().parent / ".venv/bin/python"
     if (
@@ -163,6 +162,81 @@ CANARY_PROBE_DISCLOSURE = (
 # presence. A gitlink (160000) is refused for the same reason -- the submodule's
 # contents are not in this commit at all.
 REGULAR_BLOB_MODES = ("100644", "100755")
+REVIEW_POLICY_PATH = "REVIEW.md"
+RISK_FLOORS = ("lead-verification", "focused", "full-council")
+PROTECTED_REVIEW_INPUTS = frozenset(
+    {"AGENTS.md", "CLAUDE.md", "PRD.md", "docs/threat-model.md", REVIEW_POLICY_PATH}
+)
+FOCUSED_REVIEW_INPUTS = frozenset(
+    {
+        "justfile",
+        "pyproject.toml",
+        "uv.lock",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "scripts/ci-paths.py",
+        "scripts/review-verdict.py",
+        "scripts/check-architecture.py",
+        "scripts/export-review-pack.py",
+        "scripts/prove-review-pack.py",
+        "scripts/review-pack.Dockerfile",
+        "scripts/validate-routine-tasks.py",
+    }
+)
+API_REVIEW_COMPONENTS = frozenset(
+    {
+        "auth",
+        "authentication",
+        "authorization",
+        "authority",
+        "secret",
+        "secrets",
+        "credential",
+        "credentials",
+        "permission",
+        "permissions",
+        "egress",
+        "policy",
+        "budget",
+        "budgets",
+        "accounting",
+        "delivery",
+        "github",
+    }
+)
+API_REVIEW_MODULES = frozenset(
+    {
+        "platform/owner_gate.py",
+        "platform/local_session.py",
+        "platform/dependencies.py",
+        "platform/config.py",
+        "platform/centaur_transport.py",
+        "platform/cluster_backup.py",
+        "platform/alpha_import.py",
+        "platform/beta_lineage.py",
+        "platform/transactions.py",
+        "engineering/project_presence.py",
+        "engineering/repository_profile.py",
+        "engineering/runtime_profile.py",
+        "engineering/live_execution.py",
+        "engineering/work_item_execution.py",
+        "engineering/work_item_execution_service.py",
+        "engineering/check_dispatch.py",
+        "engineering/check_runner.py",
+        "engineering/checks_runner.py",
+        "engineering/upstream_trigger.py",
+    }
+)
+LEAD_REVIEW_PREFIXES = (
+    "apps/api/tests/",
+    "deploy/tests/",
+    "deploy/qualification/",
+    "deploy/checkpoint/",
+    "deploy/legacy/",
+    "deploy/archive/",
+    "docs/qualification-evidence/",
+)
 
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _COMMIT_HEX = re.compile(r"[0-9a-f]{40}")
@@ -427,20 +501,104 @@ def _repository_files(values: Sequence[object]) -> tuple[str, ...]:
     return tuple(sorted(files))
 
 
-def _git(repo: Path, *args: str) -> str:
+def risk_floor(paths: Sequence[str]) -> str:
+    """Return the maximum deterministic floor for canonical changed paths.
+
+    This is a path-only helper, not an assurance verdict or a roster selector.
+    Callers supply the complete delta, including old and new rename paths;
+    supporting context files are not changed paths. No model label lowers it.
+    """
+
+    floor = 0
+    for path in _repository_files(paths) if paths else ():
+        if path in PROTECTED_REVIEW_INPUTS:
+            floor = 2
+            continue
+        if path.startswith(LEAD_REVIEW_PREFIXES) or path.endswith(
+            (".test.ts", ".test.tsx", ".test.js", ".test.mjs")
+        ):
+            continue
+        if (
+            path in FOCUSED_REVIEW_INPUTS
+            or path.startswith(
+                ("deploy/", "apps/api/migrations/", ".github/workflows/", ".github/actions/")
+            )
+        ):
+            floor = max(floor, 1)
+        elif path.startswith("apps/api/src/carrythrough/"):
+            module = path.removeprefix("apps/api/src/carrythrough/")
+            components = set(re.split(r"[/_.-]", module))
+            if module in API_REVIEW_MODULES or components & API_REVIEW_COMPONENTS:
+                floor = max(floor, 1)
+    return RISK_FLOORS[floor]
+
+
+def _git_bytes(repo: Path, *args: str) -> bytes:
     try:
         completed = subprocess.run(
             ("git", "-C", str(repo), *args),
             capture_output=True,
-            text=True,
             check=False,
         )
     except OSError as exc:
         raise DispatchError(f"git is not runnable: {exc}") from exc
     if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
+        detail = (completed.stderr.strip() or completed.stdout.strip()).decode(
+            "utf-8", errors="replace"
+        )
         raise DispatchError(f"git {' '.join(args)} failed in {repo}: {detail}")
     return completed.stdout
+
+
+def _git(repo: Path, *args: str) -> str:
+    return _git_bytes(repo, *args).decode("utf-8")
+
+
+def repository_review_policy(subject: FrozenSubject) -> tuple[str, str] | None:
+    """Load optional root policy from the subject commit, never caller prose.
+
+    The task/envelope digest binds these bytes and verify-task derives them
+    again. Reading the Git blob preserves exact UTF-8 bytes (including CRLF)
+    and never follows a policy symlink outside the repository.
+    """
+
+    if subject.kind != REPOSITORY_KIND:
+        return None
+    repo = cast(Path, subject.repository_path)
+    commit = cast(str, subject.subject_commit)
+    entry = _git(repo, "ls-tree", "-z", "--full-tree", commit, "--", REVIEW_POLICY_PATH)
+    if not entry:
+        return None
+    meta, separator, name = entry.rstrip("\0").partition("\t")
+    fields = meta.split(" ")
+    if (
+        not separator
+        or name != REVIEW_POLICY_PATH
+        or len(fields) != 3
+        or fields[0] not in REGULAR_BLOB_MODES
+        or fields[1] != "blob"
+    ):
+        raise DispatchError(f"{REVIEW_POLICY_PATH} must be one committed regular UTF-8 file")
+    raw = _git_bytes(repo, "cat-file", "blob", fields[2])
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise DispatchError(f"{REVIEW_POLICY_PATH} is not UTF-8 text") from exc
+    if not text.strip():
+        raise DispatchError(f"{REVIEW_POLICY_PATH} is empty")
+    return text, _digest_bytes(raw)
+
+
+def repository_review_policy_sections(subject: FrozenSubject) -> list[str]:
+    policy = repository_review_policy(subject)
+    if policy is None:
+        return []
+    text, sha256 = policy
+    return [
+        f"# Repository review policy ({REVIEW_POLICY_PATH}, sha256 {sha256})",
+        text,
+        "",
+    ]
 
 
 def verify_repository(repository_path: Path, subject_commit: str, files: Sequence[str]) -> None:
@@ -1835,6 +1993,7 @@ def canonical_task_text(
         "These values were resolved from the live qualification authority and are bound to "
         f"receipt {receipt_sha256}. Never infer, choose, or renegotiate your own standing.",
         "",
+        *repository_review_policy_sections(subject),
         f"# Assurance scope (verified bytes, sha256 {subject.scope_sha256})",
         verified.scope_text.rstrip("\n"),
         "",
@@ -1923,6 +2082,7 @@ def canonical_oracle_shadow_prompt(
         "Read no other path. Do not modify files or inspect peer output. The archive is built ",
         "from a detached worktree at the bound commit, not the caller's mutable working tree.",
         "",
+        *repository_review_policy_sections(subject),
         f"# Assurance scope (verified bytes, sha256 {subject.scope_sha256})",
         verified.scope_text.rstrip("\n"),
         "",

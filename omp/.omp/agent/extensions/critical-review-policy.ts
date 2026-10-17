@@ -262,7 +262,7 @@ export async function evaluateTaskDispatch(
 	const marker = parseDispatchMarker(rawInput.context);
 	if (!marker) {
 		return blocked(
-			`the task context is not an exact ${DISPATCH_MARKER_HEADER} marker; dispatch reviewers through review_dispatch.py.`,
+			`the task context is not an exact ${DISPATCH_MARKER_HEADER} marker; use review_dispatch.py prepare, which binds the repository's committed REVIEW.md when present.`,
 		);
 	}
 

@@ -19,6 +19,16 @@ Do not select a full council merely because work is P0, mentions security, uses 
 
 This is deterministic lead operation, not a new artifact, schema, service, user choice, or authorization gate. Perform it before `epoch.py scaffold`, record creation, freeze, receipts, or packet construction.
 
+When the repository has a root `REVIEW.md`, read it before selection and apply
+its deterministic changed-path risk floor; a model may raise that floor, never
+lower it. Select the maximum of that minimum and the consequence-based class
+below. The portable `lrhe/review_dispatch.py` exposes `risk_floor(paths)` for
+Carrythrough's path rules. Use changed paths, not the supporting-context list.
+`prepare` embeds the repository's committed `REVIEW.md` bytes and SHA-256 in
+every task, and `verify-task` reconstructs them before dispatch. Packet-only
+review carries applicable repository policy inside its immutable packet.
+This policy supplements repository authority; it never authorizes an effect.
+
 State concisely:
 
 1. the current outcome or decision;
