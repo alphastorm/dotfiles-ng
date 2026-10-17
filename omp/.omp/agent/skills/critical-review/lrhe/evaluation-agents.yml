@@ -1,3 +1,4 @@
 task:
   disabledAgents:
+    - review-gemini
     - review-minimax-floor

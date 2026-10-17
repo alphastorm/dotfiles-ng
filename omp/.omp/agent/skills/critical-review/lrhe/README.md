@@ -98,7 +98,9 @@ omp --config "$L/evaluation-agents.yml"
 ```
 
 The overlay re-enables evaluation lanes but keeps `review-minimax-floor` hidden
-because its provider canary and read-only qualification failed. Discovery still
+because its provider canary and read-only qualification failed, and
+`review-gemini` hidden because Gemini 3.8 Flash is retired from review and
+evaluation alike. Discovery still
 does not authorize live dispatch, tool use, repository mutation, or a provider
 subscription; the qualification resolver and panel manifest remain authoritative.
 
