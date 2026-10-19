@@ -36,6 +36,11 @@ if [ "$OS" == "Darwin" ]; then
     fi
 
     eval "$("$brew_executable" shellenv)"
+    # shellenv prints nothing when PATH already starts with Homebrew's bin and
+    # sbin, as in a login shell that read only ~/.zprofile, so it can leave the
+    # prefix unset.
+    HOMEBREW_PREFIX=${HOMEBREW_PREFIX:-$("$brew_executable" --prefix)}
+    export HOMEBREW_PREFIX
   }
 
   # A check installs nothing, Homebrew included.
