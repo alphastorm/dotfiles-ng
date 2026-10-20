@@ -525,11 +525,17 @@ the whole concurrent council. Do not detach reviewers, inspect `hub` jobs, or
 poll/sleep for verdicts. No reviewer payload may enter the lead's context or a
 peer-visible file until every member has settled.
 
-The policy gate records the envelope as in flight before execution, blocks
-concurrent or completed replay in the same session, and opens the one
-byte-identical transport retry only after the Task tool returns a terminal
-error. This state follows the protected Task lifecycle rather than the enclosing
-eval lifecycle, so an outer nonterminal transition cannot authorize redispatch.
+The policy gate records the envelope as in flight before execution and refuses
+any second call while one is unresolved. An envelope's first call must be its
+complete batch. When a call settles, the gate reads every seat from the Task
+result details, whatever the call's error flag says: a missing or aborted row,
+or a nonzero exit, is a failed seat. It writes the raw result, each seat's
+outcome, and `retryTaskInput`, the verifier-approved items of the seats that may
+still run, to `<envelope-stem>.attempt-<n>.json` beside the envelope; a later
+session rebuilds the budget from those records. A later call is admitted only as
+an unchanged, order-preserving subset of failed seats, each at most once. This
+state follows the protected Task lifecycle rather than the enclosing eval
+lifecycle, so an outer nonterminal transition cannot authorize redispatch.
 
 After the same final verifier approves the canonical Task input, the policy reads
 the envelope's resolver-derived `oracleShadow` state. A selected lane submits
@@ -544,7 +550,7 @@ every council keeps a separate row under `lrhe-data/oracle-shadow/`. Selected,
 skipped, disabled, launch-failed, launch-outcome-unknown, collector-timeout,
 schema-invalid, and terminal job outcomes are evidence for later evaluation only.
 The launch is not awaited by Task, receives no reviewer output, cannot authorize
-a retry, and an identical Task transport retry reuses the durable request or job.
+a retry, and a Task retry reuses the durable request or job.
 
 The extension treats every Task item whose agent name starts with `review-` as
 protected. A protected or mixed call without the exact
@@ -614,7 +620,7 @@ dispatch-level failure may be retried:
 | Outcome | Retry | Final state |
 |---|---|---|
 | Resolver did not select a conditional critic | no dispatch | `not_selected/ineligible` |
-| The Task gate refused the canonical call, or a child died or was interrupted before any terminal output | exactly one byte-identical retry, after `epoch.py recheck` and the full frozen-record gate both pass again | `completed`, or `missing/transport_failure` |
+| The Task gate refused the canonical call, or a child died or was interrupted before any terminal output | one retry, after `epoch.py recheck` and the full frozen-record gate both pass again: resubmit a refused call unchanged, or a failed seat alone from the latest attempt record's `retryTaskInput` | `completed`, or `missing/transport_failure` |
 | Explicit provider-policy refusal | none | `missing/provider_policy_refusal` |
 | Terminal output violates the strict schema | none | `invalid/schema_invalid` |
 | Served model differs from the exact requested selector | none, and never accepted | `invalid/model_mismatch` |
@@ -626,17 +632,19 @@ recovery allowance exists for transport failures, not for provider policy.
 Record the refusal category and attempt metadata in the close report and continue
 with the council that is already running.
 
-The transport allowance is exactly one total retry per member per epoch. Re-run
-`epoch.py recheck` and the full frozen-record gate
-(`./lrhe/review_sequence.py review-record.json`), then resubmit the exact
-`task_input` that `verify-task` regenerates from the same envelope. A retry
-reuses the existing envelope: `prepare` never overwrites one, and preparing a
-fresh envelope starts a new epoch rather than a retry. Never reword
-or reframe a task, change the frozen subject or evidence, reduce scope, change
-evidence delivery, lower thinking level, or substitute a model or family.
-If that identical retry also fails, the member is `missing` for the epoch. Never
-redispatch to shop for a different answer, and never let one member's refusal
-cause another family to run twice.
+The transport allowance is exactly one total retry per member per epoch, and the
+gate enforces it per seat. Re-run `epoch.py recheck` and the full frozen-record
+gate (`./lrhe/review_sequence.py review-record.json`), then submit the latest
+attempt record's `retryTaskInput` unchanged: it carries only the failed seats, so
+a member that completed never runs twice. The gate admits any failed seat, so
+the lead declines the retry for a provider-policy refusal or schema-invalid
+terminal output. A retry reuses the existing envelope: `prepare` never
+overwrites one, and preparing a fresh envelope starts a new epoch rather than a
+retry. Never reword or reframe a task, change the frozen subject or evidence,
+reduce scope, change evidence delivery, lower thinking level, or substitute a
+model or family. If that retry also fails, the member is `missing` for the
+epoch. Never redispatch to shop for a different answer, and never let one
+member's refusal cause another family to run twice.
 
 ## Finding ledger
 

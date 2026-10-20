@@ -1,10 +1,13 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import {
 	launchOracleShadow,
+	readJson,
 	resumeOracleShadowCollectors,
+	writeJsonOnce,
 } from "../skills/critical-review/lrhe/oracle-shadow.ts";
 import { isJsonObject } from "../skills/critical-review/lrhe/json-object.ts";
 
@@ -80,15 +83,27 @@ export type LaunchOracleShadow = (
 	ctx: ExtensionContext,
 ) => Promise<void>;
 
-export type TaskDecision =
+/** A verified protected call carries its delivered input, each item's canonical seat, and the full batch. */
+export type DispatchDecision =
 	| { block: true; reason: string }
-	| { input: DeliveredTaskInput }
+	| { input: DeliveredTaskInput; seats: number[]; canonical: CanonicalTaskInput }
 	| undefined;
 
-interface DispatchAttempt {
-	activeCallId: string | undefined;
+/** Schema of the record the gate writes beside an envelope for each of its settled Task calls. */
+export const TASK_ATTEMPT_SCHEMA = "critical-review-task-attempt-v1";
+
+/** One canonical seat's budget: it runs once and, after failing, at most once more. */
+interface SeatState {
 	attempts: number;
-	completed: boolean;
+	failed: boolean;
+}
+
+interface EnvelopeState {
+	envelopePath: string;
+	canonical: CanonicalTaskInput;
+	seats: SeatState[];
+	settledCalls: number;
+	activeCallId: string | undefined;
 }
 
 function blocked(reason: string): { block: true; reason: string } {
@@ -239,12 +254,14 @@ export const verifyTaskViaSkill: VerifyTask = (marker) =>
 /**
  * Gate for parent `task` calls. Reviewer batches must contain only reviewer
  * items and carry the exact context marker. A single reviewer uses the same
- * batch shape with one item. Calls with no reviewer pass.
+ * batch shape with one item. Calls with no reviewer pass. A verified call may
+ * carry any unchanged, order-preserving subset of the canonical seats; which
+ * seats an envelope may still run is the lifecycle's decision, not this one.
  */
 export async function evaluateTaskDispatch(
 	rawInput: unknown,
 	verify: VerifyTask = verifyTaskViaSkill,
-): Promise<TaskDecision> {
+): Promise<DispatchDecision> {
 	if (!isJsonObject(rawInput)) return undefined;
 	const tasks = rawInput.tasks;
 	if (!Array.isArray(tasks)) {
@@ -278,14 +295,75 @@ export async function evaluateTaskDispatch(
 	if (!canonical) {
 		return blocked("the verifier did not emit a strict task_input object.");
 	}
-	const { i: _intent, ...withoutIntent } = canonical;
-	const delivered: DeliveredTaskInput = Object.hasOwn(rawInput, "i") ? canonical : withoutIntent;
+	const seats: number[] = [];
+	let next = 0;
+	for (const item of tasks) {
+		while (next < canonical.tasks.length && !deepEqual(item, canonical.tasks[next])) next += 1;
+		if (next === canonical.tasks.length) {
+			return blocked(
+				"this call does not match the verifier-approved canonical dispatch.",
+			);
+		}
+		seats.push(next);
+		next += 1;
+	}
+	const selected: CanonicalTaskInput = {
+		...canonical,
+		tasks: canonical.tasks.filter((_, seat) => seats.includes(seat)),
+	};
+	const { i: _intent, ...withoutIntent } = selected;
+	const delivered: DeliveredTaskInput = Object.hasOwn(rawInput, "i") ? selected : withoutIntent;
 	if (!deepEqual(rawInput, delivered)) {
 		return blocked(
 			"this call does not match the verifier-approved canonical dispatch.",
 		);
 	}
-	return { input: delivered };
+	return { input: delivered, seats, canonical };
+}
+
+/** `<envelope-stem>.attempt-<n>.json`: the record of an envelope's n-th settled Task call. */
+export function attemptPath(envelopePath: string, attempt: number): string {
+	return join(dirname(envelopePath), `${basename(envelopePath, ".json")}.attempt-${attempt}.json`);
+}
+
+/**
+ * Rebuilds an envelope's per-seat budget from the attempt records beside it, so a restarted
+ * process can retry a failed seat alone and never reruns a seat that completed.
+ */
+async function loadEnvelopeState(
+	marker: DispatchMarker,
+	canonical: CanonicalTaskInput,
+): Promise<EnvelopeState> {
+	const seats: SeatState[] = canonical.tasks.map(() => ({ attempts: 0, failed: false }));
+	let settledCalls = 0;
+	for (;;) {
+		const path = attemptPath(marker.envelopePath, settledCalls + 1);
+		let record: Record<string, unknown>;
+		try {
+			record = await readJson(path);
+		} catch (error) {
+			if (isJsonObject(error) && error.code === "ENOENT") break;
+			throw error;
+		}
+		if (
+			record.schema !== TASK_ATTEMPT_SCHEMA ||
+			record.envelopeSha256 !== marker.envelopeSha256 ||
+			!Array.isArray(record.seats)
+		) {
+			throw new Error(`${path} is not an attempt record of this envelope`);
+		}
+		for (const entry of record.seats) {
+			if (!isJsonObject(entry) || typeof entry.seat !== "number" || typeof entry.failed !== "boolean") {
+				throw new Error(`${path} has a malformed seat outcome`);
+			}
+			const seat = seats[entry.seat];
+			if (!seat) throw new Error(`${path} records a seat this envelope does not have`);
+			seat.attempts += 1;
+			seat.failed = entry.failed;
+		}
+		settledCalls += 1;
+	}
+	return { envelopePath: marker.envelopePath, canonical, seats, settledCalls, activeCallId: undefined };
 }
 
 /**
@@ -298,8 +376,13 @@ export default function criticalReviewPolicy(
 	verify: VerifyTask = verifyTaskViaSkill,
 	launchShadow: LaunchOracleShadow = launchOracleShadow,
 ): void {
-	const dispatchAttempts = new Map<string, DispatchAttempt>();
-	const callDispatches = new Map<string, string>();
+	// Keyed by envelope digest, so a path alias shares one budget; calls racing on an envelope's
+	// first sight share one load, and so one state.
+	const envelopes = new Map<string, Promise<EnvelopeState>>();
+	const activeCalls = new Map<
+		string,
+		{ envelope: EnvelopeState; envelopeSha256: string; seats: number[] }
+	>();
 
 	pi.on("tool_call", async (event, ctx) => {
 		const prompt = ctx.getSystemPrompt();
@@ -327,43 +410,133 @@ export default function criticalReviewPolicy(
 		if (!decision || "block" in decision) return decision;
 		const marker = parseDispatchMarker(decision.input.context);
 		if (!marker) return blocked("the verified dispatch marker disappeared.");
-		// The digest owns one attempt budget; a path alias must not mint a fresh identity.
-		const dispatchKey = marker.envelopeSha256;
-		const prior = dispatchAttempts.get(dispatchKey);
-		if (prior?.activeCallId) {
+		let loading = envelopes.get(marker.envelopeSha256);
+		if (!loading) {
+			loading = loadEnvelopeState(marker, decision.canonical);
+			envelopes.set(marker.envelopeSha256, loading);
+		}
+		let envelope: EnvelopeState;
+		try {
+			envelope = await loading;
+		} catch (error) {
+			envelopes.delete(marker.envelopeSha256);
 			return blocked(
-				"this envelope already has an unresolved Task call; an outer eval background acknowledgement is not that call's result. Wait for the original call to settle instead of redispatching.",
+				`this envelope's attempt history is unreadable (${error instanceof Error ? error.message : String(error)}); repair or move that record aside before redispatching.`,
 			);
 		}
-		if (prior?.completed) {
+		// No await from here to the reservation, so two racing calls cannot both pass these checks.
+		if (envelope.activeCallId) {
 			return blocked(
-				"this envelope already completed in this session and cannot be redispatched.",
+				"this envelope already has an unresolved Task call; an outer eval background acknowledgement is not that call's result. Wait for the original call to settle instead of redispatching. A call refused before any reviewer started never settles in this process: restart OMP and continue from the envelope's attempt records.",
 			);
 		}
-		if ((prior?.attempts ?? 0) >= 2) {
+		const firstDispatch = envelope.seats.every((seat) => seat.attempts === 0);
+		if (firstDispatch && decision.seats.length !== envelope.seats.length) {
 			return blocked(
-				"this envelope already consumed its one transport retry in this session.",
+				"the first dispatch of an envelope must be its complete resolver batch.",
 			);
 		}
-		dispatchAttempts.set(dispatchKey, {
-			activeCallId: event.toolCallId,
-			attempts: (prior?.attempts ?? 0) + 1,
-			completed: false,
+		const refused = firstDispatch
+			? []
+			: decision.seats.filter(
+					(seat) => !envelope.seats[seat].failed || envelope.seats[seat].attempts !== 1,
+				);
+		if (refused.length > 0) {
+			return blocked(
+				`only a failed seat may run again, and only once, so ${refused.map((seat) => envelope.canonical.tasks[seat].agent).join(", ")} cannot. Submit the latest attempt record's retryTaskInput unchanged.`,
+			);
+		}
+		for (const seat of decision.seats) envelope.seats[seat].attempts += 1;
+		envelope.activeCallId = event.toolCallId;
+		activeCalls.set(event.toolCallId, {
+			envelope,
+			envelopeSha256: marker.envelopeSha256,
+			seats: decision.seats,
 		});
-		callDispatches.set(event.toolCallId, dispatchKey);
 		void launchShadow(marker.envelopePath, marker.envelopeSha256, ctx);
 		return { input: decision.input };
 	});
 
-	pi.on("tool_result", (event) => {
+	pi.on("tool_result", async (event) => {
 		if (event.toolName !== TASK_TOOL) return;
-		const dispatchKey = callDispatches.get(event.toolCallId);
-		if (!dispatchKey) return;
-		callDispatches.delete(event.toolCallId);
-		const attempt = dispatchAttempts.get(dispatchKey);
-		if (!attempt || attempt.activeCallId !== event.toolCallId) return;
-		attempt.activeCallId = undefined;
-		if (event.isError !== true) attempt.completed = true;
+		const call = activeCalls.get(event.toolCallId);
+		if (!call) return;
+		activeCalls.delete(event.toolCallId);
+		const { envelope, envelopeSha256, seats } = call;
+		envelope.activeCallId = undefined;
+		// Each native row carries its position in this call. The top-level error flag reflects only
+		// thrown spawns, so a seat that exited non-zero, aborted, or returned nothing is read here.
+		const results =
+			isJsonObject(event.details) && Array.isArray(event.details.results)
+				? event.details.results
+				: [];
+		const outcomes = seats.map((seat, position) => {
+			const row = results.find(
+				(result) => isJsonObject(result) && result.index === position,
+			);
+			const exitCode = isJsonObject(row) && typeof row.exitCode === "number" ? row.exitCode : null;
+			const aborted = isJsonObject(row) && row.aborted === true;
+			const failed = exitCode !== 0 || aborted;
+			envelope.seats[seat].failed = failed;
+			return {
+				seat,
+				agent: envelope.canonical.tasks[seat].agent,
+				failed,
+				exitCode,
+				aborted,
+				error: isJsonObject(row) && typeof row.error === "string" ? row.error : null,
+			};
+		});
+		envelope.settledCalls += 1;
+		const attempt = envelope.settledCalls;
+		const retrySeats = envelope.seats.flatMap((state, seat) =>
+			state.failed && state.attempts === 1 ? [seat] : [],
+		);
+		const retryTaskInput =
+			retrySeats.length === 0
+				? null
+				: {
+						...envelope.canonical,
+						tasks: envelope.canonical.tasks.filter((_, seat) => retrySeats.includes(seat)),
+					};
+		const path = attemptPath(envelope.envelopePath, attempt);
+		let recorded = false;
+		let note: string;
+		try {
+			recorded = await writeJsonOnce(path, {
+				schema: TASK_ATTEMPT_SCHEMA,
+				envelopePath: envelope.envelopePath,
+				envelopeSha256,
+				attempt,
+				toolCallId: event.toolCallId,
+				settledAt: new Date().toISOString(),
+				seats: outcomes,
+				retryTaskInput,
+				result: { isError: event.isError, content: event.content, details: event.details },
+			});
+			note = recorded
+				? `attempt ${attempt} is recorded in ${path}`
+				: `attempt ${attempt} was not recorded: ${path} already exists`;
+		} catch (error) {
+			note = `attempt ${attempt} could not be recorded (${error instanceof Error ? error.message : String(error)})`;
+		}
+		const seatSummary = outcomes
+			.map(({ agent, failed, exitCode }) =>
+				failed
+					? `${agent} failed${exitCode === null ? "" : ` (exit ${exitCode})`}`
+					: `${agent} completed`,
+			)
+			.join("; ");
+		const retry =
+			retryTaskInput === null
+				? ""
+				: ` One retry is open for ${retryTaskInput.tasks.map((task) => task.agent).join(", ")}: ${recorded ? "submit that record's retryTaskInput unchanged" : "submit the prepared task_input reduced to those items, unchanged and in order"}.`;
+		return {
+			content: [
+				...event.content,
+				{ type: "text" as const, text: `${BLOCK_PREFIX}: ${note}. ${seatSummary}.${retry}` },
+			],
+		};
 	});
 
 	pi.on("session_start", () => {
@@ -371,7 +544,7 @@ export default function criticalReviewPolicy(
 	});
 
 	pi.on("session_shutdown", () => {
-		dispatchAttempts.clear();
-		callDispatches.clear();
+		envelopes.clear();
+		activeCalls.clear();
 	});
 }

@@ -68,8 +68,10 @@ An enclosing eval call may auto-background while that protected Task is still
 running. Its `bg_*` acknowledgement, an unavailable kernel result variable, or
 failure to resolve that id through `output()` is orchestration state, not a Task
 result and not failed reviewer delivery. Keep the original call as the sole
-attempt and consume its eventual completion; never dispatch the envelope again
-while that call is unresolved.
+in-flight call and consume its eventual completion; never dispatch the envelope
+again while that call is unresolved. The gate records every settled call beside
+the envelope, so a lost kernel variable never loses the review; a failed seat
+reruns alone from that record, once, and a seat that completed never runs again.
 
 When a full council is justified, encode the same brief using the existing packet fields rather than adding keys: `goal` carries outcome and class; `requirements` carries named assets, caps, and result-validity requirements; `non_goals` carries excluded adversaries and reuse; `trust_boundaries` carries credible actors and boundaries; `rollback_contract` carries containment, recovery, and residual effects; and `rejected_alternatives_and_reasons` records disproportionate mitigations rejected before review.
 

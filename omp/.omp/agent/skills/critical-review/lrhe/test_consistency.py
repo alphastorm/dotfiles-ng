@@ -120,7 +120,6 @@ LIVE_PROTOCOL_OWNED_MECHANICS = (
     "the sole live dispatch entry point",
     "do not disclose round-one responses between reviewers",
     "one total retry per member per epoch",
-    "exactly one byte-identical retry",
     "missing/transport_failure",
     "missing/provider_policy_refusal",
     "invalid/schema_invalid",

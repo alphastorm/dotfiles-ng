@@ -1,7 +1,10 @@
 // Focused tests for the critical-review policy extension. They live in the skill package rather
 // than beside the extension because OMP auto-discovers every `.ts` under an agent `extensions/`
 // directory and would otherwise load this test module as an extension at session start.
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import criticalReviewPolicy, {
 	DISPATCH_MARKER_HEADER,
@@ -87,7 +90,12 @@ function rejectingVerifier(
 
 type ToolCall = {
 	(toolName: string, input?: unknown, toolCallId?: string): Promise<unknown>;
-	result(toolName: string, toolCallId: string, isError: boolean): Promise<unknown>;
+	result(
+		toolName: string,
+		toolCallId: string,
+		isError: boolean,
+		results?: unknown[],
+	): Promise<unknown>;
 };
 
 function gate(
@@ -116,9 +124,35 @@ function gate(
 			ctx,
 		);
 	}) as ToolCall;
-	call.result = async (toolName, toolCallId, isError) =>
-		toolResultHandler?.({ isError, toolCallId, toolName }, ctx);
+	call.result = async (toolName, toolCallId, isError, results = []) =>
+		toolResultHandler?.(
+			{ content: [], details: { results }, isError, toolCallId, toolName },
+			ctx,
+		);
 	return call;
+}
+
+const envelopeDirectories: string[] = [];
+afterEach(async () => {
+	await Promise.all(
+		envelopeDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
+	);
+});
+
+/** A canonical batch whose envelope sits in a fresh directory, so one test's attempt records never reach another. */
+async function isolatedEnvelope() {
+	const directory = await mkdtemp(join(tmpdir(), "critical-review-gate-"));
+	envelopeDirectories.push(directory);
+	const envelopePath = join(directory, "review-dispatch-envelope.json");
+	const input = {
+		...structuredClone(CANONICAL_INPUT),
+		context: `${DISPATCH_MARKER_HEADER}\nenvelope_path=${envelopePath}\nenvelope_sha256=${ENVELOPE_SHA256}`,
+	};
+	return {
+		directory,
+		input,
+		verify: approvingVerifier(JSON.stringify({ task_input: input })),
+	};
 }
 
 function reasonOf(decision: unknown): string {
@@ -323,7 +357,7 @@ describe("protected task calls", () => {
 			verify,
 		);
 
-		expect(decision).toEqual({ input: SINGLE_INPUT });
+		expect(decision).toEqual({ input: SINGLE_INPUT, seats: [0], canonical: SINGLE_INPUT });
 		expect(verify.calls).toEqual([
 			{ envelopePath: ENVELOPE_PATH, envelopeSha256: ENVELOPE_SHA256 },
 		]);
@@ -504,78 +538,124 @@ describe("protected task calls", () => {
 		expect(verify.calls).toHaveLength(1);
 	});
 
-	test("blocks unresolved and completed envelope redispatches", async () => {
+	test("blocks a redispatch while the envelope's call is unresolved", async () => {
 		const call = gate(LEAD_PROMPT);
 
 		expect(
 			await call("task", structuredClone(CANONICAL_INPUT), "review-call-1"),
 		).toEqual({ input: CANONICAL_INPUT });
-		const unresolved = await call(
-			"task",
-			structuredClone(CANONICAL_INPUT),
-			"review-call-2",
+		const unresolvedReason = reasonOf(
+			await call("task", structuredClone(CANONICAL_INPUT), "review-call-2"),
 		);
-		const unresolvedReason = reasonOf(unresolved);
 		expect(unresolvedReason).toContain("unresolved Task call");
 		expect(unresolvedReason).toContain("background acknowledgement");
-
-		await call.result("task", "review-call-1", false);
-		expect(
-			reasonOf(
-				await call(
-					"task",
-					structuredClone(CANONICAL_INPUT),
-					"review-call-3",
-				),
-			),
-		).toContain("already completed");
 	});
 
-	test("blocks a byte-identical envelope copied to another path", async () => {
+	test("admits only the complete batch as an envelope's first dispatch", async () => {
+		const call = gate(LEAD_PROMPT);
+		const subset = { ...structuredClone(CANONICAL_INPUT), tasks: [CANONICAL_INPUT.tasks[1]] };
+
+		expect(reasonOf(await call("task", subset, "review-call-1"))).toContain(
+			"complete resolver batch",
+		);
+	});
+
+	test("never reruns a completed seat, even through a byte-identical envelope copy", async () => {
+		const { input } = await isolatedEnvelope();
 		const verify: VerifyTask = async (marker) =>
 			JSON.stringify({
 				task_input: {
-					...structuredClone(CANONICAL_INPUT),
+					...structuredClone(input),
 					context: `${DISPATCH_MARKER_HEADER}\nenvelope_path=${marker.envelopePath}\nenvelope_sha256=${marker.envelopeSha256}`,
 				},
 			});
 		const call = gate(LEAD_PROMPT, verify);
 
-		expect(
-			await call("task", structuredClone(CANONICAL_INPUT), "review-call-1"),
-		).toEqual({ input: CANONICAL_INPUT });
-		await call.result("task", "review-call-1", false);
+		expect(await call("task", structuredClone(input), "review-call-1")).toEqual({ input });
+		await call.result("task", "review-call-1", false, [
+			{ index: 0, exitCode: 0 },
+			{ index: 1, exitCode: 0 },
+		]);
 
-		const copiedInput = {
-			...structuredClone(CANONICAL_INPUT),
+		const copied = {
+			...structuredClone(input),
 			context: `${DISPATCH_MARKER_HEADER}\nenvelope_path=/tmp/copied-envelope.json\nenvelope_sha256=${ENVELOPE_SHA256}`,
 		};
-		expect(
-			reasonOf(await call("task", copiedInput, "review-call-2")),
-		).toContain("already completed");
+		for (const [redispatch, id] of [
+			[structuredClone(input), "review-call-2"],
+			[copied, "review-call-3"],
+		] as const) {
+			expect(reasonOf(await call("task", redispatch, id))).toContain(
+				"only a failed seat may run again",
+			);
+		}
 	});
 
-	test("allows one retry only after a terminal Task error", async () => {
-		const call = gate(LEAD_PROMPT);
+	test("retries a seat that exited non-zero without a top-level error, alone and once", async () => {
+		// omp's blocking fan-out sets the call's error flag only for a thrown spawn (2026-10-19: an
+		// Argon 404 settled as exit 1 under a successful call, and its retry was refused).
+		const { input, verify } = await isolatedEnvelope();
+		const call = gate(LEAD_PROMPT, verify);
+		const argon = { ...structuredClone(input), tasks: [input.tasks[1]] };
+
+		expect(await call("task", structuredClone(input), "review-call-1")).toEqual({ input });
+		await call.result("task", "review-call-1", false, [
+			{ index: 0, exitCode: 0 },
+			{ index: 1, exitCode: 1, error: "Cloud Code Assist API error (404)" },
+		]);
+
+		expect(reasonOf(await call("task", structuredClone(input), "review-call-2"))).toContain(
+			"so review-claude-opus cannot",
+		);
+		expect(await call("task", structuredClone(argon), "review-call-3")).toEqual({ input: argon });
+		// The retry's only row sits at position 0 of its own call, not at its canonical seat.
+		await call.result("task", "review-call-3", false, [{ index: 0, exitCode: 1 }]);
+		expect(reasonOf(await call("task", structuredClone(argon), "review-call-4"))).toContain(
+			"so review-gemini-argon cannot",
+		);
+	});
+
+	test("treats an aborted or missing seat as failed whatever the call's error flag", async () => {
+		const { input, verify } = await isolatedEnvelope();
+		const call = gate(LEAD_PROMPT, verify);
+
+		await call("task", structuredClone(input), "review-call-1");
+		await call.result("task", "review-call-1", true, [{ index: 0, exitCode: 0, aborted: true }]);
+
+		expect(await call("task", structuredClone(input), "review-call-2")).toEqual({ input });
+	});
+
+	test("records each settled call so a restarted process retries only the failed seat", async () => {
+		const { directory, input, verify } = await isolatedEnvelope();
+		const first = gate(LEAD_PROMPT, verify);
+
+		await first("task", structuredClone(input), "review-call-1");
+		const settled = await first.result("task", "review-call-1", false, [
+			{ index: 0, exitCode: 0 },
+			{ index: 1, exitCode: 1 },
+		]);
+		const recordPath = join(directory, "review-dispatch-envelope.attempt-1.json");
+		const record = JSON.parse(await readFile(recordPath, "utf8"));
+		expect(record.retryTaskInput).toEqual({ ...input, tasks: [input.tasks[1]] });
+		expect(record.result.details.results).toHaveLength(2);
+		expect(JSON.stringify(settled)).toContain(recordPath);
+
+		const restarted = gate(LEAD_PROMPT, verify);
+		expect(reasonOf(await restarted("task", structuredClone(input), "review-call-2"))).toContain(
+			"only a failed seat may run again",
+		);
+		expect(await restarted("task", record.retryTaskInput, "review-call-3")).toEqual({
+			input: record.retryTaskInput,
+		});
+	});
+
+	test("refuses an envelope whose attempt record is unreadable", async () => {
+		const { directory, input, verify } = await isolatedEnvelope();
+		await writeFile(join(directory, "review-dispatch-envelope.attempt-1.json"), "{not JSON");
 
 		expect(
-			await call("task", structuredClone(CANONICAL_INPUT), "review-call-1"),
-		).toEqual({ input: CANONICAL_INPUT });
-		await call.result("task", "review-call-1", true);
-		expect(
-			await call("task", structuredClone(CANONICAL_INPUT), "review-call-2"),
-		).toEqual({ input: CANONICAL_INPUT });
-		await call.result("task", "review-call-2", true);
-
-		expect(
-			reasonOf(
-				await call(
-					"task",
-					structuredClone(CANONICAL_INPUT),
-					"review-call-3",
-				),
-			),
-		).toContain("consumed its one transport retry");
+			reasonOf(await gate(LEAD_PROMPT, verify)("task", structuredClone(input), "review-call-1")),
+		).toContain("attempt history is unreadable");
 	});
 });
 
