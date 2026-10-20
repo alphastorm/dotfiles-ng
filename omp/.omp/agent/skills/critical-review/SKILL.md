@@ -103,17 +103,15 @@ diagnostic-red discovery, a narrow reproduced fix, mechanical work, or when the
 same work package already has a successful preparation. This is context
 discovery, not another review seat.
 
-Use only the native RepoPromptCE MCP route. Bind the intended repository context;
-if it is absent, bind its absolute `working_dirs` with `create_if_missing=true`.
-Confirm its root with `get_file_tree`, then call `context_builder` once with
-`response_type=plan` and `export_response=true`. Cite the returned `chat_id` or
+Run it with the native recipe in the global `AGENTS.md` — owned tab, one
+eval submission that may background, native wait, validated plan, guarded
+cleanup — and never restate or vary it here. Cite the plan's `chat_id` and its
 `oracle_export_path` before mutation, packet construction, or freeze. Treat its
 selection and plan as a preservation baseline for the accountable lead to check
 against current evidence. RepoPrompt prose is never a reviewer verdict, standing,
 authorization, frozen evidence, or acceptance proof, and reviewers do not receive
-it as an independent finding. If the native route is unavailable, retry once after
-checking health and binding, then continue without it; never rerun an unresolved
-long request or invoke `rpce-cli`.
+it as an independent finding. A failed, unusable, or unresolved preparation is
+never rerun to unblock a review; continue without it.
 
 ### Runtime discovery boundary
 
