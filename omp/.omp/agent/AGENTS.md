@@ -17,9 +17,30 @@
 
 ## RepoPrompt
 
-- Use only the native RepoPromptCE MCP tools — never `rpce-cli`, shell wrappers, or Computer Use. Check `bind_context op="status"`; bind the intended `context_id`, or the absolute `working_dirs` with `create_if_missing=true`; confirm the root with `get_file_tree`.
-- Preparation is top-level-lead only, at most once per work package: before the first mutation of design work or technically complex, cross-cutting, multi-repository, predecessor-state-sensitive, or qualification-consequential implementation, call `context_builder` with `response_type="plan"` and `export_response=true`. Cite the returned `chat_id` or `oracle_export_path` before editing and disposition the plan against current evidence; it never authorizes, reviews, or accepts. Skip it for `NO_CLOUD` material, frozen candidates, diagnostic-red discovery, narrow reproduced fixes, and mechanical work; if the tool is unavailable, retry once after checking routing, then skip.
-- Before yielding, close only tabs or windows created for the work package (`manage_workspaces action="close_tab"`; `close_window=true` only for a session-created window); never delete saved workspaces or exports.
+- Use only the native RepoPromptCE MCP tools — never `rpce-cli`, shell wrappers, Computer Use, a child Task owner, polling, or an extension-owned job manager. RepoPrompt's file, search, edit, and git tools stay blocked; use the native ones.
+- Preparation is top-level-lead only, at most one successful preparation per work package: before the first mutation of design work or technically complex, cross-cutting, multi-repository, predecessor-state-sensitive, or qualification-consequential implementation. Skip it for `NO_CLOUD` material, frozen candidates, diagnostic-red discovery, narrow reproduced fixes, mechanical work, and a work package that already has one. It is context for the accountable lead: it never authorizes, reviews, or accepts.
+- Route and own. Check `bind_context op="status"`; bind the intended `context_id`, or the absolute `working_dirs` with `create_if_missing=true`; confirm the roots with `get_file_tree`. A bound tab is not task-owned, so create one with `manage_workspaces` `{"action":"create_tab","mode":"blank","bind":true,"focus":false,"window_id":<observed>,"name":"prep: <work package>"}`, record the returned tab UUID, workspace, and window, and re-check the binding and roots. Keep bind → create → verify → build sequential on one connection.
+- Submit once. Warm the JS runtime with a short ordinary cell and check that `OMP_MCP_TIMEOUT_MS` is unset (its value replaces `mcp.json`'s one-hour per-request timeout, and `0` disables it; never run this without a finite deadline). Then run one JS `eval` cell with `timeout: 0`, so the MCP deadline owns the wait, holding only this call and its checks — no loops, retries, other calls, or setup. RepoPrompt CE 1.6.0 answers in Markdown only; if these checks reject a newer build's output, inspect that output and update the recipe instead of loosening it:
+
+```js
+const r = await tool.mcp__repopromptce_context_builder({ instructions: "<task>…</task>", response_type: "plan", export_response: true });
+if (typeof r !== "string" && r.hasError) throw new Error(r.text || "RepoPrompt preparation failed");
+const t = typeof r === "string" ? r : r.text;
+// CE's plan layout; neither the echoed prompt above it nor the plan's own headings can forge this sequence.
+const head = /^## Generated Plan\n+## Chat Send\b.*\n- \*\*Chat\*\*: `([^`]+)`.*\n+### Response\n/m.exec(t);
+const hint = t.lastIndexOf("\n> 💡 ");
+const response = head && hint > head.index ? t.slice(head.index + head[0].length, hint) : "";
+const chat_id = head?.[1];
+const oracle_export_path = [...t.matchAll(/^### Oracle export\n- Path: `([^`]+)`/gm)].at(-1)?.[1];
+console.log(JSON.stringify({ chat_id, oracle_export_path })); // recovery identity, not acceptance
+if (t.startsWith("## Discover Context") || !response.trim() || /\n### Errors\n(?:- .*\n*)+$/.test(response) || !chat_id || !oracle_export_path || !(await Bun.file(oracle_export_path).exists()))
+  throw new Error("RepoPrompt did not return a completed plan with an export");
+```
+
+- A `bg_*` acknowledgement means the cell moved to the background, not that the plan finished. Keep that attempt as the only one; do independent native reads, searches, or scouts that leave the RepoPrompt binding and selection alone; then call `wait` with `{}`, and if another job or message wakes it, handle that and wait again. Never resubmit, `sleep`, poll, reset the JS runtime, or use RepoPrompt `agent_run` for it. A foreground completion is equally valid. No acknowledgement ever authorizes repeating an unresolved preparation or resolver-selected review.
+- Consume a succeeded cell only: confirm `oracle_utils` `{"op":"sessions","context_id":"<owned tab>"}` lists `chat_id`, read the export with native tools, then cite `chat_id` and `oracle_export_path` and say what you adopt or discard before editing. A failed cell or unusable plan is a failed preparation; never count it. Note the attempt in the work package's existing record: roots and revisions, window, workspace and tab, job ID if any, outcome, and chat and export identity.
+- Recovery. An unavailable route permits one retry after a health and routing check, and only while no earlier request can still be in flight. After a local cancel, timeout, or disconnect with an uncertain RepoPrompt outcome, keep the owned tab and identities, inspect only supported diagnostics, and never replay; stock OMP can itself reconnect and replay an MCP call after a stdio EOF, so exactly-once execution is not guaranteed.
+- Clean up once the result is consumed and no run remains bound: close only the recorded tab with `manage_workspaces` `{"action":"close_tab","tab":"<UUID>","window_id":<window>}`. If RepoPrompt refuses (last tab, active visible tab, live bound run), leave it and report the deferred cleanup; never set `allow_active` for cleanup, close another tab or a window, or delete saved workspaces or exports.
 
 ## Cloud processing
 
