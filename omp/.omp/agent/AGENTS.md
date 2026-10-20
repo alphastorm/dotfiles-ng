@@ -26,12 +26,14 @@
 const r = await tool.mcp__repopromptce_context_builder({ instructions: "<task>…</task>", response_type: "plan", export_response: true });
 if (typeof r !== "string" && r.hasError) throw new Error(r.text || "RepoPrompt preparation failed");
 const t = typeof r === "string" ? r : r.text;
-const plan = t.slice(t.lastIndexOf("\n## Generated Plan\n") + 1); // the echoed prompt above cannot forge it
-const chat_id = /^- \*\*Chat\*\*: `([^`]+)`/m.exec(plan)?.[1];
-const oracle_export_path = /^### Oracle export\n- Path: `([^`]+)`/m.exec(plan)?.[1];
-const response = /^### Response\n([\s\S]*?)^(?:> 💡 |### Errors$|### Oracle export$)/m.exec(plan)?.[1];
+// CE's plan layout; neither the echoed prompt above it nor the plan's own headings can forge this sequence.
+const head = /^## Generated Plan\n+## Chat Send\b.*\n- \*\*Chat\*\*: `([^`]+)`.*\n+### Response\n/m.exec(t);
+const hint = t.lastIndexOf("\n> 💡 ");
+const response = head && hint > head.index ? t.slice(head.index + head[0].length, hint) : "";
+const chat_id = head?.[1];
+const oracle_export_path = [...t.matchAll(/^### Oracle export\n- Path: `([^`]+)`/gm)].at(-1)?.[1];
 console.log(JSON.stringify({ chat_id, oracle_export_path })); // recovery identity, not acceptance
-if (/^## Discover Context/m.test(t) || !plan.startsWith("## Generated Plan") || /^### Errors$/m.test(plan) || !response?.trim() || !chat_id || !oracle_export_path || !(await Bun.file(oracle_export_path).exists()))
+if (t.startsWith("## Discover Context") || !response.trim() || /\n### Errors\n(?:- .*\n*)+$/.test(response) || !chat_id || !oracle_export_path || !(await Bun.file(oracle_export_path).exists()))
   throw new Error("RepoPrompt did not return a completed plan with an export");
 ```
 
