@@ -1,7 +1,8 @@
 // Focused tests for the critical-review policy extension. They live in the skill package rather
 // than beside the extension because OMP auto-discovers every `.ts` under an agent `extensions/`
 // directory and would otherwise load this test module as an extension at session start.
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,8 +35,8 @@ const INLINE_ISOLATED_PROMPT = [
 ];
 const LEAD_PROMPT = ["you are the lead"];
 
-const ENVELOPE_PATH =
-	"/Users/lead/.omp/critical-review/dispatch/envelope-2f9c.json";
+const DEFAULT_DIRECTORY = mkdtempSync(join(tmpdir(), "critical-review-default-"));
+const ENVELOPE_PATH = join(DEFAULT_DIRECTORY, "envelope-2f9c.json");
 const ENVELOPE_SHA256 =
 	"3f2a1b0c9d8e7f60514233445566778899aabbccddeeff00112233445566778a";
 const MARKER = `${DISPATCH_MARKER_HEADER}\nenvelope_path=${ENVELOPE_PATH}\nenvelope_sha256=${ENVELOPE_SHA256}`;
@@ -90,6 +91,7 @@ function rejectingVerifier(
 
 type ToolCall = {
 	(toolName: string, input?: unknown, toolCallId?: string): Promise<unknown>;
+	update(toolCallId: string, progress: unknown[]): Promise<unknown>;
 	result(
 		toolName: string,
 		toolCallId: string,
@@ -105,6 +107,7 @@ function gate(
 ): ToolCall {
 	let toolCallHandler: ((event: unknown, ctx: unknown) => unknown) | undefined;
 	let toolResultHandler: ((event: unknown, ctx: unknown) => unknown) | undefined;
+	let toolUpdateHandler: ((event: unknown, ctx: unknown) => unknown) | undefined;
 	const pi = {
 		on: (
 			event: string,
@@ -112,6 +115,7 @@ function gate(
 		) => {
 			if (event === "tool_call") toolCallHandler = registered;
 			if (event === "tool_result") toolResultHandler = registered;
+			if (event === "tool_execution_update") toolUpdateHandler = registered;
 		},
 	};
 	criticalReviewPolicy(pi as unknown as ExtensionAPI, verify, launchShadow);
@@ -124,6 +128,8 @@ function gate(
 			ctx,
 		);
 	}) as ToolCall;
+	call.update = async (toolCallId, progress) =>
+		toolUpdateHandler?.({ toolName: "task", toolCallId, partialResult: { details: { progress } } }, ctx);
 	call.result = async (toolName, toolCallId, isError, results = []) =>
 		toolResultHandler?.(
 			{ content: [], details: { results }, isError, toolCallId, toolName },
@@ -134,10 +140,12 @@ function gate(
 
 const envelopeDirectories: string[] = [];
 afterEach(async () => {
+	await rm(DEFAULT_DIRECTORY, { recursive: true, force: true });
 	await Promise.all(
 		envelopeDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
 	);
 });
+afterAll(async () => { await rm(DEFAULT_DIRECTORY, { recursive: true, force: true }); });
 
 /** A canonical batch whose envelope sits in a fresh directory, so one test's attempt records never reach another. */
 async function isolatedEnvelope() {
@@ -649,6 +657,17 @@ describe("protected task calls", () => {
 		});
 	});
 
+	test("a native error with zero exit is failed, never a completed critic", async () => {
+		const { input, verify } = await isolatedEnvelope();
+		const call = gate(LEAD_PROMPT, verify);
+		await call("task", input, "first");
+		await call.result("task", "first", false, [
+			{ index: 0, exitCode: 0, error: "transport failed" }, { index: 1, exitCode: 0 },
+		]);
+		const retry = { ...input, tasks: [input.tasks[0]] };
+		expect(await call("task", retry, "retry")).toEqual({ input: retry });
+	});
+
 	test("refuses an envelope whose attempt record is unreadable", async () => {
 		const { directory, input, verify } = await isolatedEnvelope();
 		await writeFile(join(directory, "review-dispatch-envelope.attempt-1.json"), "{not JSON");
@@ -656,6 +675,103 @@ describe("protected task calls", () => {
 		expect(
 			reasonOf(await gate(LEAD_PROMPT, verify)("task", structuredClone(input), "review-call-1")),
 		).toContain("attempt history is unreadable");
+	});
+
+	test("parks an unknown admitted call across restart instead of replaying its critics", async () => {
+		const { input, verify } = await isolatedEnvelope();
+		expect(await gate(LEAD_PROMPT, verify)("task", input, "original")).toEqual({ input });
+		const restarted = gate(LEAD_PROMPT, verify);
+		expect(reasonOf(await restarted("task", input, "duplicate"))).toContain("outcome unknown");
+	});
+
+	test("records progress observation separately from unavailable native phase timestamps", async () => {
+		const { directory, input, verify } = await isolatedEnvelope();
+		const call = gate(LEAD_PROMPT, verify);
+		await call("task", input, "observed");
+		await call.update("observed", [{ index: 0, status: "running", durationMs: 20 }]);
+		await call.update("observed", [{ index: 0, status: "completed", durationMs: 80 }]);
+		// Progress does not settle the call or admit a second wave, even when a seat finished.
+		expect(reasonOf(await call("task", input, "premature"))).toContain("unresolved Task call");
+		await call.result("task", "observed", false, [
+			{ index: 0, exitCode: 0, durationMs: 80 },
+			{ index: 1, exitCode: 1, durationMs: 100 },
+		]);
+		const record = JSON.parse(await readFile(join(directory, "review-dispatch-envelope.attempt-1.json"), "utf8"));
+		expect(record.seats[0]).toMatchObject({
+			outcome: "completed",
+			inputBytes: Buffer.byteLength(String(input.tasks[0].task)),
+			timing: {
+				firstProgressAt: expect.any(String),
+				terminalProgressAt: expect.any(String),
+				resultObservedAt: record.settledAt,
+				elapsedMs: 80,
+				queueWaitMs: null, startedAt: null, endedAt: null, firstTokenAt: null,
+			},
+		});
+		expect(record.seats[1]).toMatchObject({
+			outcome: "error",
+			timing: { firstProgressAt: null, terminalProgressAt: null, elapsedMs: 100 },
+		});
+		expect(record.retryTaskInput.tasks).toEqual([input.tasks[1]]);
+	});
+
+	test("keeps a required-seat failure parked after its only retry", async () => {
+		const { directory, input, verify } = await isolatedEnvelope();
+		const call = gate(LEAD_PROMPT, verify);
+		await call("task", input, "first");
+		await call.result("task", "first", false, [
+			{ index: 0, exitCode: 1 }, { index: 1, exitCode: 0 },
+		]);
+		const retry = { ...input, tasks: [input.tasks[0]] };
+		await call("task", retry, "retry");
+		await call.result("task", "retry", false, [{ index: 0, exitCode: 1 }]);
+		const record = JSON.parse(await readFile(join(directory, "review-dispatch-envelope.attempt-2.json"), "utf8"));
+		expect(record.seats[0]).toMatchObject({ failed: true, outcome: "error" });
+		expect(record.retryTaskInput).toBeNull();
+		expect(reasonOf(await gate(LEAD_PROMPT, verify)("task", retry, "third"))).toContain("only a failed seat");
+	});
+
+	test("settles required seats before supplemental and preserves both budgets across restart", async () => {
+		const { directory, input } = await isolatedEnvelope();
+		input.tasks = [
+			...input.tasks.map((task) => ({
+				...task, task: `${RESOLVER_RECEIPT_HEADER}\nreview_class=focused\nauthority=independent_evidence\n\nblind input`,
+			})),
+			{ agent: "review-grok", task: `${RESOLVER_RECEIPT_HEADER}\nreview_class=focused\nauthority=supplemental_evidence\n\nblind input` },
+		];
+		const verify = approvingVerifier(JSON.stringify({ task_input: input }));
+		const supplemental = { ...input, tasks: input.tasks.slice(2) };
+		const required = { ...input, tasks: input.tasks.slice(0, 2) };
+		const call = gate(LEAD_PROMPT, verify);
+		expect(reasonOf(await call("task", required, "out-of-order"))).toContain("supplemental");
+		expect(await call("task", supplemental, "eval-grok")).toEqual({ input: supplemental });
+		expect(await call("task", required, "direct-required")).toEqual({ input: required });
+		expect(reasonOf(await call("task", required, "duplicate-required"))).toContain("unresolved");
+		const verdict = { status: "valid", data: { summary: "done", evidence: [], unresolved: [] } };
+		await call.result("task", "direct-required", false, [
+			{ index: 0, exitCode: 0, structuredOutput: verdict },
+			{ index: 1, exitCode: 0, structuredOutput: verdict },
+		]);
+		const requiredRecord = JSON.parse(await readFile(join(directory, "review-dispatch-envelope.attempt-2.json"), "utf8"));
+		expect(requiredRecord.seats.map((seat: { outcome: string }) => seat.outcome)).toEqual(["completed", "completed"]);
+		const restarted = gate(LEAD_PROMPT, verify);
+		expect(reasonOf(await restarted("task", required, "replay-required"))).toContain("only a failed seat");
+		expect(reasonOf(await restarted("task", supplemental, "replay-grok"))).toContain("outcome unknown");
+		// Simulate release cutoff while the original supplemental call is still in flight.
+		await writeFile(join(directory, "review-dispatch-envelope.cutoff.json"), JSON.stringify({ envelopeSha256: ENVELOPE_SHA256 }));
+		await call.result("task", "eval-grok", false, [{
+			index: 0, exitCode: 0, structuredOutput: {
+				status: "valid",
+				data: { summary: "late", evidence: ["R1|P1|claim=late defect"], unresolved: [] },
+			},
+		}]);
+		const latePath = join(directory, "review-dispatch-envelope.attempt-1.late.json");
+		const late = JSON.parse(await readFile(latePath, "utf8"));
+		expect(late).toMatchObject({
+			status: "reopened-defect", automaticProductionEffect: false,
+			escalation: "urgent-lead-verification-and-risk-based-escalation",
+		});
+		expect(reasonOf(await gate(LEAD_PROMPT, verify)("task", supplemental, "third-grok"))).toContain("only a failed seat");
 	});
 });
 
