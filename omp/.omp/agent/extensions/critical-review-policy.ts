@@ -96,14 +96,21 @@ export const TASK_ATTEMPT_SCHEMA = "critical-review-task-attempt-v1";
 interface SeatState {
 	attempts: number;
 	failed: boolean;
+	active: boolean;
+	durable: boolean;
 }
 
 interface EnvelopeState {
 	envelopePath: string;
 	canonical: CanonicalTaskInput;
 	seats: SeatState[];
-	settledCalls: number;
-	activeCallId: string | undefined;
+	admittedCalls: number;
+}
+
+interface SeatTiming {
+	firstProgressAt: string | null;
+	lastProgressAt: string | null;
+	terminalProgressAt: string | null;
 }
 
 function blocked(reason: string): { block: true; reason: string } {
@@ -326,6 +333,14 @@ export function attemptPath(envelopePath: string, attempt: number): string {
 	return join(dirname(envelopePath), `${basename(envelopePath, ".json")}.attempt-${attempt}.json`);
 }
 
+function startPath(envelopePath: string, attempt: number): string {
+	return attemptPath(envelopePath, attempt).replace(/\.json$/u, ".started.json");
+}
+
+function milliseconds(value: unknown): number | null {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 /**
  * Rebuilds an envelope's per-seat budget from the attempt records beside it, so a restarted
  * process can retry a failed seat alone and never reruns a seat that completed.
@@ -334,15 +349,31 @@ async function loadEnvelopeState(
 	marker: DispatchMarker,
 	canonical: CanonicalTaskInput,
 ): Promise<EnvelopeState> {
-	const seats: SeatState[] = canonical.tasks.map(() => ({ attempts: 0, failed: false }));
-	let settledCalls = 0;
+	const seats: SeatState[] = canonical.tasks.map(() => ({ attempts: 0, failed: false, active: false, durable: false }));
+	let admittedCalls = 0;
 	for (;;) {
-		const path = attemptPath(marker.envelopePath, settledCalls + 1);
+		const path = attemptPath(marker.envelopePath, admittedCalls + 1);
 		let record: Record<string, unknown>;
 		try {
 			record = await readJson(path);
 		} catch (error) {
-			if (isJsonObject(error) && error.code === "ENOENT") break;
+			if (isJsonObject(error) && error.code === "ENOENT") {
+				const started = startPath(marker.envelopePath, admittedCalls + 1);
+				if (!existsSync(started)) break;
+				const admission = await readJson(started);
+				if (admission.schema !== "critical-review-task-start-v1" ||
+					admission.envelopeSha256 !== marker.envelopeSha256 || !Array.isArray(admission.seats)) {
+					throw new Error(`${started} is not an admission for this envelope`);
+				}
+				for (const index of admission.seats) {
+					if (!Number.isInteger(index) || !seats[index as number]) throw new Error("invalid admitted seat");
+					seats[index as number].attempts += 1;
+					seats[index as number].active = true;
+					seats[index as number].durable = true;
+				}
+				admittedCalls += 1;
+				continue;
+			}
 			throw error;
 		}
 		if (
@@ -360,10 +391,23 @@ async function loadEnvelopeState(
 			if (!seat) throw new Error(`${path} records a seat this envelope does not have`);
 			seat.attempts += 1;
 			seat.failed = entry.failed;
+			seat.durable = true;
 		}
-		settledCalls += 1;
+		admittedCalls += 1;
 	}
-	return { envelopePath: marker.envelopePath, canonical, seats, settledCalls, activeCallId: undefined };
+	return { envelopePath: marker.envelopePath, canonical, seats, admittedCalls };
+}
+
+/** Standing comes from verified task headers, never from an agent name or caller-selected flag. */
+function splitSeats(canonical: CanonicalTaskInput): { required: number[]; supplemental: number[] } | null {
+	const headers = canonical.tasks.map((task) => String(task.task).split("\n\n", 1)[0]);
+	if (!headers.every((header) => /^review_class=(focused|initial)$/mu.test(header))) return null;
+	const required: number[] = [];
+	const supplemental: number[] = [];
+	headers.forEach((header, seat) => {
+		(/^authority=independent_evidence$/mu.test(header) ? required : supplemental).push(seat);
+	});
+	return required.length && supplemental.length ? { required, supplemental } : null;
 }
 
 /**
@@ -381,7 +425,14 @@ export default function criticalReviewPolicy(
 	const envelopes = new Map<string, Promise<EnvelopeState>>();
 	const activeCalls = new Map<
 		string,
-		{ envelope: EnvelopeState; envelopeSha256: string; seats: number[] }
+		{
+			envelope: EnvelopeState;
+			envelopeSha256: string;
+			seats: number[];
+			admittedAt: string;
+			timing: SeatTiming[];
+			attempt: number;
+		}
 	>();
 
 	pi.on("tool_call", async (event, ctx) => {
@@ -421,22 +472,27 @@ export default function criticalReviewPolicy(
 		} catch (error) {
 			envelopes.delete(marker.envelopeSha256);
 			return blocked(
-				`this envelope's attempt history is unreadable (${error instanceof Error ? error.message : String(error)}); repair or move that record aside before redispatching.`,
+				`this envelope's attempt history is unreadable (${error instanceof Error ? error.message : String(error)}); reconcile the original call without deleting its history or redispatching unknown outcomes.`,
 			);
 		}
 		// No await from here to the reservation, so two racing calls cannot both pass these checks.
-		if (envelope.activeCallId) {
+		if (decision.seats.some((seat) => envelope.seats[seat].active)) {
 			return blocked(
-				"this envelope already has an unresolved Task call; an outer eval background acknowledgement is not that call's result. Wait for the original call to settle instead of redispatching. A call refused before any reviewer started never settles in this process: restart OMP and continue from the envelope's attempt records.",
+				"a selected seat already has an unresolved Task call (outcome unknown); an outer eval background acknowledgement is not that call's result. Wait for the original call to settle instead of redispatching. Restart does not clear durable admission.",
 			);
 		}
 		const firstDispatch = envelope.seats.every((seat) => seat.attempts === 0);
-		if (firstDispatch && decision.seats.length !== envelope.seats.length) {
+		const split = splitSeats(envelope.canonical);
+		const firstSupplemental = firstDispatch && split && deepEqual(decision.seats, split.supplemental);
+		const firstRequired = split && deepEqual(decision.seats, split.required) &&
+			split.required.every((seat) => envelope.seats[seat].attempts === 0) &&
+			split.supplemental.every((seat) => envelope.seats[seat].durable);
+		if (firstDispatch && decision.seats.length !== envelope.seats.length && !firstSupplemental) {
 			return blocked(
-				"the first dispatch of an envelope must be its complete resolver batch.",
+				"the first dispatch must be the complete resolver batch or its complete supplemental group; required seats follow supplemental admission.",
 			);
 		}
-		const refused = firstDispatch
+		const refused = firstDispatch || firstRequired
 			? []
 			: decision.seats.filter(
 					(seat) => !envelope.seats[seat].failed || envelope.seats[seat].attempts !== 1,
@@ -446,15 +502,57 @@ export default function criticalReviewPolicy(
 				`only a failed seat may run again, and only once, so ${refused.map((seat) => envelope.canonical.tasks[seat].agent).join(", ")} cannot. Submit the latest attempt record's retryTaskInput unchanged.`,
 			);
 		}
-		for (const seat of decision.seats) envelope.seats[seat].attempts += 1;
-		envelope.activeCallId = event.toolCallId;
+		for (const seat of decision.seats) {
+			envelope.seats[seat].attempts += 1;
+			envelope.seats[seat].active = true;
+		}
+		const attempt = ++envelope.admittedCalls;
+		const admittedAt = new Date().toISOString();
+		try {
+			const recorded = await writeJsonOnce(startPath(envelope.envelopePath, attempt), {
+				schema: "critical-review-task-start-v1",
+				envelopeSha256: marker.envelopeSha256,
+				toolCallId: event.toolCallId,
+				admittedAt,
+				seats: decision.seats,
+			});
+			if (!recorded) return blocked("durable admission already exists; outcome unknown, redispatch refused.");
+			for (const seat of decision.seats) envelope.seats[seat].durable = true;
+		} catch (error) {
+			return blocked(`durable admission could not be recorded: ${String(error)}; no dispatch admitted.`);
+		}
 		activeCalls.set(event.toolCallId, {
 			envelope,
 			envelopeSha256: marker.envelopeSha256,
 			seats: decision.seats,
+			attempt,
+			admittedAt,
+			timing: decision.seats.map(() => ({
+				firstProgressAt: null, lastProgressAt: null, terminalProgressAt: null,
+			})),
 		});
 		void launchShadow(marker.envelopePath, marker.envelopeSha256, ctx);
 		return { input: decision.input };
+	});
+
+	pi.on("tool_execution_update", (event) => {
+		if (event.toolName !== TASK_TOOL) return;
+		const call = activeCalls.get(event.toolCallId);
+		const partial = event.partialResult;
+		if (!call || !isJsonObject(partial) || !isJsonObject(partial.details)) return;
+		const progress = partial.details.progress;
+		if (!Array.isArray(progress)) return;
+		const observedAt = new Date().toISOString();
+		for (const row of progress) {
+			if (!isJsonObject(row) || !Number.isInteger(row.index)) continue;
+			const timing = call.timing[row.index as number];
+			if (!timing) continue;
+			timing.firstProgressAt ??= observedAt;
+			timing.lastProgressAt = observedAt;
+			if (["completed", "failed", "aborted"].includes(String(row.status))) {
+				timing.terminalProgressAt ??= observedAt;
+			}
+		}
 	});
 
 	pi.on("tool_result", async (event) => {
@@ -463,7 +561,7 @@ export default function criticalReviewPolicy(
 		if (!call) return;
 		activeCalls.delete(event.toolCallId);
 		const { envelope, envelopeSha256, seats } = call;
-		envelope.activeCallId = undefined;
+		const settledAt = new Date().toISOString();
 		// Each native row carries its position in this call. The top-level error flag reflects only
 		// thrown spawns, so a seat that exited non-zero, aborted, or returned nothing is read here.
 		const results =
@@ -476,7 +574,8 @@ export default function criticalReviewPolicy(
 			);
 			const exitCode = isJsonObject(row) && typeof row.exitCode === "number" ? row.exitCode : null;
 			const aborted = isJsonObject(row) && row.aborted === true;
-			const failed = exitCode !== 0 || aborted;
+			const error = isJsonObject(row) && typeof row.error === "string" ? row.error : null;
+			const failed = exitCode !== 0 || aborted || Boolean(error);
 			envelope.seats[seat].failed = failed;
 			return {
 				seat,
@@ -484,13 +583,27 @@ export default function criticalReviewPolicy(
 				failed,
 				exitCode,
 				aborted,
-				error: isJsonObject(row) && typeof row.error === "string" ? row.error : null,
+				error,
+				outcome: aborted ? "abort" : exitCode === null ? "unknown" : failed ? "error" : "completed",
+				timing: {
+					admittedAt: call.admittedAt,
+					...call.timing[position],
+					resultObservedAt: settledAt,
+					elapsedMs: isJsonObject(row) ? milliseconds(row.durationMs) : null,
+					// Native progress has no semaphore timestamps or first-token event. Do not
+					// mislabel admission-to-progress (which includes setup) as queue wait.
+					queueWaitMs: null,
+					startedAt: null,
+					endedAt: null,
+					firstTokenAt: null,
+					unavailable: "native Task does not expose per-seat queue/start/end/first-token timestamps",
+				},
+				inputBytes: Buffer.byteLength(String(envelope.canonical.tasks[seat].task), "utf8"),
 			};
 		});
-		envelope.settledCalls += 1;
-		const attempt = envelope.settledCalls;
+		const attempt = call.attempt;
 		const retrySeats = envelope.seats.flatMap((state, seat) =>
-			state.failed && state.attempts === 1 ? [seat] : [],
+			state.failed && state.attempts === 1 && (!state.active || seats.includes(seat)) ? [seat] : [],
 		);
 		const retryTaskInput =
 			retrySeats.length === 0
@@ -509,7 +622,9 @@ export default function criticalReviewPolicy(
 				envelopeSha256,
 				attempt,
 				toolCallId: event.toolCallId,
-				settledAt: new Date().toISOString(),
+				admittedAt: call.admittedAt,
+				settledAt,
+				batchDurationMs: isJsonObject(event.details) ? milliseconds(event.details.totalDurationMs) : null,
 				seats: outcomes,
 				retryTaskInput,
 				result: { isError: event.isError, content: event.content, details: event.details },
@@ -519,6 +634,38 @@ export default function criticalReviewPolicy(
 				: `attempt ${attempt} was not recorded: ${path} already exists`;
 		} catch (error) {
 			note = `attempt ${attempt} could not be recorded (${error instanceof Error ? error.message : String(error)})`;
+		}
+		// Keep the call parked if persistence failed: neither this process nor a restarted one may
+		// spend the retry budget without a durable result.
+		if (recorded) {
+			for (const seat of seats) envelope.seats[seat].active = false;
+			// A cutoff never discards a subsequent result. Persist a visible reopened defect record
+			// before returning the background completion; the record outlives delivery expiry.
+			const cutoffPath = envelope.envelopePath.replace(/\.json$/u, ".cutoff.json");
+			if (existsSync(cutoffPath)) {
+				const latePath = path.replace(/\.json$/u, ".late.json");
+				const findings = results.flatMap((row) => {
+					if (!isJsonObject(row) || !isJsonObject(row.structuredOutput) ||
+						!isJsonObject(row.structuredOutput.data)) return [];
+					const data = row.structuredOutput.data;
+					return ["evidence", "unresolved"].flatMap((key) =>
+						Array.isArray(data[key]) ? data[key] as unknown[] : []);
+				});
+				try {
+					await writeJsonOnce(latePath, {
+						schema: "critical-review-late-result-v1",
+						envelopeSha256, attempt, cutoffPath, resultPath: path,
+						status: findings.length ? "reopened-defect" : "late-result-needs-inspection",
+						findings,
+						escalation: findings.some((item) => typeof item === "string" && /\|P[01]\|/u.test(item))
+							? "urgent-lead-verification-and-risk-based-escalation" : "lead-inspection-and-disposition",
+						automaticProductionEffect: false,
+					});
+					note += `; after-cutoff result requires inspection in ${latePath}`;
+				} catch (error) {
+					note += `; late defect persistence failed (${String(error)}); result remains in ${path}, release held`;
+				}
+			}
 		}
 		const seatSummary = outcomes
 			.map(({ agent, failed, exitCode }) =>

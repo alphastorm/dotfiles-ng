@@ -111,10 +111,7 @@ LIVE_PROTOCOL_OWNED_MECHANICS = (
     "recompute the same artifact and file digests",
     "the packet context is:",
     "the manifest binds the absolute record path",
-    "until every member has settled",
-    "one gated task wave",
-    "records the envelope as in flight",
-    "submit that object verbatim as the task call",
+
     "critical_review_dispatch_v1",
     "the sole live dispatch entry point",
     "do not disclose round-one responses between reviewers",

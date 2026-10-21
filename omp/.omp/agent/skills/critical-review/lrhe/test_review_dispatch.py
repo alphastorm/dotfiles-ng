@@ -1450,7 +1450,15 @@ def test_focused_prepare_rejects_every_reviewer_override(
 def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):
     paths, argv = _record_free_prepare_args(tmp_path, material, repository)
     assert rd.main(argv) == 0
-    emitted = json.loads(capsys.readouterr().out)["task_input"]
+    prepared = json.loads(capsys.readouterr().out)
+    emitted = prepared["task_input"]
+    assert prepared["dispatch_plan"]["mode"] == "supplemental-eval-then-required-direct"
+    assert [task["agent"] for task in prepared["dispatch_plan"]["required_task_input"]["tasks"]] == [
+        "review-claude-opus", "review-gemini-argon",
+    ]
+    assert [task["agent"] for task in prepared["dispatch_plan"]["supplemental_task_input"]["tasks"]] == [
+        "review-grok",
+    ]
 
     subject = json.loads(paths["subject"].read_text(encoding="utf-8"))
     assert subject["kind"] == "repository"

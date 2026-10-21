@@ -1,0 +1,1217 @@
+{
+  "attempts": [
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "toolCallId": "batch-0",
+      "settledAt": "2026-10-20T04:01:20.876Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 681758,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-0-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 204728,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-0-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 126281,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-0-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 681746,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "0000000000000000000000000000000000000000000000000000000000000001",
+      "toolCallId": "batch-1",
+      "settledAt": "2026-10-20T06:16:04.693Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 316434,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-1-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 160968,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-1-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 80651,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-1-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 316418,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "0000000000000000000000000000000000000000000000000000000000000002",
+      "toolCallId": "batch-2",
+      "settledAt": "2026-10-20T06:43:43.403Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 667975,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-2-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 177681,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-2-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 79513,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-2-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 667967,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "0000000000000000000000000000000000000000000000000000000000000003",
+      "toolCallId": "batch-3",
+      "settledAt": "2026-10-20T06:28:43.914Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 685392,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-3-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 95193,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-3-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 118596,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-3-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 685378,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "0000000000000000000000000000000000000000000000000000000000000004",
+      "toolCallId": "batch-4",
+      "settledAt": "2026-10-20T14:15:55.282Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 525295,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-4-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 349446,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-4-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 149510,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-4-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 525283,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "0000000000000000000000000000000000000000000000000000000000000005",
+      "toolCallId": "batch-5",
+      "settledAt": "2026-10-20T14:01:46.102Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 587191,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-5-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 328564,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-5-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 237454,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-5-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 587181,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "0000000000000000000000000000000000000000000000000000000000000006",
+      "toolCallId": "batch-6",
+      "settledAt": "2026-10-20T14:34:29.916Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 487150,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-6-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 225935,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-6-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 103717,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-6-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 487136,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "0000000000000000000000000000000000000000000000000000000000000007",
+      "toolCallId": "batch-7",
+      "settledAt": "2026-10-20T19:27:43.997Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 1326234,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-7-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=initial\n",
+              "durationMs": 299767,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-7-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=initial\n",
+              "durationMs": 599123,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-7-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=initial\n",
+              "durationMs": 871446,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 3,
+              "id": "batch-7-seat-3",
+              "agent": "review-claude-mythos",
+              "assignment": "review_class=initial\n",
+              "durationMs": 1326225,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 4,
+              "id": "batch-7-seat-4",
+              "agent": "review-claude-fable",
+              "assignment": "review_class=initial\n",
+              "durationMs": 908335,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "0000000000000000000000000000000000000000000000000000000000000008",
+      "toolCallId": "batch-8",
+      "settledAt": "2026-10-20T20:15:04.181Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 1360757,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-8-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=initial\n",
+              "durationMs": 271853,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-8-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=initial\n",
+              "durationMs": 518162,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-8-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=initial\n",
+              "durationMs": 1233823,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 3,
+              "id": "batch-8-seat-3",
+              "agent": "review-claude-mythos",
+              "assignment": "review_class=initial\n",
+              "durationMs": 1060690,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 4,
+              "id": "batch-8-seat-4",
+              "agent": "review-claude-fable",
+              "assignment": "review_class=initial\n",
+              "durationMs": 1360623,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "0000000000000000000000000000000000000000000000000000000000000009",
+      "toolCallId": "batch-9",
+      "settledAt": "2026-10-20T18:41:38.162Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 1068695,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-9-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 209575,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-9-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 111899,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-9-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 1068677,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "000000000000000000000000000000000000000000000000000000000000000a",
+      "toolCallId": "batch-10",
+      "settledAt": "2026-10-20T18:20:47.097Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 1043779,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-10-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 391029,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-10-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 325715,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-10-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 1043775,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "000000000000000000000000000000000000000000000000000000000000000b",
+      "toolCallId": "batch-11",
+      "settledAt": "2026-10-20T18:59:34.572Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 903627,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-11-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 296254,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-11-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 167677,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-11-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 903596,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "000000000000000000000000000000000000000000000000000000000000000c",
+      "toolCallId": "batch-12",
+      "settledAt": "2026-10-20T19:02:34.811Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 1075656,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-12-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 278492,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-12-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 621147,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-12-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 1075653,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "000000000000000000000000000000000000000000000000000000000000000d",
+      "toolCallId": "batch-13",
+      "settledAt": "2026-10-20T19:45:26.934Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 884210,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-13-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 311002,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-13-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 413924,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-13-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 884189,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "000000000000000000000000000000000000000000000000000000000000000e",
+      "toolCallId": "batch-14",
+      "settledAt": "2026-10-20T19:40:22.182Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 1074197,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-14-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 390012,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-14-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 405787,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-14-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 1074139,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "000000000000000000000000000000000000000000000000000000000000000f",
+      "toolCallId": "batch-15",
+      "settledAt": "2026-10-20T20:22:21.492Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 1090792,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-15-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 249974,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-15-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 396735,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-15-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 1090770,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "critical-review-task-attempt-v1",
+      "envelopeSha256": "0000000000000000000000000000000000000000000000000000000000000010",
+      "toolCallId": "batch-16",
+      "settledAt": "2026-10-21T00:37:17.362Z",
+      "result": {
+        "details": {
+          "totalDurationMs": 980188,
+          "results": [
+            {
+              "index": 0,
+              "id": "batch-16-seat-0",
+              "agent": "review-daybreak-blue",
+              "assignment": "review_class=focused\n",
+              "durationMs": 262719,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 1,
+              "id": "batch-16-seat-1",
+              "agent": "review-gemini-argon",
+              "assignment": "review_class=focused\n",
+              "durationMs": 324632,
+              "exitCode": 0,
+              "aborted": false
+            },
+            {
+              "index": 2,
+              "id": "batch-16-seat-2",
+              "agent": "review-grok",
+              "assignment": "review_class=focused\n",
+              "durationMs": 980157,
+              "exitCode": 0,
+              "aborted": false
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "launchTimings": [
+    {
+      "id": "batch-0-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-19T20:53:23.844-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 184,
+      "invokeToFirstChatMs": 187
+    },
+    {
+      "id": "batch-0-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-19T20:52:05.411-07:00",
+      "queueMs": 0,
+      "preRunMs": 17,
+      "setupToFirstChatMs": 176,
+      "invokeToFirstChatMs": 193
+    },
+    {
+      "id": "batch-0-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-19T21:01:20.875-07:00",
+      "queueMs": 0,
+      "preRunMs": 11,
+      "setupToFirstChatMs": 180,
+      "invokeToFirstChatMs": 191
+    },
+    {
+      "id": "batch-1-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-19T23:13:29.230-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 171,
+      "invokeToFirstChatMs": 174
+    },
+    {
+      "id": "batch-1-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-19T23:12:08.915-07:00",
+      "queueMs": 0,
+      "preRunMs": 11,
+      "setupToFirstChatMs": 167,
+      "invokeToFirstChatMs": 178
+    },
+    {
+      "id": "batch-1-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-19T23:16:04.690-07:00",
+      "queueMs": 0,
+      "preRunMs": 16,
+      "setupToFirstChatMs": 157,
+      "invokeToFirstChatMs": 173
+    },
+    {
+      "id": "batch-2-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-19T23:35:33.110-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 1918,
+      "invokeToFirstChatMs": 1921
+    },
+    {
+      "id": "batch-2-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-19T23:33:54.950-07:00",
+      "queueMs": 0,
+      "preRunMs": 14,
+      "setupToFirstChatMs": 1907,
+      "invokeToFirstChatMs": 1921
+    },
+    {
+      "id": "batch-2-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-19T23:43:43.396-07:00",
+      "queueMs": 0,
+      "preRunMs": 8,
+      "setupToFirstChatMs": 1295,
+      "invokeToFirstChatMs": 1303
+    },
+    {
+      "id": "batch-3-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-19T23:18:53.716-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 1399,
+      "invokeToFirstChatMs": 1402
+    },
+    {
+      "id": "batch-3-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-19T23:19:17.124-07:00",
+      "queueMs": 0,
+      "preRunMs": 9,
+      "setupToFirstChatMs": 1394,
+      "invokeToFirstChatMs": 1403
+    },
+    {
+      "id": "batch-3-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-19T23:28:43.905-07:00",
+      "queueMs": 0,
+      "preRunMs": 13,
+      "setupToFirstChatMs": 1384,
+      "invokeToFirstChatMs": 1397
+    },
+    {
+      "id": "batch-4-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T07:12:59.427-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 152,
+      "invokeToFirstChatMs": 155
+    },
+    {
+      "id": "batch-4-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T07:09:39.503-07:00",
+      "queueMs": 0,
+      "preRunMs": 15,
+      "setupToFirstChatMs": 141,
+      "invokeToFirstChatMs": 156
+    },
+    {
+      "id": "batch-4-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T07:15:55.272-07:00",
+      "queueMs": 0,
+      "preRunMs": 11,
+      "setupToFirstChatMs": 148,
+      "invokeToFirstChatMs": 159
+    },
+    {
+      "id": "batch-5-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T06:57:27.471-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 673,
+      "invokeToFirstChatMs": 676
+    },
+    {
+      "id": "batch-5-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T06:55:56.374-07:00",
+      "queueMs": 0,
+      "preRunMs": 15,
+      "setupToFirstChatMs": 662,
+      "invokeToFirstChatMs": 677
+    },
+    {
+      "id": "batch-5-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T07:01:46.100-07:00",
+      "queueMs": 0,
+      "preRunMs": 9,
+      "setupToFirstChatMs": 657,
+      "invokeToFirstChatMs": 666
+    },
+    {
+      "id": "batch-6-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T07:30:08.698-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 602,
+      "invokeToFirstChatMs": 605
+    },
+    {
+      "id": "batch-6-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T07:28:06.484-07:00",
+      "queueMs": 0,
+      "preRunMs": 9,
+      "setupToFirstChatMs": 599,
+      "invokeToFirstChatMs": 608
+    },
+    {
+      "id": "batch-6-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T07:34:29.907-07:00",
+      "queueMs": 0,
+      "preRunMs": 13,
+      "setupToFirstChatMs": 590,
+      "invokeToFirstChatMs": 603
+    },
+    {
+      "id": "batch-7-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T12:10:37.532-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 706,
+      "invokeToFirstChatMs": 709
+    },
+    {
+      "id": "batch-7-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T12:15:36.903-07:00",
+      "queueMs": 0,
+      "preRunMs": 18,
+      "setupToFirstChatMs": 691,
+      "invokeToFirstChatMs": 709
+    },
+    {
+      "id": "batch-7-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T12:20:09.218-07:00",
+      "queueMs": 0,
+      "preRunMs": 12,
+      "setupToFirstChatMs": 683,
+      "invokeToFirstChatMs": 695
+    },
+    {
+      "id": "batch-7-seat-3",
+      "agent": "review-claude-mythos",
+      "timestamp": "2026-10-20T12:27:43.996-07:00",
+      "queueMs": 0,
+      "preRunMs": 9,
+      "setupToFirstChatMs": 701,
+      "invokeToFirstChatMs": 710
+    },
+    {
+      "id": "batch-7-seat-4",
+      "agent": "review-claude-fable",
+      "timestamp": "2026-10-20T12:20:46.118-07:00",
+      "queueMs": 0,
+      "preRunMs": 21,
+      "setupToFirstChatMs": 692,
+      "invokeToFirstChatMs": 713
+    },
+    {
+      "id": "batch-8-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T12:56:55.377-07:00",
+      "queueMs": 0,
+      "preRunMs": 101,
+      "setupToFirstChatMs": 390,
+      "invokeToFirstChatMs": 491
+    },
+    {
+      "id": "batch-8-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T13:01:01.716-07:00",
+      "queueMs": 0,
+      "preRunMs": 131,
+      "setupToFirstChatMs": 362,
+      "invokeToFirstChatMs": 493
+    },
+    {
+      "id": "batch-8-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T13:12:57.341-07:00",
+      "queueMs": 0,
+      "preRunMs": 95,
+      "setupToFirstChatMs": 385,
+      "invokeToFirstChatMs": 480
+    },
+    {
+      "id": "batch-8-seat-3",
+      "agent": "review-claude-mythos",
+      "timestamp": "2026-10-20T13:10:04.204-07:00",
+      "queueMs": 0,
+      "preRunMs": 90,
+      "setupToFirstChatMs": 399,
+      "invokeToFirstChatMs": 489
+    },
+    {
+      "id": "batch-8-seat-4",
+      "agent": "review-claude-fable",
+      "timestamp": "2026-10-20T13:15:04.180-07:00",
+      "queueMs": 0,
+      "preRunMs": 134,
+      "setupToFirstChatMs": 360,
+      "invokeToFirstChatMs": 494
+    },
+    {
+      "id": "batch-9-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T11:27:19.041-07:00",
+      "queueMs": 1,
+      "preRunMs": 2,
+      "setupToFirstChatMs": 178,
+      "invokeToFirstChatMs": 181
+    },
+    {
+      "id": "batch-9-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T11:25:41.390-07:00",
+      "queueMs": 0,
+      "preRunMs": 25,
+      "setupToFirstChatMs": 159,
+      "invokeToFirstChatMs": 184
+    },
+    {
+      "id": "batch-9-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T11:41:38.156-07:00",
+      "queueMs": 0,
+      "preRunMs": 16,
+      "setupToFirstChatMs": 165,
+      "invokeToFirstChatMs": 181
+    },
+    {
+      "id": "batch-10-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T11:09:54.365-07:00",
+      "queueMs": 0,
+      "preRunMs": 21,
+      "setupToFirstChatMs": 460,
+      "invokeToFirstChatMs": 481
+    },
+    {
+      "id": "batch-10-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T11:08:49.061-07:00",
+      "queueMs": 0,
+      "preRunMs": 31,
+      "setupToFirstChatMs": 450,
+      "invokeToFirstChatMs": 481
+    },
+    {
+      "id": "batch-10-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T11:20:47.094-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 463,
+      "invokeToFirstChatMs": 466
+    },
+    {
+      "id": "batch-11-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T11:49:27.198-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 194,
+      "invokeToFirstChatMs": 197
+    },
+    {
+      "id": "batch-11-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T11:47:18.635-07:00",
+      "queueMs": 0,
+      "preRunMs": 17,
+      "setupToFirstChatMs": 183,
+      "invokeToFirstChatMs": 200
+    },
+    {
+      "id": "batch-11-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T11:59:34.568-07:00",
+      "queueMs": 0,
+      "preRunMs": 30,
+      "setupToFirstChatMs": 168,
+      "invokeToFirstChatMs": 198
+    },
+    {
+      "id": "batch-12-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T11:49:17.660-07:00",
+      "queueMs": 0,
+      "preRunMs": 16,
+      "setupToFirstChatMs": 193,
+      "invokeToFirstChatMs": 209
+    },
+    {
+      "id": "batch-12-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T11:55:00.341-07:00",
+      "queueMs": 0,
+      "preRunMs": 41,
+      "setupToFirstChatMs": 170,
+      "invokeToFirstChatMs": 211
+    },
+    {
+      "id": "batch-12-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T12:02:34.810-07:00",
+      "queueMs": 0,
+      "preRunMs": 2,
+      "setupToFirstChatMs": 209,
+      "invokeToFirstChatMs": 211
+    },
+    {
+      "id": "batch-13-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T12:35:53.728-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 212,
+      "invokeToFirstChatMs": 215
+    },
+    {
+      "id": "batch-13-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T12:37:36.705-07:00",
+      "queueMs": 0,
+      "preRunMs": 59,
+      "setupToFirstChatMs": 169,
+      "invokeToFirstChatMs": 228
+    },
+    {
+      "id": "batch-13-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T12:45:26.933-07:00",
+      "queueMs": 0,
+      "preRunMs": 21,
+      "setupToFirstChatMs": 198,
+      "invokeToFirstChatMs": 219
+    },
+    {
+      "id": "batch-14-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T12:28:57.996-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 196,
+      "invokeToFirstChatMs": 199
+    },
+    {
+      "id": "batch-14-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T12:29:13.791-07:00",
+      "queueMs": 0,
+      "preRunMs": 21,
+      "setupToFirstChatMs": 184,
+      "invokeToFirstChatMs": 205
+    },
+    {
+      "id": "batch-14-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T12:40:22.181-07:00",
+      "queueMs": 0,
+      "preRunMs": 58,
+      "setupToFirstChatMs": 147,
+      "invokeToFirstChatMs": 205
+    },
+    {
+      "id": "batch-15-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T13:08:20.674-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 209,
+      "invokeToFirstChatMs": 212
+    },
+    {
+      "id": "batch-15-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T13:10:47.494-07:00",
+      "queueMs": 0,
+      "preRunMs": 60,
+      "setupToFirstChatMs": 158,
+      "invokeToFirstChatMs": 218
+    },
+    {
+      "id": "batch-15-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T13:22:21.490-07:00",
+      "queueMs": 0,
+      "preRunMs": 22,
+      "setupToFirstChatMs": 193,
+      "invokeToFirstChatMs": 215
+    },
+    {
+      "id": "batch-16-seat-0",
+      "agent": "review-daybreak-blue",
+      "timestamp": "2026-10-20T17:25:19.893-07:00",
+      "queueMs": 0,
+      "preRunMs": 3,
+      "setupToFirstChatMs": 166,
+      "invokeToFirstChatMs": 169
+    },
+    {
+      "id": "batch-16-seat-1",
+      "agent": "review-gemini-argon",
+      "timestamp": "2026-10-20T17:26:21.824-07:00",
+      "queueMs": 0,
+      "preRunMs": 19,
+      "setupToFirstChatMs": 154,
+      "invokeToFirstChatMs": 173
+    },
+    {
+      "id": "batch-16-seat-2",
+      "agent": "review-grok",
+      "timestamp": "2026-10-20T17:37:17.361-07:00",
+      "queueMs": 0,
+      "preRunMs": 30,
+      "setupToFirstChatMs": 141,
+      "invokeToFirstChatMs": 171
+    }
+  ]
+}

@@ -49,7 +49,10 @@ import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from math import ceil, isfinite
 from pathlib import Path
 from typing import Mapping, Sequence, cast
 
@@ -2394,9 +2397,11 @@ def _publish_preparation(
     try:
         for label, path, text in artifacts:
             created.append(_write_once(path, text, label))
-        return command_verify_task(
+        verified = json.loads(command_verify_task(
             argparse.Namespace(envelope=envelope_path, sha256=envelope_sha256)
-        )
+        ))
+        verified["dispatch_plan"] = dispatch_plan(verified["task_input"])
+        return json.dumps(verified) + "\n"
     except BaseException as exc:
         cleanup_errors: list[str] = []
         for path in reversed(created):
@@ -2638,6 +2643,333 @@ def command_verify_task(args: argparse.Namespace) -> str:
     return _canonical_json({"task_input": task_input(envelope_path, envelope_sha256, tasks)}) + "\n"
 
 
+SUPPLEMENTAL_BOUND_SECONDS = 300
+
+
+def dispatch_plan(canonical: dict) -> dict:
+    """Split only resolver-owned standing; keep every task byte and its envelope unchanged."""
+    groups: dict[str, list] = {"required": [], "supplemental": []}
+    for task in canonical["tasks"]:
+        header = dict(
+            line.split("=", 1) for line in task["task"].split("\n\n", 1)[0].splitlines()
+            if "=" in line
+        )
+        if header.get("review_class") not in (FOCUSED, INITIAL):
+            return {"mode": "single", "task_input": canonical}
+        group = "required" if header.get("authority") == "independent_evidence" else "supplemental"
+        groups[group].append(task)
+    if not all(groups.values()):
+        return {"mode": "single", "task_input": canonical}
+    return {
+        "mode": "supplemental-eval-then-required-direct",
+        "supplemental_bound_seconds": SUPPLEMENTAL_BOUND_SECONDS,
+        "supplemental_task_input": {**canonical, "tasks": groups["supplemental"]},
+        "required_task_input": {**canonical, "tasks": groups["required"]},
+    }
+
+
+def settlement_state(
+    envelope: Path, envelope_sha256: str, canonical: dict, *,
+    now: datetime | None = None, dispositions: Sequence[dict] = (),
+) -> dict:
+    """Inspect durable outcomes. This report never grants merge/release or production authority."""
+    now = now or datetime.now(timezone.utc)
+    plan = dispatch_plan(canonical)
+    if plan["mode"] == "single":
+        raise DispatchError("supplemental settlement requires required and supplemental seats")
+    required = {task["agent"] for task in plan["required_task_input"]["tasks"]}
+    agents = [task["agent"] for task in canonical["tasks"]]
+    admitted: dict[str, str] = {}
+    latest: dict[str, dict] = {}
+    findings: list[dict] = []
+    snapshots: dict[str, str] = {}
+    cutoff_path = envelope.with_suffix(".cutoff.json")
+    cutoff = json.loads(cutoff_path.read_text()) if cutoff_path.exists() else None
+    if cutoff and cutoff.get("envelopeSha256") != envelope_sha256:
+        raise DispatchError("cutoff belongs to another envelope")
+    late_results: list[dict] = []
+    for attempt in range(1, 1_000):
+        path = envelope.with_name(f"{envelope.stem}.attempt-{attempt}.json")
+        start = path.with_suffix(".started.json")
+        if not path.exists() and not start.exists():
+            break
+        if start.exists():
+            admission = json.loads(start.read_text())
+            if admission.get("envelopeSha256") != envelope_sha256:
+                raise DispatchError("admission belongs to another envelope")
+            for seat in admission["seats"]:
+                if type(seat) is not int or not 0 <= seat < len(agents):
+                    raise DispatchError("invalid admitted seat")
+                admitted.setdefault(agents[seat], admission["admittedAt"])
+                latest[agents[seat]] = {"valid": False, "outcome": "unknown"}
+        if not path.exists():
+            continue
+        raw = path.read_bytes()
+        record = json.loads(raw)
+        if record.get("envelopeSha256") != envelope_sha256:
+            raise DispatchError("attempt belongs to another envelope")
+        digest = _digest_bytes(raw)
+        snapshots[path.name] = digest
+        late = cutoff is not None and cutoff["attempts"].get(path.name) != digest
+        if late:
+            late_results.append({"path": str(path), "sha256": digest})
+        rows = (record.get("result", {}).get("details") or {}).get("results", [])
+        for position, outcome in enumerate(record["seats"]):
+            seat = outcome["seat"]
+            if type(seat) is not int or not 0 <= seat < len(agents):
+                raise DispatchError("invalid result seat")
+            agent = agents[seat]
+            admitted.setdefault(agent, record.get("admittedAt", record["settledAt"]))
+            row = next((row for row in rows if row.get("index") == position), {})
+            structured = row.get("structuredOutput") or {}
+            structured = structured if isinstance(structured, dict) else {}
+            data = structured.get("data") or {}
+            data = data if isinstance(data, dict) else {}
+            valid = (
+                outcome.get("failed") is False and row.get("exitCode") == 0
+                and not row.get("aborted") and not row.get("error")
+                and structured.get("status") == "valid"
+                and isinstance(data.get("evidence"), list)
+                and isinstance(data.get("unresolved"), list)
+                and all(isinstance(item, str) for field in ("evidence", "unresolved") for item in data[field])
+            )
+            latest[agent] = {
+                "valid": valid,
+                "outcome": "abort" if row.get("aborted") else
+                "unknown" if row.get("exitCode") is None else
+                "error" if row["exitCode"] != 0 or row.get("error") else
+                "completed" if valid else "invalid",
+            }
+            # Even an invalid seat's received material claims need inspection; never erase them.
+            for field in ("evidence", "unresolved"):
+                for item in data.get(field, []) if isinstance(data.get(field), list) else []:
+                    if not isinstance(item, str):
+                        item = json.dumps(item, sort_keys=True)
+                    finding_id = _digest_bytes(f"{agent}\0{item}".encode())
+                    disposition = next((
+                        value for value in dispositions
+                        if value.get("finding") == finding_id and value.get("sourceSha256") == digest
+                    ), {})
+                    resolved = (
+                        disposition.get("disposition") in ("accept", "reject", "defer", "mitigate")
+                        and disposition.get("result") in ("confirmed", "falsified", "design decision")
+                        and disposition.get("residualSeverity") in ("P2", "P3", "none")
+                        and isinstance(disposition.get("verification"), str)
+                        and bool(disposition["verification"].strip())
+                    )
+                    findings.append({
+                        "finding": finding_id, "agent": agent, "text": item,
+                        "sourceSha256": digest, "late": late, "dispositioned": resolved,
+                        "material": bool(re.search(r"\|P[01]\|", item)) or field == "unresolved",
+                    })
+    missing_required = sorted(agent for agent in required if not latest.get(agent, {}).get("valid"))
+    supplemental = [agent for agent in agents if agent not in required]
+    missing_dispatch = [agent for agent in agents if agent not in admitted]
+    pending = [agent for agent in supplemental if latest.get(agent, {}).get("outcome") == "unknown"]
+    supplemental_started = [datetime.fromisoformat(admitted[agent]) for agent in supplemental if agent in admitted]
+    bound_elapsed = bool(supplemental_started) and all(
+        (now - started).total_seconds() >= SUPPLEMENTAL_BOUND_SECONDS for started in supplemental_started
+    )
+    held = [item for item in findings if not item["dispositioned"]]
+    uninspected_late = [
+        late for late in late_results
+        if not any(
+            item.get("sourceSha256") == late["sha256"]
+            and item.get("inspection") == "inspected" and item.get("verification")
+            for item in dispositions
+        )
+    ]
+    state = (
+        "parked-required" if missing_required or missing_dispatch else
+        "held-findings" if held and not late_results else
+        "reopened-defect" if late_results and held else
+        "late-inspection-required" if uninspected_late else
+        "waiting-supplemental" if pending and not bound_elapsed else
+        "cutoff-recorded" if cutoff else "ready-for-cutoff"
+    )
+    return {
+        "schema": "critical-review-settlement-v1", "envelopeSha256": envelope_sha256,
+        "state": state, "observedAt": now.isoformat(), "attempts": snapshots,
+        "missingRequired": missing_required, "missingDispatch": missing_dispatch,
+        "pendingSupplemental": pending, "supplementalBoundSeconds": SUPPLEMENTAL_BOUND_SECONDS,
+        "supplementalOutcomes": {agent: latest.get(agent, {"outcome": "not-dispatched"})["outcome"] for agent in supplemental},
+        "boundElapsed": bound_elapsed, "findings": findings, "lateResults": late_results,
+        "automaticProductionEffect": False,
+    }
+
+
+def command_settlement(args: argparse.Namespace) -> str:
+    canonical = json.loads(command_verify_task(args))["task_input"]
+    dispositions = json.loads(args.dispositions.read_text()) if args.dispositions else []
+    if not isinstance(dispositions, list) or not all(isinstance(item, dict) for item in dispositions):
+        raise DispatchError("dispositions must be an array of lead disposition records")
+    state = settlement_state(args.envelope, args.sha256, canonical, dispositions=dispositions)
+    if args.cutoff:
+        if state["state"] != "ready-for-cutoff":
+            raise DispatchError(f"release cutoff refused: {state['state']}")
+        _write_once(args.envelope.with_suffix(".cutoff.json"), _artifact_text(state), "release cutoff")
+        state["state"] = "cutoff-recorded"
+    for late in state["lateResults"]:
+        # Repair a crash between result persistence and the extension's late-record write.
+        path = Path(late["path"]).with_suffix(".late.json")
+        if not path.exists():
+            _write_once(path, _artifact_text({
+                "schema": "critical-review-late-result-v1",
+                "envelopeSha256": args.sha256, "resultPath": late["path"],
+                "status": "reopened-defect" if state["findings"] else "late-result-needs-inspection",
+                "findings": [row for row in state["findings"] if row["sourceSha256"] == late["sha256"]],
+                "escalation": "lead-verification-and-risk-based-escalation",
+                "automaticProductionEffect": False,
+            }), "late result")
+    return json.dumps(state, indent=2) + "\n"
+
+
+def review_latency(attempts: Sequence[dict], launch_timings: Sequence[dict] = ()) -> dict:
+    """Summarize recorded transport observations, without reading prompts into the report.
+
+    Native launch logs expose semaphore wait, but their timestamp is written at run completion,
+    not at launch. Never present that timestamp (or batch settlement) as an exact seat start/end.
+    Duplicate copies of the same attempt do not increase the sample; conflicting copies refuse.
+    """
+    def numeric(value: object) -> float | int | None:
+        return value if type(value) in (int, float) and isfinite(value) and value >= 0 else None
+
+    def quantiles(values: list) -> dict:
+        ordered = sorted(value for value in values if numeric(value) is not None)
+        return {
+            "n": len(ordered),
+            "p50": ordered[ceil(len(ordered) * 0.50) - 1] if ordered else None,
+            "p95": ordered[ceil(len(ordered) * 0.95) - 1] if ordered else None,
+        }
+
+    launches: dict[tuple, list[dict]] = {}
+    for row in launch_timings:
+        launches.setdefault((row.get("id"), row.get("agent")), []).append(row)
+    seen: dict[tuple, dict] = {}
+    samples: list[dict] = []
+    batches: list[dict] = []
+    for record in attempts:
+        if record.get("schema") != "critical-review-task-attempt-v1":
+            raise DispatchError("latency input is not a settled Task attempt")
+        key = (record.get("envelopeSha256"), record.get("toolCallId"))
+        if not all(isinstance(value, str) and value for value in key):
+            raise DispatchError("latency attempt is missing its envelope/call identity")
+        if key in seen:
+            if seen[key] != record:
+                raise DispatchError("conflicting duplicate Task attempt")
+            continue
+        seen[key] = record
+        details = record.get("result", {}).get("details") or {}
+        rows = details.get("results", [])
+        classes = {
+            match.group(1)
+            for row in rows
+            if (match := re.search(r"^review_class=(.+)$", row.get("assignment", ""), re.M))
+        }
+        if len(classes) != 1 or not classes.intersection({FOCUSED, INITIAL}):
+            continue
+        review_class = next(iter(classes))
+        batch_duration = numeric(details.get("totalDurationMs"))
+        batch_seats: list[dict] = []
+        for row in rows:
+            agent = row.get("agent")
+            if not isinstance(agent, str) or not agent.startswith("review-"):
+                raise DispatchError("latency result has no reviewer identity")
+            candidates = launches.get((row.get("id"), agent), [])
+            # IDs can be reused by another session. Bind a launch log to this batch's time window.
+            if candidates:
+                try:
+                    settled = datetime.fromisoformat(record["settledAt"])
+                    candidates = [
+                        item for item in candidates
+                        if 0 <= (settled - datetime.fromisoformat(item["timestamp"])).total_seconds()
+                        <= (batch_duration or 0) / 1000 + 1
+                    ]
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise DispatchError(f"invalid latency timestamp: {exc}") from exc
+            if len(candidates) > 1:
+                raise DispatchError("ambiguous native launch timing for a seat")
+            launch = candidates[0] if candidates else {}
+            elapsed = numeric(row.get("durationMs"))
+            log_at = launch.get("timestamp")
+            estimated_start = (
+                (datetime.fromisoformat(log_at) - timedelta(milliseconds=elapsed)).isoformat()
+                if log_at and elapsed is not None else None
+            )
+            outcome = (
+                "abort" if row.get("aborted") else
+                "unknown" if row.get("exitCode") is None else
+                "error" if row["exitCode"] != 0 or row.get("error") else "completed"
+            )
+            sample = {
+                "batch": len(batches), "reviewClass": review_class, "agent": agent,
+                "outcome": outcome, "elapsedMs": elapsed,
+                "queueWaitMs": numeric(launch.get("queueMs")),
+                "startedAt": None, "endedAt": None, "firstTokenAt": None,
+                "launchRecordedAt": log_at, "estimatedRunStartAt": estimated_start,
+                "batchSettledAt": record.get("settledAt"),
+                "late": None,
+            }
+            samples.append(sample)
+            batch_seats.append(sample)
+        timed = [row for row in batch_seats if row["elapsedMs"] is not None]
+        batches.append({
+            "reviewClass": review_class, "batchDurationMs": batch_duration,
+            "longestSeat": max(timed, key=lambda row: row["elapsedMs"])["agent"] if timed else None,
+        })
+    seats = {}
+    for agent in sorted({row["agent"] for row in samples}):
+        rows = [row for row in samples if row["agent"] == agent]
+        seats[agent] = {
+            "elapsedMs": quantiles([row["elapsedMs"] for row in rows]),
+            "queueWaitMs": quantiles([row["queueWaitMs"] for row in rows]),
+            "outcomes": dict(sorted(Counter(row["outcome"] for row in rows).items())),
+            "firstTokenAtCount": sum(row["firstTokenAt"] is not None for row in rows),
+        }
+    classes = {}
+    for review_class in sorted({row["reviewClass"] for row in batches}):
+        rows = [row for row in batches if row["reviewClass"] == review_class]
+        classes[review_class] = {
+            "batchDurationMs": quantiles([row["batchDurationMs"] for row in rows]),
+            "longestSeats": dict(sorted(Counter(
+                row["longestSeat"] for row in rows if row["longestSeat"] is not None
+            ).items())),
+        }
+    return {
+        "percentileMethod": "nearest-rank", "batchCount": len(batches),
+        "seats": seats, "classes": classes, "samples": samples,
+        "limitations": [
+            "elapsed is native seat duration, not queue wait or provider latency",
+            "longest seat is an elapsed-time proxy, not an exact queue-aware critical path",
+            "launch log timestamp precedes result finalization; estimatedRunStartAt is approximate",
+            "native Task does not expose exact per-seat start/end or first-token timestamps",
+            "no supplemental cutoff exists; late is unknown, never clean",
+        ],
+    }
+
+
+def command_latency(args: argparse.Namespace) -> str:
+    attempts = []
+    launches = []
+    try:
+        for root in args.records:
+            paths = sorted(root.rglob("*.attempt-*.json")) if root.is_dir() else [root]
+            for path in paths:
+                if not path.name.endswith((".started.json", ".late.json")):
+                    attempts.append(json.loads(path.read_text(encoding="utf-8")))
+        for path in args.launch_log:
+            with path.open(encoding="utf-8") as stream:
+                for line in stream:
+                    # Extract only the named native timing event; never echo unrelated log content.
+                    if '"subagent launch timing"' in line:
+                        row = json.loads(line)
+                        if row.get("message") == "subagent launch timing":
+                            launches.append(row)
+    except (OSError, ValueError) as exc:
+        raise DispatchError(f"cannot read latency evidence: {exc}") from exc
+    return json.dumps(review_latency(attempts, launches), indent=2) + "\n"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -2696,6 +3028,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     verify.add_argument("--envelope", type=Path, required=True)
     verify.add_argument("--sha256", required=True)
 
+    latency = commands.add_parser("latency", help="report recorded focused/council seat latency; no dispatch")
+    latency.add_argument("records", nargs="+", type=Path, help="attempt files or directories")
+    latency.add_argument("--launch-log", action="append", default=[], type=Path)
+    settlement = commands.add_parser("settlement", help="inspect outcomes, reconcile late results, or record a release cutoff")
+    settlement.add_argument("--envelope", type=Path, required=True)
+    settlement.add_argument("--sha256", required=True)
+    settlement.add_argument("--dispositions", type=Path)
+    settlement.add_argument("--cutoff", action="store_true")
+
     args = parser.parse_args(argv)
     if args.command == "prepare":
         # Refused here, before any artifact exists: a caller who names the roster
@@ -2710,10 +3051,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     handlers = {
         "prepare": command_prepare,
         "verify-task": command_verify_task,
+        "latency": command_latency,
+        "settlement": command_settlement,
     }
     try:
         output = handlers[args.command](args)
-    except (DispatchError, qualification.QualificationError) as exc:
+    except (DispatchError, qualification.QualificationError, OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     print(output, end="")

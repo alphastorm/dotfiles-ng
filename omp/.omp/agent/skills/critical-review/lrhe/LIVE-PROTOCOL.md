@@ -490,8 +490,8 @@ write leaves no provider-addressable dispatch; a caught failure removes every
 artifact created by the invocation. Only after `verify-task` rehashes the
 envelope and revalidates the current resolver and qualification authority,
 subject and manifest state, evidence compatibility, receipt, assignments, and
-exact canonical Task input does `prepare` print one JSON object whose only key
-is `task_input`. Submit that object verbatim as the Task call. An edited
+exact canonical Task input does `prepare` print `task_input` and `dispatch_plan`.
+Submit the plan's inputs by the canonical Task boundary procedure below. An edited
 envelope, stale manifest, incompatible evidence mode, dirty tree, or path
 supplied instead of an inline bundle is blocked rather than
 warned.
@@ -518,16 +518,41 @@ Every batch item carries exactly `agent` and `task`. Never retype, reorder,
 trim, merge, summarize, or reword one character of the canonical shape, and
 never append an instruction of your own.
 
-A multi-reviewer council runs in one gated Task wave.
-Every `review-*` agent declares `blocking: true`. Submit the generated Task
-call once; its inline completion is the review barrier for a focused review or
-the whole concurrent council. Do not detach reviewers, inspect `hub` jobs, or
-poll/sleep for verdicts. No reviewer payload may enter the lead's context or a
-peer-visible file until every member has settled.
+A multi-reviewer review uses the resolver's `dispatch_plan`, under one envelope:
 
-The policy gate records the envelope as in flight before execution and refuses
-any second call while one is unresolved. An envelope's first call must be its
-complete batch. When a call settles, the gate reads every seat from the Task
+1. Submit `dispatch_plan.supplemental_task_input` verbatim in a **separate eval
+   cell**, `timeout: 0`, with native auto-background enabled. Await that Task in
+   the cell. A background acknowledgement is not a reviewer result.
+2. After auto-background acknowledgement, submit
+   `dispatch_plan.required_task_input` verbatim through the **direct Task tool**,
+   outside eval. The busy supplemental kernel is not involved in the required
+   call. Required verdicts return inline as soon as that group settles.
+3. Consume the original supplemental cell's eventual completion. The gate
+   persists its raw result before the background delivery can expire.
+
+If the supplemental cell completes before auto-backgrounding, consume it and
+then submit the required call. If auto-background is disabled, the calls safely
+serialize; do not invent a detached launcher. Single-mode plans use their one
+`task_input`. The full canonical batch remains valid for an unsplit invocation.
+Never submit that full batch as well as either split input.
+
+Every reviewer still declares `blocking: true`; no charter or roster changes.
+Two calls **in the same eval cell do not work**: native
+`eval/js/context-manager.ts:830-846` holds the cell's return until every bridge
+call drains. Native `task/index.ts:1379-1415` permits concurrent calls through
+the shared semaphore, but its sync fanout exposes final results only after its
+own group completes. The two-call arrangement changes the actual native wait
+boundary, not just a ledger label. No reviewer receives a peer verdict; the lead
+may inspect completed required results while supplemental readers continue on
+the unchanged frozen evidence. Do not poll/sleep or inspect jobs for verdicts.
+
+The policy gate records `<envelope-stem>.attempt-<n>.started.json` before each
+call starts. Admission numbers are assigned before execution, so attempt 2 may
+settle before attempt 1. A restarted process reconstructs each seat separately:
+admission without settlement is unknown, never permission to redispatch.
+The first call must be the complete batch or the complete supplemental group;
+the required group is admitted only after supplemental admission is durable.
+Any overlapping active/completed seat is refused. When a call settles, the gate reads every seat from the Task
 result details, whatever the call's error flag says: a missing or aborted row,
 or a nonzero exit, is a failed seat. It writes the raw result, each seat's
 outcome, and `retryTaskInput`, the verifier-approved items of the seats that may
@@ -536,6 +561,82 @@ session rebuilds the budget from those records. A later call is admitted only as
 an unchanged, order-preserving subset of failed seats, each at most once. This
 state follows the protected Task lifecycle rather than the enclosing eval
 lifecycle, so an outer nonterminal transition cannot authorize redispatch.
+
+### Supplemental bound and release cutoff
+
+`review_dispatch.py settlement --envelope <path> --sha256 <digest>` inspects the
+same verified envelope, all admission/result records and the independent floor.
+A missing, failed, aborted or schema-invalid required seat parks closure. All
+selected supplemental seats must have been admitted. Pending supplemental
+waiting is bounded at **300 seconds from first durable admission**; this does
+not increase a provider timeout, cancel a reviewer or replay an uncertain call.
+The report retains completed/error/abort/invalid/unknown separately.
+
+Inspect every available result after the epoch recheck. Record lead judgments in
+a JSON array passed as `--dispositions`: each finding uses the report's
+`finding` and `sourceSha256`, plus `disposition` (`accept`, `reject`, `defer`,
+`mitigate`), `result` (`confirmed`, `falsified`, `design decision`),
+`residualSeverity` (`none`, `P2`, `P3`) and a nonempty `verification` evidence
+reference. These are lead dispositions, never reviewer approval. Every received
+finding must be dispositioned; residual or unresolved P0/P1 cannot cut off.
+
+Immediately before the separately authorized merge/release, use the same command
+with `--cutoff --dispositions <file>`. It writes an immutable `.cutoff.json`
+inspection snapshot only when required evidence is valid, every seat dispatched,
+all received findings dispositioned and supplemental calls settled or past the
+bound. Re-run `settlement` immediately before the effect to catch concurrent
+arrivals; cutoff is evidence, not merge/release authorization.
+
+Any result outside that snapshot is **not reviewed before release**. The gate
+writes `.attempt-<n>.late.json` before returning its background completion;
+`settlement` repairs that record after a crash between result and late-record
+persistence. Findings reopen a visible defect and P0/P1 claims require urgent
+lead verification and risk-based escalation. They never cause an automatic
+production action. The late record remains immutable; after inspection, append
+an exact `sourceSha256`, `inspection: "inspected"` and `verification` row to the
+lead dispositions, in addition to each finding's disposition. Reconciliation
+then clears the inspection hold without pretending the finding was reviewed
+before the original cutoff. Preserve the frozen worktree until every reader
+has stopped, even if a release cutoff has already been recorded.
+
+### Latency evidence
+
+The gate adds admission, first/last/terminal **progress observation**, result
+observation, native elapsed duration, input bytes and outcome to attempt records.
+These observations are not model start/end or first-token timestamps: native
+Task does not expose those phases, so exact phase fields stay null with a reason.
+The existing native `subagent launch timing` debug event provides semaphore
+`queueMs`; it is logged at run completion, not at launch. Report it with:
+
+```bash
+./lrhe/review_dispatch.py latency <attempt-directory> \
+  --launch-log <native-omp-log>
+```
+
+Repeat `--launch-log` for each relevant log. The command emits no prompt text,
+deduplicates copied attempts, uses nearest-rank percentiles, and labels estimated
+start separately from exact timestamps. Do not call elapsed duration provider
+latency or infer a queue wait of zero from a missing phase.
+
+Recorded sample, 2026-10-20T04:01:20Z–2026-10-21T00:37:17Z: 15 focused batches
+and two councils, 55 completed seats; no error/abort sample. Sanitized numeric
+evidence is `review-latency.fixture.json`, reproduced by `test_review_latency.py`.
+
+| Seat | n | elapsed p50 / p95 (s) | queue p50 / p95 (ms) |
+| --- | ---: | ---: | ---: |
+| Daybreak Blue | 17 | 271.853 / 391.029 | 0 / 1 |
+| Argon | 17 | 237.454 / 621.147 | 0 / 0 |
+| Grok | 17 | 884.189 / 1233.823 | 0 / 0 |
+| Mythos | 2 | 1060.690 / 1326.225 | 0 / 0 |
+| Fable | 2 | 908.335 / 1360.623 | 0 / 0 |
+
+Focused batch p50/p95: 884.210/1090.792 seconds. Council batch p50/p95:
+1326.234/1360.757 seconds. Grok is the longest elapsed seat in all 15 focused
+batches (155.450–859.102 seconds beyond the slowest strong critic); Mythos and
+Fable are longest in the two councils. This is a small historical sample, not a
+fresh live p95 guarantee. Exact seat end/first token and provider-only latency
+remain unavailable; the longest-seat classification is an elapsed-time critical
+path proxy. Decision: amend the native dispatch boundary, not prompts/timeouts.
 
 After the same final verifier approves the canonical Task input, the policy reads
 the envelope's resolver-derived `oracleShadow` state. A selected lane submits
@@ -611,8 +712,9 @@ single owner of the shared review floor, including state fidelity; this protocol
 never restates, narrows, or supplements it.
 
 Do not disclose round-one responses between reviewers through messages, prompts,
-local files, or follow-up calls. After every selected item settles and the epoch
-digest recheck passes, persist and read each complete result separately.
+local files, or follow-up calls. After each group settles and the epoch digest
+recheck passes, read its persisted complete results separately. Disposition
+does not permit editing evidence still being read by another in-flight group.
 
 Distinguish these outcomes when a member returns nothing usable. Only a
 dispatch-level failure may be retried:

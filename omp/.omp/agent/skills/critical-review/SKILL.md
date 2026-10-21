@@ -58,20 +58,43 @@ Every strong critic is required cross-family independent evidence. Missing, refu
 
 Routing selects the reviewer; it never states the reviewer's standing. The emitted Task payload is submitted verbatim. The resolver emits `selectionClass`, `role`, `independence_class`, and `authority` from the live authority; the lead never writes, derives, or hand-copies a standing field, and a reviewer reached any other way is not a review.
 
-Review execution is a blocking Task boundary. Every `review-*` agent declares
-`blocking: true`, so submit the resolver-emitted batch once and consume its
-verdicts from that call. A focused review is a small resolver-emitted batch, not
-a general delegation wave; never pad or trim it, detach it, poll `hub`/jobs, or
-run sleep loops while the subject is frozen.
+Every `review-*` agent remains `blocking: true`. For a focused review or council,
+`prepare` emits a `dispatch_plan` with two complementary, unchanged Task inputs
+under one frozen envelope. First submit `supplemental_task_input` in its own eval
+cell with `timeout: 0` and native auto-background enabled. After that cell
+auto-backgrounds, submit `required_task_input` through the **direct Task tool**,
+not through the busy eval kernel. The required call returns its verdicts without
+waiting for the supplemental call. If eval does not auto-background, consume its
+completion before the direct call; never detach or replay it. A single-mode
+plan (canary, replay, refuter) uses its one emitted `task_input`.
+
+Never put both calls in the same eval cell: native eval holds a cell's result
+until every bridge call drains. Never hand-trim batches, poll jobs, or sleep.
+Each selected seat still runs once, sees no peer output, and can retry once only
+after a recorded transport failure under the same envelope. Required failure
+still parks closure; a completed critic never runs again.
 
 An enclosing eval call may auto-background while that protected Task is still
 running. Its `bg_*` acknowledgement, an unavailable kernel result variable, or
 failure to resolve that id through `output()` is orchestration state, not a Task
-result and not failed reviewer delivery. Keep the original call as the sole
-in-flight call and consume its eventual completion; never dispatch the envelope
-again while that call is unresolved. The gate records every settled call beside
-the envelope, so a lost kernel variable never loses the review; a failed seat
-reruns alone from that record, once, and a seat that completed never runs again.
+result and not failed reviewer delivery. Keep the original supplemental call
+and consume its eventual completion; only the complementary required input may
+run alongside it. The gate durably records admission before execution and raw
+results before background delivery; restart or an expired delivery never
+authorizes replay of an unknown or completed seat.
+
+After required completion, inspect all available results and lead-disposition
+their findings. `review_dispatch.py settlement --envelope … --sha256 …` reports
+the independent floor and supplemental state. Supplemental waiting is bounded
+at 300 seconds from its first durable admission, not a provider timeout or
+cancellation. After that bound, an unknown supplemental outcome remains unknown,
+never clean. Immediately before merge/release, record `settlement --cutoff`
+with exact-source lead dispositions, then recheck `settlement` for arrivals.
+Any material finding already received holds closure until verified/dispositioned.
+Any result outside the cutoff snapshot requires a visible `.late.json` record,
+lead inspection and, for findings, a reopened defect with risk-based escalation.
+Nothing in this contract authorizes an automatic production effect. Keep the
+frozen evidence available and unchanged until all in-flight readers stop.
 
 When a full council is justified, encode the same brief using the existing packet fields rather than adding keys: `goal` carries outcome and class; `requirements` carries named assets, caps, and result-validity requirements; `non_goals` carries excluded adversaries and reuse; `trust_boundaries` carries credible actors and boundaries; `rollback_contract` carries containment, recovery, and residual effects; and `rejected_alternatives_and_reasons` records disproportionate mitigations rejected before review.
 
@@ -178,7 +201,7 @@ Every change admitted to the full council has one `review_sequence_id`. Every fr
 
 The autonomous budget remains one optional design pass, the initial implementation pass, and at most one verified material redesign. Only an already-recorded founder decision selecting `Allow one additional council` permits `founder-requested` after exactly two implementation passes. Its `founder_followup_authorization` binds the decision artifact by path and SHA-256 to the same sequence and latest prior review. Preserve the full bound history: never relabel an epoch, reset a sequence, or request another grant to obtain a fourth pass. The extra pass uses the ordinary full gate and complete resolver-selected council, not a reduced roster; `NO_CLOUD` still overrides it. Verified remediation can close afterward, and one targeted refutation remains the entire refutation budget. Never solicit an extra council merely to continue autonomous remediation.
 
-An admitted epoch runs in one order: triage the draft record, freeze the complete change, mint subject-bound proof receipts, pass the full gate on the frozen record, then invoke one `review_dispatch.py prepare` command. That command resolves the roster and panel manifest, rejects incompatible evidence delivery, freezes the manifest-bound subject, resolves standing, builds the envelope, and runs `verify-task` before returning the exact Task payload. Submit it verbatim in one gated wave, normalize every returned item into the ledger, then close on the lead's dispositions. Triage may instead close the epoch on direct lead verification and mint nothing. No triage result authorizes a provider call, and reviewers never see one another's first-round output.
+An admitted epoch runs in one order: triage the draft record, freeze the complete change, mint subject-bound proof receipts, pass the full gate on the frozen record, then invoke one `review_dispatch.py prepare` command. That command resolves the roster and panel manifest, rejects incompatible evidence delivery, freezes the manifest-bound subject, resolves standing, builds the envelope, and runs `verify-task` before returning the canonical Task input and dispatch plan. Submit the plan's complementary inputs by the two-call procedure above, normalize every returned item into the ledger, then close on the lead's dispositions and explicit cutoff. Triage may instead close the epoch on direct lead verification and mint nothing. No triage result authorizes a provider call, and reviewers never see one another's first-round output.
 
 Any selected reviewer with `evidence_delivery=repository` requires a clean repository subject bound to one full commit and every reviewed regular file. A packet-only subject is admissible only when every selected reviewer uses `inline` delivery and `design_or_diff` embeds a `critical-review-complete-inline-evidence-v1` bundle with every evidence artifact's complete UTF-8 content and matching SHA-256. A path, handle, summary, or excerpt supplied instead of that bundle never counts as inline evidence. Inside the bundle, `content` is the accountable producer's complete-byte declaration and the verifier treats it as opaque. The Task gate repeats this invariant from freshly read bytes.
 
