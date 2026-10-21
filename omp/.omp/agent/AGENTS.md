@@ -20,20 +20,21 @@
 - Use only the native RepoPromptCE MCP tools — never `rpce-cli`, shell wrappers, Computer Use, a child Task owner, polling, or an extension-owned job manager. RepoPrompt's file, search, edit, and git tools stay blocked; use the native ones.
 - Preparation is top-level-lead only, at most one successful preparation per work package: before the first mutation of design work or technically complex, cross-cutting, multi-repository, predecessor-state-sensitive, or qualification-consequential implementation. Skip it for `NO_CLOUD` material, frozen candidates, diagnostic-red discovery, narrow reproduced fixes, mechanical work, and a work package that already has one. It is context for the accountable lead: it never authorizes, reviews, or accepts.
 - Route and own. Check `bind_context op="status"`; bind the intended `context_id`, or the absolute `working_dirs` with `create_if_missing=true`; confirm the roots with `get_file_tree`. A bound tab is not task-owned, so create one with `manage_workspaces` `{"action":"create_tab","mode":"blank","bind":true,"focus":false,"window_id":<observed>,"name":"prep: <work package>"}`, record the returned tab UUID, workspace, and window, and re-check the binding and roots. Keep bind → create → verify → build sequential on one connection.
-- Submit once. Warm the JS runtime with a short ordinary cell and check that `OMP_MCP_TIMEOUT_MS` is unset (its value replaces `mcp.json`'s one-hour per-request timeout, and `0` disables it; never run this without a finite deadline). Then run one JS `eval` cell with `timeout: 0`, so the MCP deadline owns the wait, holding only this call and its checks — no loops, retries, other calls, or setup. RepoPrompt CE 1.6.0 answers in Markdown only; if these checks reject a newer build's output, inspect that output and update the recipe instead of loosening it:
+- Submit once. Warm the JS runtime with a short ordinary cell and check that `OMP_MCP_TIMEOUT_MS` is unset (its value replaces `mcp.json`'s one-hour per-request timeout, and `0` disables it; never run this without a finite deadline). Then run one JS `eval` cell with `timeout: 0`, so the MCP deadline owns the wait, holding only this call and its checks — no loops, retries, other calls, or setup. RepoPrompt CE 1.6.x answers in Markdown only, and with `export_response` its tool text may carry only the export section, so the plan checks read the export file; if these checks reject a newer build's output, inspect that output and update the recipe instead of loosening it:
 
 ```js
 const r = await tool.mcp__repopromptce_context_builder({ instructions: "<task>…</task>", response_type: "plan", export_response: true });
 if (typeof r !== "string" && r.hasError) throw new Error(r.text || "RepoPrompt preparation failed");
 const t = typeof r === "string" ? r : r.text;
-// CE's plan layout; neither the echoed prompt above it nor the plan's own headings can forge this sequence.
-const head = /^## Generated Plan\n+## Chat Send\b.*\n- \*\*Chat\*\*: `([^`]+)`.*\n+### Response\n/m.exec(t);
-const hint = t.lastIndexOf("\n> 💡 ");
-const response = head && hint > head.index ? t.slice(head.index + head[0].length, hint) : "";
-const chat_id = head?.[1];
 const oracle_export_path = [...t.matchAll(/^### Oracle export\n- Path: `([^`]+)`/gm)].at(-1)?.[1];
+const plan = oracle_export_path && (await Bun.file(oracle_export_path).exists()) ? await Bun.file(oracle_export_path).text() : "";
+// CE's plan layout; neither the echoed prompt above it nor the plan's own headings can forge this sequence.
+const head = /^## Generated Plan\n+## Chat Send\b.*\n- \*\*Chat\*\*: `([^`]+)`.*\n+### Response\n/m.exec(plan);
+const hint = plan.lastIndexOf("\n> 💡 ");
+const response = head && hint > head.index ? plan.slice(head.index + head[0].length, hint) : "";
+const chat_id = head?.[1];
 console.log(JSON.stringify({ chat_id, oracle_export_path })); // recovery identity, not acceptance
-if (t.startsWith("## Discover Context") || !response.trim() || /\n### Errors\n(?:- .*\n*)+$/.test(response) || !chat_id || !oracle_export_path || !(await Bun.file(oracle_export_path).exists()))
+if (t.startsWith("## Discover Context") || !response.trim() || /\n### Errors\n(?:- .*\n*)+$/.test(response) || !chat_id)
   throw new Error("RepoPrompt did not return a completed plan with an export");
 ```
 
