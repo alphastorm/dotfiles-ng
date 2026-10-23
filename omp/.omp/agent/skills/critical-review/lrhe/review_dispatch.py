@@ -175,7 +175,6 @@ FOCUSED_REVIEW_INPUTS = frozenset(
         "package.json",
         "pnpm-lock.yaml",
         "pnpm-workspace.yaml",
-        "scripts/ci-paths.py",
         "scripts/review-verdict.py",
         "scripts/check-architecture.py",
         "scripts/export-review-pack.py",
@@ -501,18 +500,65 @@ def _repository_files(values: Sequence[object]) -> tuple[str, ...]:
     return tuple(sorted(files))
 
 
-def risk_floor(paths: Sequence[str]) -> str:
+def _ci_input_workflows(diff: str) -> set[str]:
+    """Recognize literal/comment-only edits in a complete no-renames Git diff."""
+
+    literal = re.compile(
+        r"\s*(?:#.*|"
+        r"(?:timeout-minutes|CARRYTHROUGH_DEPLOY_TEST_WORKERS|max-parallel):\s*"
+        r"(?:[0-9]+|'[0-9]+'|\"[0-9]+\")\s*(?:#.*)?|"
+        r"concurrency:\s*(?:[A-Za-z0-9_.-]+|'[A-Za-z0-9_.-]+'|"
+        r"\"[A-Za-z0-9_.-]+\")\s*(?:#.*)?)"
+    )
+    exempt = set()
+    for section in re.split(r"(?m)^diff --git ", diff)[1:]:
+        lines = section.splitlines()
+        match = re.fullmatch(r"a/(\.github/workflows/\S+) b/\1", lines[0])
+        if not match:
+            continue
+        path = match[1]
+        in_hunk = changed = False
+        headers = set()
+        for line in lines[1:]:
+            if line.startswith("@@ "):
+                in_hunk = True
+            elif not in_hunk:
+                if line in (f"--- a/{path}", f"+++ b/{path}"):
+                    headers.add(line[:3])
+                elif not re.fullmatch(r"index [0-9a-f]+\.\.[0-9a-f]+ 100644", line):
+                    break
+            elif line.startswith(("+", "-")):
+                if not literal.fullmatch(line[1:]):
+                    break
+                changed = True
+            elif not line.startswith(" ") and line != r"\ No newline at end of file":
+                break
+        else:
+            if changed and headers == {"---", "+++"}:
+                exempt.add(path)
+    return exempt
+
+
+def risk_floor(paths: Sequence[str], diff: str | None = None) -> str:
     """Return the maximum deterministic floor for canonical changed paths.
 
-    This is a path-only helper, not an assurance verdict or a roster selector.
+    This is not an assurance verdict or a roster selector. An optional complete,
+    frozen no-renames Git diff admits fail-closed CI literals/comments; without
+    it workflows keep their path floor. Both added and removed lines must match.
+    runs-on (including self-hosted Studio), permissions and secrets are never
+    exempt, nor are expressions, file creation/deletion, renames or mode changes.
     Callers supply the complete delta, including old and new rename paths;
     supporting context files are not changed paths. No model label lowers it.
     """
 
     floor = 0
+    ci_inputs = _ci_input_workflows(diff) if diff is not None else set()
+    ci_inputs.update(("scripts/ci-paths.py", "deploy/tests/test_ci_workflow.py"))
     for path in _repository_files(paths) if paths else ():
         if path in PROTECTED_REVIEW_INPUTS:
             floor = 2
+            continue
+        if path in ci_inputs:
             continue
         if path.startswith(LEAD_REVIEW_PREFIXES) or path.endswith(
             (".test.ts", ".test.tsx", ".test.js", ".test.mjs")
