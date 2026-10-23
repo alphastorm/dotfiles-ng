@@ -25,6 +25,10 @@
   enabled = true
 [include]
   path = ~/.config/.gitconfig.local
+[includeIf "gitdir:/private/var/folders/"]
+  path = ~/.gitconfig-temp-repos
+[includeIf "gitdir:/private/tmp/"]
+  path = ~/.gitconfig-temp-repos
 [commit]
   gpgSign = true
 [credential "https://github.com"]

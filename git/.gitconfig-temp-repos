@@ -1,0 +1,5 @@
+# Included by ~/.gitconfig for repositories under the macOS temp directories:
+# test fixtures and scratch clones. An fsmonitor daemon started in one of them
+# keeps running after the test or clone that needed it is gone.
+[core]
+  fsmonitor = false
