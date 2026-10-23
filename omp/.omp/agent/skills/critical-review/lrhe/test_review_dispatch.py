@@ -26,6 +26,82 @@ import qualification  # noqa: E402  -- needs the path above
 import review_dispatch as rd  # noqa: E402
 from test_review_sequence import _ready_record  # noqa: E402
 
+
+@pytest.mark.parametrize(
+    ("paths", "expected"),
+    [
+        (["scripts/ci-paths.py"], "lead-verification"),
+        (["deploy/tests/test_ci_workflow.py"], "lead-verification"),
+        ([".github/workflows/ci.yml"], "focused"),
+        (["scripts/ci-paths.py", "REVIEW.md"], "full-council"),
+    ],
+)
+def test_ci_input_path_floor(paths, expected):
+    assert rd.risk_floor(paths) == expected
+
+
+def workflow_diff(before, after, path=".github/workflows/ci.yml"):
+    return (
+        f"diff --git a/{path} b/{path}\n"
+        f"--- a/{path}\n+++ b/{path}\n"
+        "@@ -1 +1 @@\n"
+        f"-    {before}\n+    {after}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "expected"),
+    [
+        ("timeout-minutes: 120", "timeout-minutes: 180", "lead-verification"),
+        ('CARRYTHROUGH_DEPLOY_TEST_WORKERS: "3"',
+         'CARRYTHROUGH_DEPLOY_TEST_WORKERS: "8"', "lead-verification"),
+        ("max-parallel: 2", "max-parallel: 3", "lead-verification"),
+        ("concurrency: ci-old", "concurrency: ci-new", "lead-verification"),
+        ("# old cap", "# new cap", "lead-verification"),
+        ("steps:", "steps:\n+      - run: echo new", "focused"),
+        ("runs-on: ubuntu-latest", "runs-on: [self-hosted, studio]", "focused"),
+        ("permissions: read-all", "permissions: write-all", "focused"),
+        ("secrets: inherit", "secrets: {}", "focused"),
+        ("timeout-minutes: 10", "timeout-minutes: ${{ secrets.CAP }}", "focused"),
+        ("timeout-minutes: ${{ inputs.cap }}", "timeout-minutes: 10", "focused"),
+        ("timeout-minutes: 10", "timeout-minutes: 20\n+    permissions: write-all", "focused"),
+    ],
+)
+def test_ci_input_diff_floor(before, after, expected):
+    assert rd.risk_floor(
+        [".github/workflows/ci.yml"], workflow_diff(before, after)
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "diff",
+    [
+        "",
+        workflow_diff("timeout-minutes: 10", "timeout-minutes: 20", ".github/workflows/other.yml"),
+        workflow_diff("timeout-minutes: 10", "timeout-minutes: 20").replace(
+            "--- a/.github/workflows/ci.yml", "--- /dev/null"
+        ),
+        workflow_diff("timeout-minutes: 10", "timeout-minutes: 20").replace(
+            "--- a/", "old mode 100644\nnew mode 100755\n--- a/"
+        ),
+    ],
+)
+def test_ci_input_diff_must_cover_regular_existing_path(diff):
+    assert rd.risk_floor([".github/workflows/ci.yml"], diff) == "focused"
+
+
+def test_ci_input_diff_uses_every_hunk_and_path():
+    diff = workflow_diff("timeout-minutes: 10", "timeout-minutes: 20")
+    assert rd.risk_floor(
+        [".github/workflows/ci.yml", "deploy/tests/test_ci_workflow.py"], diff
+    ) == "lead-verification"
+    assert rd.risk_floor(
+        [".github/workflows/ci.yml", "REVIEW.md"], diff
+    ) == "full-council"
+    diff += "@@ -10 +10 @@\n-    permissions: read-all\n+    permissions: write-all\n"
+    assert rd.risk_floor([".github/workflows/ci.yml"], diff) == "focused"
+
+
 # (lead_family, review_class, reviewer_id) -> (agent, selectionClass, role,
 # independence_class, authority).
 EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
