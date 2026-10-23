@@ -288,8 +288,8 @@ profiles exist, and each has four explicit groups:
   critic first — Opus through the CVP-approved route for a GPT lead or Daybreak
   Blue for a Claude lead — then Gemini 4 Argon for both leads;
 - supplements selects always-on cross-family supplemental evidence for cheap
-  decorrelated coverage on every full council. A profile may carry none, and
-  both do while Grok 4.7 is paused;
+  decorrelated coverage on every full council. A profile may carry none: Claude
+  leads seat GPT-6 Astra, and GPT leads seat none while Grok 4.7 is paused;
 - leadFamilySecurity selects the qualified Daybreak security lane for GPT full
   councils and the CVP-bound Mythos 5.1 security lane for Claude full councils,
   as same_lineage_blind_sample and supplemental_evidence. Daybreak reuses its
@@ -314,16 +314,20 @@ requires its exact singleton `task.agentAccountPools` identity under the route
 and a v3 canary whose served pins for the route equal only that account's
 credential-pin hash, bound directly as `canaryReceipt` rather than through a
 `charterAmendment`. Unbound lanes keep native rotation and valid v2 receipts.
-The strong critics and supplements are pairwise distinct by model family and
-correlation group; the conditional architecture specialist may share lineage
+No model (correlation group) appears twice among the strong critics and
+supplements, and each of the two groups keeps distinct model families. A
+supplement may share a strong critic's family, as unbound GPT-6 Astra shares GPT
+with Daybreak under a Claude lead, because a supplement never counts toward the
+independent floor. The conditional architecture specialist may share lineage
 because it remains supplemental.
 
 Focused review resolves every strong critic in profile order, then
-`focusedSupplements` (none while Grok is paused), which must be members of the
-same profile's supplements and keep that supplemental standing. Both focused
-rosters have two seats: the reciprocal critic and Gemini 4 Argon. Every strong
-critic is required; missing, refused, or invalid results never count as approval.
-A focused supplement stays nonblocking supplemental evidence. Replay remains one
+`focusedSupplements` (Astra for Claude leads, none for GPT leads), which must be
+members of the same profile's supplements and keep that supplemental standing.
+Claude focused rosters have three seats: Daybreak, Gemini 4 Argon, and Astra; GPT
+focused rosters have two: Opus and Gemini 4 Argon. Every strong critic is
+required; missing, refused, or invalid results never count as approval. A
+focused supplement stays nonblocking supplemental evidence. Replay remains one
 seat: only the first, reciprocal strong critic. The caller never chooses a
 reviewer, and a supplement never replaces a strong critic. The retired Gemini
 Flash lane is disabled, not evaluation-only; paused Grok is evaluation-only and
@@ -364,8 +368,10 @@ therefore owns experiments only; `qualification.yml` owns live dispatch.
 qualification.py fails closed unless schema version 13, panel v10, exactly the GPT
 and Claude lead profiles, at least one strong critic,
 dispatch/evaluation flags, canary results, read-only proof, agents, and selectors
-are internally consistent. Each profile rejects a same-family strong critic or
-supplement, duplicate memberships, an unavailable strong floor, and a focused
+are internally consistent. Each profile rejects a strong critic or supplement of
+the lead's own family, a repeated model among its strong critics and supplements,
+a repeated family within either group, duplicate memberships, an unavailable
+strong floor, and a focused
 supplement that is not one of the profile's supplements. The explicit
 lead-family security group requires matching lineage, the security lens, and the
 existing passed provider/schema/read-only qualification gates. Fable proves

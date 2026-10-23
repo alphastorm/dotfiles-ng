@@ -841,15 +841,22 @@ def validate_qualification(document: object) -> Mapping[str, object]:
                         f"reviewers.{reviewer_id}.execution_mode must be 'task_agent' in "
                         f"liveDispatch.byLeadFamily.{lead_family}.{group}"
                     )
-        core_reviewers = (*groups["strongCritic"], *groups["supplements"])
-        for field in ("model_family", "correlation_group"):
+        # Families stay distinct within each group, and no model appears twice in
+        # the core. A supplement may share a strong critic's family: it is still
+        # cross-family to the lead and never counts toward the independent floor.
+        strong, supplements = groups["strongCritic"], groups["supplements"]
+        for label, members, field in (
+            ("strongCritic", strong, "model_family"),
+            ("supplements", supplements, "model_family"),
+            ("strongCritic and supplements", (*strong, *supplements), "correlation_group"),
+        ):
             owners: dict[str, str] = {}
-            for reviewer_id in core_reviewers:
+            for reviewer_id in members:
                 value = cast(str, identities[reviewer_id][field])
                 previous = owners.get(value)
                 if previous is not None:
                     raise QualificationError(
-                        f"liveDispatch.byLeadFamily.{lead_family}.strongCritic and supplements "
+                        f"liveDispatch.byLeadFamily.{lead_family}.{label} "
                         f"must use distinct {field} values; reviewers {previous!r} and "
                         f"{reviewer_id!r} both use {value!r}"
                     )
@@ -1289,8 +1296,9 @@ def _selected(
     """Emit one roster row, joined by reviewer_id and never by lineage.
 
     Lineage metadata rides along so a later audit can ask what a result was worth
-    without re-reading private configuration. The strong critics and supplements
-    are pairwise distinct; an architecture specialist may intentionally share
+    without re-reading private configuration. No model appears twice among the
+    strong critics and supplements, though a supplement may share a strong
+    critic's model_family; an architecture specialist may intentionally share
     model_family or correlation_group with another row. execution_mode is
     resolved here so every dispatcher uses the same native Task-agent path
     instead of branching on reviewer names.

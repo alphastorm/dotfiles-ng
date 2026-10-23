@@ -1824,18 +1824,49 @@ def test_distinct_cross_family_strong_critics_are_accepted_in_profile_order(
     ] == [reciprocal, "gemini-argon", "grok"]
 
 
-@pytest.mark.parametrize("field", ("model_family", "correlation_group"))
 @pytest.mark.parametrize(
-    ("first", "second"),
-    (("claude-opus", "gemini-argon"), ("claude-opus", "grok"), ("gemini-argon", "grok")),
+    ("first", "second", "field"),
+    (
+        ("claude-opus", "gemini-argon", "model_family"),
+        ("claude-opus", "gemini-argon", "correlation_group"),
+        ("gemini-argon", "grok", "correlation_group"),
+        ("claude-opus", "grok", "correlation_group"),
+    ),
 )
-def test_strong_critics_and_supplements_are_pairwise_decorrelated(
-    field: str, first: str, second: str,
+def test_the_core_roster_never_repeats_a_model_or_a_strong_critic_family(
+    first: str, second: str, field: str,
 ) -> None:
     document = _panel()
     document["reviewers"][second][field] = document["reviewers"][first][field]
     with pytest.raises(QualificationError, match=f"distinct {field}"):
         validate_qualification(document)
+
+
+def test_supplements_never_share_a_family_with_each_other() -> None:
+    document = _panel()
+    document["reviewers"]["grok-heavy"] = {
+        **document["reviewers"]["grok"], "correlation_group": "grok-4.7-heavy",
+    }
+    document["liveDispatch"]["byLeadFamily"]["claude"]["supplements"].append("grok-heavy")
+    with pytest.raises(QualificationError, match="supplements must use distinct model_family"):
+        validate_qualification(document)
+
+
+@pytest.mark.parametrize("lead_family", ("gpt", "claude"))
+def test_a_supplement_may_share_a_strong_critics_family_and_stays_supplemental(
+    lead_family: str,
+) -> None:
+    """A second model of a strong critic's family is a cross-family supplement,
+    never a second independent anchor."""
+
+    document = _panel()
+    document["reviewers"]["grok"]["model_family"] = "gemini"
+    validated = validate_qualification(document)
+    seat = qualification.focused_reviewers(validated, lead_family)[-1]
+    assert (seat.reviewer_id, seat.role, seat.independence_class, seat.authority) == (
+        "grok", qualification.SUPPLEMENT_ROLE, qualification.CROSS_FAMILY,
+        qualification.SUPPLEMENTAL_EVIDENCE,
+    )
 
 
 def test_lead_family_security_requires_matching_lineage_and_security_lens() -> None:

@@ -52,7 +52,7 @@ When the deterministic result is not a full council, stop before review ceremony
 
 #### Focused review routing
 
-Only GPT/ChatGPT and Claude are qualified accountable leads. A focused review uses every strong critic — the reciprocal critic, review-claude-opus under CVP for a GPT lead or review-daybreak-blue for a Claude lead, and review-gemini-argon for both — plus the profile's `focusedSupplements`, which is empty while review-grok is paused. `qualification.yml` owns those profile entries, and `review_dispatch.py prepare --review-class focused` resolves every seat in profile order from the accountable lead family; the packet grants every seat's vendor and access profiles. The caller cannot name, replace, reorder, or add a reviewer.
+Only GPT/ChatGPT and Claude are qualified accountable leads. A focused review uses every strong critic — the reciprocal critic, review-claude-opus under CVP for a GPT lead or review-daybreak-blue for a Claude lead, and review-gemini-argon for both — plus the profile's `focusedSupplements`: review-gpt-astra for a Claude lead, none for a GPT lead while review-grok is paused. `qualification.yml` owns those profile entries, and `review_dispatch.py prepare --review-class focused` resolves every seat in profile order from the accountable lead family; the packet grants every seat's vendor and access profiles. The caller cannot name, replace, reorder, or add a reviewer.
 
 Every strong critic is required cross-family independent evidence. Missing, refused, or invalid strong-critic results are missing, never approved. A configured focused supplement keeps its council supplement's standing: cross-family supplemental evidence that never replaces a strong critic or counts toward the independent floor. Its findings get the same lead verification and disposition as any other; a missing, refused, or invalid supplement result is recorded and never blocks closure or triggers a substitute. Review-claude-fable remains resolver-qualified architecture synthesis for full councils, not a focused shortcut. This routing does not modify the full council roster.
 
@@ -144,12 +144,14 @@ The resolver uses four explicit profile groups, not one role per model:
 | Group | GPT lead | Claude lead | Standing |
 |---|---|---|---|
 | strongCritic | Opus 5.5 through the CVP-approved route + Gemini 4 Argon | Daybreak Blue + Gemini 4 Argon | required cross-family independent evidence |
-| supplements | none while Grok 4.7 is paused | none while Grok 4.7 is paused | always-on cross-family supplemental evidence |
+| supplements | none while Grok 4.7 is paused | GPT-6 Astra | always-on cross-family supplemental evidence |
 | leadFamilySecurity | qualified Daybreak Blue | Mythos 5.1 through the CVP-approved route | always-on same-lineage blind sample; supplemental evidence only |
 | architectureSpecialists | Fable 5.1 when eligible | Fable 5.1 when eligible | record-selected supplemental architecture synthesis, security-touching subjects included |
 
-The strong critics and supplements must be pairwise distinct by model family and
-correlation group. Fable may intentionally share a lineage because its standing
+No model appears twice among the strong critics and supplements, and each group
+keeps distinct model families; a supplement may share a strong critic's family
+(Astra beside Daybreak) because it never counts toward the independent floor.
+Fable may intentionally share a lineage because its standing
 is always supplemental. Fable is eligible whenever the record names an
 architecture-lens domain; security domains, authorization proofs, and
 security-looking paths no longer exclude it. It may identify vulnerabilities it

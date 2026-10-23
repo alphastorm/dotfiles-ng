@@ -165,6 +165,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-gemini-argon", "canary", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
+    ("claude", "canary", "gpt-astra"): (
+        "review-gpt-astra", "canary", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
     ("claude", "canary", "claude-mythos"): (
         "review-claude-mythos", "canary", qualification.LEAD_FAMILY_SECURITY_ROLE,
         qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
@@ -185,6 +189,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-gemini-argon", "focused", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
     ),
+    ("claude", "focused", "gpt-astra"): (
+        "review-gpt-astra", "supplement", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
+    ),
     ("claude", "replay", "daybreak-blue"): (
         "review-daybreak-blue", "replay", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
@@ -196,6 +204,10 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
     ("claude", "initial", "gemini-argon"): (
         "review-gemini-argon", "strong", qualification.STRONG_ROLE,
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
+    ),
+    ("claude", "initial", "gpt-astra"): (
+        "review-gpt-astra", "supplement", qualification.SUPPLEMENT_ROLE,
+        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
     ("claude", "initial", "claude-mythos"): (
         "review-claude-mythos", "supplement", qualification.LEAD_FAMILY_SECURITY_ROLE,
@@ -218,9 +230,9 @@ EXPECTED_ARITY: dict[tuple[str, str], tuple[int, int]] = {
     ("gpt", "initial"): (3, 4),
     ("gpt", "targeted-refuter"): (1, 1),
     ("claude", "canary"): (1, 1),
-    ("claude", "focused"): (2, 2),
+    ("claude", "focused"): (3, 3),
     ("claude", "replay"): (1, 1),
-    ("claude", "initial"): (3, 4),
+    ("claude", "initial"): (4, 5),
     ("claude", "targeted-refuter"): (1, 1),
 }
 
@@ -535,7 +547,9 @@ def test_receipt_schema_requires_the_whole_focused_roster(
         for (family, review_class, reviewer_id), row in EXPECTED_TUPLES.items()
         if family == lead_family and review_class == "focused"
     ]
-    assert [row["reviewer_id"] for row in roster][1:] == ["gemini-argon"]
+    assert [row["reviewer_id"] for row in roster][1:] == (
+        ["gemini-argon", "gpt-astra"] if lead_family == "claude" else ["gemini-argon"]
+    )
     cases = [(roster, True)]
     cases.extend((roster[:index] + roster[index + 1:], False) for index in range(len(roster)))
     for assignments, valid in cases:
@@ -657,7 +671,7 @@ def test_receipt_schema_refuses_a_wrong_role(receipt_validator, packet_only_subj
 def test_receipt_schema_refuses_a_wrong_authority(receipt_validator, packet_only_subject):
     complete = [
         _assignment(reviewer_id, EXPECTED_TUPLES[("claude", "initial", reviewer_id)])
-        for reviewer_id in ("daybreak-blue", "gemini-argon", "claude-mythos")
+        for reviewer_id in ("daybreak-blue", "gemini-argon", "gpt-astra", "claude-mythos")
     ]
     document = _receipt_document(
         packet_only_subject,
@@ -1301,12 +1315,13 @@ def test_focused_roster_requires_independent_argon_after_the_reciprocal_critic(
         subject_commit=repository["commit"],
         files=["src/dispatch.py"],
     )
-    strong, argon = rd.resolve_assignments(
+    roster = [row.reviewer_id for row in qualification.focused_reviewers(document, lead_family)]
+    strong, argon, *supplements = rd.resolve_assignments(
         document,
         verified,
         lead_family=lead_family,
         review_class="focused",
-        reviewer_ids=[reviewer_id, "gemini-argon"],
+        reviewer_ids=roster,
         authority_path=rd.LIVE_AUTHORITY,
         authority_sha256="0" * 64,
     )
@@ -1315,44 +1330,51 @@ def test_focused_roster_requires_independent_argon_after_the_reciprocal_critic(
     assert strong.authority == qualification.INDEPENDENT_EVIDENCE
     assert argon.reviewer_id == "gemini-argon"
     assert argon.reason_codes == (qualification.STRONG_REASON_CODE,)
-    assert (
-        argon.agent,
-        argon.selection_class,
-        argon.role,
-        argon.independence_class,
-        argon.authority,
-    ) == EXPECTED_TUPLES[(lead_family, "focused", "gemini-argon")]
+    for seat in (argon, *supplements):
+        assert (
+            seat.agent,
+            seat.selection_class,
+            seat.role,
+            seat.independence_class,
+            seat.authority,
+        ) == EXPECTED_TUPLES[(lead_family, "focused", seat.reviewer_id)]
+    assert all(seat.reason_codes == (qualification.SUPPLEMENT_REASON_CODE,) for seat in supplements)
 
 
 @pytest.mark.parametrize(
     ("lead_family", "reviewer_id"),
     (
         ("gpt", "claude-opus"), ("gpt", "gemini-argon"),
-        ("claude", "daybreak-blue"), ("claude", "gemini-argon"),
+        ("claude", "daybreak-blue"), ("claude", "gemini-argon"), ("claude", "gpt-astra"),
     ),
 )
 @pytest.mark.parametrize("grant_field", ("data_allowlist_key", "access_profile"))
 def test_focused_refuses_either_withheld_grant_for_every_seat(
     tmp_path, material, authority, lead_family: str, reviewer_id: str, grant_field: str
 ):
-    """Every focused seat needs both grants; an unauthorized seat is never dropped."""
+    """Every focused seat needs both grants; an unauthorized seat is never dropped.
+
+    A vendor grant two seats share fails on the first seat in roster order."""
 
     text = material["packet"].read_text(encoding="utf-8")
-    grant = f"- {authority['reviewers'][reviewer_id][grant_field]}\n"
+    withheld = authority["reviewers"][reviewer_id][grant_field]
+    grant = f"- {withheld}\n"
     assert grant in text
     packet = tmp_path / "withheld-grant-packet.md"
     packet.write_text(text.replace(grant, ""), encoding="utf-8")
     document = qualification.validate_qualification(authority)
+    roster = [row.reviewer_id for row in qualification.focused_reviewers(document, lead_family)]
+    refused = next(
+        seat for seat in roster if authority["reviewers"][seat][grant_field] == withheld
+    )
     verified = rd.freeze_subject(scope_path=material["scope"], packet_path=packet)
-    with pytest.raises(rd.DispatchError, match=rf"does not authorize reviewers\.{reviewer_id}"):
+    with pytest.raises(rd.DispatchError, match=rf"does not authorize reviewers\.{refused}"):
         rd.resolve_assignments(
             document,
             verified,
             lead_family=lead_family,
             review_class="focused",
-            reviewer_ids=[
-                row.reviewer_id for row in qualification.focused_reviewers(document, lead_family)
-            ],
+            reviewer_ids=roster,
             authority_path=rd.LIVE_AUTHORITY,
             authority_sha256="0" * 64,
         )
@@ -1373,7 +1395,7 @@ def test_replay_resolves_only_the_reciprocal_critic_without_other_focused_grants
         live = authority["liveDispatch"]
         live["evaluationOnly"] = [item for item in live["evaluationOnly"] if item != "grok"]
         authority["reviewers"]["grok"]["dispatchEnabled"] = True
-        profile["supplements"] = supplements
+        profile["supplements"] = [*profile["supplements"], *supplements]
     profile["focusedSupplements"] = supplements
     document = qualification.validate_qualification(authority)
     packet_text = material["packet"].read_text(encoding="utf-8")

@@ -2071,8 +2071,8 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
         },
         "claude": {
             "strongCritic": ["daybreak-blue", "gemini-argon"],
-            "supplements": [],
-            "focusedSupplements": [],
+            "supplements": ["gpt-astra"],
+            "focusedSupplements": ["gpt-astra"],
             "leadFamilySecurity": ["claude-mythos"],
             "architectureSpecialists": ["claude"],
         },
@@ -2096,7 +2096,7 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
     assert (grok["dispatchEnabled"], grok["evaluationEnabled"]) == (False, True)
     assert {"evidenceDelivery", "tools", "canaryReceipt"} <= grok.keys()
     assert document["reviewers"]["gemini-argon"]["evaluationEnabled"] is False
-    for reviewer_id in ("daybreak-blue", "claude-opus", "claude-mythos", "gemini-argon"):
+    for reviewer_id in ("daybreak-blue", "claude-opus", "claude-mythos", "gemini-argon", "gpt-astra"):
         entry = document["reviewers"][reviewer_id]
         assert entry["dispatchEnabled"] is True
         assert entry["execution_mode"] == "task_agent"
@@ -2109,6 +2109,10 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
         assert "blockers" not in entry
     for reviewer_id in ("claude-opus", "claude-mythos"):
         assert document["reviewers"][reviewer_id]["access_profile"] == "anthropic-cvp-approved-org"
+    # Astra is unbound: any Codex Pro account serves it, so no account identity or pool.
+    astra = document["reviewers"]["gpt-astra"]
+    assert "oauthAccount" not in astra
+    assert astra["correlation_group"] != document["reviewers"]["daybreak-blue"]["correlation_group"]
     # Reviewing security-touching subjects never promotes Fable to a security lane.
     fable_scopes = document["reviewers"]["claude"]["qualification"]["scopes"]
     assert fable_scopes["security-review"]["status"] == "ineligible"
