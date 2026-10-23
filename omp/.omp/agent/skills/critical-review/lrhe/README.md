@@ -287,8 +287,9 @@ profiles exist, and each has four explicit groups:
 - strongCritic selects required cross-family independent reviewers: the reciprocal
   critic first — Opus through the CVP-approved route for a GPT lead or Daybreak
   Blue for a Claude lead — then Gemini 4 Argon for both leads;
-- supplements selects only Grok 4.7 on every full council, as cross-family
-  supplemental evidence for cheap decorrelated coverage;
+- supplements selects always-on cross-family supplemental evidence for cheap
+  decorrelated coverage on every full council. A profile may carry none, and
+  both do while Grok 4.7 is paused;
 - leadFamilySecurity selects the qualified Daybreak security lane for GPT full
   councils and the CVP-bound Mythos 5.1 security lane for Claude full councils,
   as same_lineage_blind_sample and supplemental_evidence. Daybreak reuses its
@@ -318,14 +319,16 @@ correlation group; the conditional architecture specialist may share lineage
 because it remains supplemental.
 
 Focused review resolves every strong critic in profile order, then
-`focusedSupplements` (Grok for both leads), which must be members of the same
-profile's supplements and keep that supplemental standing. Both focused rosters
-have three seats: the reciprocal critic, Gemini 4 Argon, and Grok. Every strong
+`focusedSupplements` (none while Grok is paused), which must be members of the
+same profile's supplements and keep that supplemental standing. Both focused
+rosters have two seats: the reciprocal critic and Gemini 4 Argon. Every strong
 critic is required; missing, refused, or invalid results never count as approval.
-Grok stays nonblocking supplemental evidence. Replay remains one seat: only the
-first, reciprocal strong critic. The caller never chooses a reviewer, and a
-supplement never replaces a strong critic. The retired Gemini Flash lane is
-disabled, not evaluation-only.
+A focused supplement stays nonblocking supplemental evidence. Replay remains one
+seat: only the first, reciprocal strong critic. The caller never chooses a
+reviewer, and a supplement never replaces a strong critic. The retired Gemini
+Flash lane is disabled, not evaluation-only; paused Grok is evaluation-only and
+keeps its evidence contract, so preflight still checks its trace, fixture, and
+active model override.
 
 ChatGPT Pro Web remains deliberately outside liveDispatch. For ordinary cloud-permitted full councils, the generated packet grants let the separate `oracleShadow` authority attempt pinned pi-oracle `pro_extended` without a user prompt. Explicit provider restrictions may omit `openai` data egress or the exact `chatgpt-pro-web-asxst0rm` access profile. Its output has no reviewer standing, never blocks closure, receives no peer output, and never substitutes for a qualified lane. Missing grants and every operational failure are persisted as nonblocking outcomes under `lrhe-data/oracle-shadow/`, so browser automation can accumulate evidence without becoming part of the council availability contract.
 
@@ -359,7 +362,7 @@ unapproved reviewers and makes independent roles look like votes. `panels.yaml`
 therefore owns experiments only; `qualification.yml` owns live dispatch.
 
 qualification.py fails closed unless schema version 13, panel v10, exactly the GPT
-and Claude lead profiles, at least one strong critic, nonempty supplements,
+and Claude lead profiles, at least one strong critic,
 dispatch/evaluation flags, canary results, read-only proof, agents, and selectors
 are internally consistent. Each profile rejects a same-family strong critic or
 supplement, duplicate memberships, an unavailable strong floor, and a focused

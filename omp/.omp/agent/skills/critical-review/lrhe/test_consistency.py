@@ -1156,6 +1156,8 @@ def test_probe_pins_bind_version_fixture_and_role(tmp_path):
             "glm", measured, ("targeted_refuter",), tmp_path
         )
     )
+    # A paused lane keeps its probe pins but holds no live standing to cover.
+    assert preflight._probe_pin_problems("grok", measured, ("evaluation_only",), tmp_path) == []
 
     unnamed = {**measured, "repositoryFixture": "lrhe-data/repository-canary-auth.py"}
     assert any(
@@ -2062,15 +2064,15 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
     assert profiles == {
         "gpt": {
             "strongCritic": ["claude-opus", "gemini-argon"],
-            "supplements": ["grok"],
-            "focusedSupplements": ["grok"],
+            "supplements": [],
+            "focusedSupplements": [],
             "leadFamilySecurity": ["daybreak-blue"],
             "architectureSpecialists": ["claude"],
         },
         "claude": {
             "strongCritic": ["daybreak-blue", "gemini-argon"],
-            "supplements": ["grok"],
-            "focusedSupplements": ["grok"],
+            "supplements": [],
+            "focusedSupplements": [],
             "leadFamilySecurity": ["claude-mythos"],
             "architectureSpecialists": ["claude"],
         },
@@ -2080,17 +2082,19 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
             document["reviewers"][item]["model_family"] != lead_family
             for item in profile["strongCritic"]
         )
-        assert [document["reviewers"][item]["model_family"] for item in profile["supplements"]] == [
-            "grok",
-        ]
 
     assert live["targetedRefuters"] == ["glm"]
-    assert live["evaluationOnly"] == ["kimi", "deepseek"]
+    assert live["evaluationOnly"] == ["kimi", "deepseek", "grok"]
     assert live["disabled"] == ["minimax", "gemini"]
     flash = document["reviewers"]["gemini"]
     assert flash["dispatchEnabled"] is False
     assert flash["evaluationEnabled"] is False
     assert not {"evidenceDelivery", "tools", "canaryReceipt"} & flash.keys()
+    # Paused, not retired: Grok keeps its evidence contract so restoring it is a
+    # membership change rather than a requalification.
+    grok = document["reviewers"]["grok"]
+    assert (grok["dispatchEnabled"], grok["evaluationEnabled"]) == (False, True)
+    assert {"evidenceDelivery", "tools", "canaryReceipt"} <= grok.keys()
     assert document["reviewers"]["gemini-argon"]["evaluationEnabled"] is False
     for reviewer_id in ("daybreak-blue", "claude-opus", "claude-mythos", "gemini-argon"):
         entry = document["reviewers"][reviewer_id]

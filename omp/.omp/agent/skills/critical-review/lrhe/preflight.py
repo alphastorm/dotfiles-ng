@@ -49,6 +49,7 @@ import canary  # noqa: E402
 import run_review  # noqa: E402
 from qualification import (  # noqa: E402
     ARCHITECTURE_ROLE,
+    LIVE_GROUPS,
     LEAD_FAMILY_SECURITY_ROLE,
     STRONG_ROLE,
     SUPPLEMENT_ROLE,
@@ -393,11 +394,14 @@ PROBE_ROLE_SUCCESSORS = {
     "security_specialist": {STRONG_ROLE, LEAD_FAMILY_SECURITY_ROLE},
     "conditional_critic": {ARCHITECTURE_ROLE},
 }
+# The probe role pin guards live standing. An evaluation-only or disabled lane
+# holds none, so its retained probe answers only to the version and fixture pins.
+DISPATCH_ROLES = frozenset(role for role, dispatches in LIVE_GROUPS.values() if dispatches)
 
 def _probe_pin_problems(
     family: str,
     measured: dict[str, object],
-    dispatch_roles: tuple[str, ...],
+    roles: tuple[str, ...],
     skill: Path,
 ) -> list[str]:
     """Verify a repository canary's probe-version and fixture pins.
@@ -454,10 +458,15 @@ def _probe_pin_problems(
         )
     role = entry.get("role")
     compatible_roles = PROBE_ROLE_SUCCESSORS.get(role, set()) if isinstance(role, str) else set()
-    if role not in dispatch_roles and not compatible_roles.intersection(dispatch_roles):
+    dispatch_roles = [item for item in roles if item in DISPATCH_ROLES]
+    if (
+        dispatch_roles
+        and role not in dispatch_roles
+        and not compatible_roles.intersection(dispatch_roles)
+    ):
         problems.append(
             f"{family}: probe {version} role {role!r} is not compatible with selected roles "
-            f"{list(dispatch_roles)!r}"
+            f"{dispatch_roles!r}"
         )
     return problems
 

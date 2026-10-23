@@ -1705,9 +1705,6 @@ def test_live_panel_roles_are_derived_from_private_authority() -> None:
             reviewer_entries[item]["model_family"] != lead_family
             for item in profile["strongCritic"]
         )
-        assert [reviewer_entries[item]["model_family"] for item in profile["supplements"]] == [
-            "grok",
-        ]
         for group in qualification.PROFILE_GROUPS:
             assigned.update(profile[group])
             assert all(

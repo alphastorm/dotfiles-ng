@@ -41,13 +41,14 @@ reviewer prose:
   the reciprocal critic first — Opus CVP for a GPT lead or Daybreak Blue for a
   Claude lead — then Gemini 4 Argon for both leads. Every member sits on every
   focused review and full council;
-- supplements selects Grok 4.7 on every full council. It is cross-family
-  supplemental evidence: useful for cheap decorrelation, but unable to rescue
-  the independent floor or break a dispute.
+- supplements selects always-on cross-family supplemental evidence for every
+  full council: useful for cheap decorrelation, but unable to rescue the
+  independent floor or break a dispute. It is empty while Grok 4.7 is paused;
+  the lane stays evaluation-only with its qualification retained.
   The strong critics and supplements are pairwise distinct by model family and
   correlation group;
 - focusedSupplements names the supplements that also sit on every focused
-  review: Grok 4.7 for both leads. Each member must be in the same profile's
+  review, currently none. Each member must be in the same profile's
   supplements and keeps that supplemental standing beside every strong critic;
 - architectureSpecialists is additive and record-selected. Eligible Fable is
   supplemental whether cross-family or same-lineage, and its absence never
@@ -465,7 +466,7 @@ Evidence compatibility is executable policy:
   must carry the same complete bundle for that member, while every repository
   member still requires the bound commit and files.
 
-A focused preparation uses the same command with `--review-class focused`; the resolver infers every strong critic in profile order (the reciprocal critic, then Gemini 4 Argon), followed by its `focusedSupplements` (Grok), and rejects any caller-supplied reviewer choice. It has no panel manifest. A targeted-refuter
+A focused preparation uses the same command with `--review-class focused`; the resolver infers every strong critic in profile order (the reciprocal critic, then Gemini 4 Argon), followed by its `focusedSupplements` (currently none), and rejects any caller-supplied reviewer choice. It has no panel manifest. A targeted-refuter
 preparation uses `--review-class targeted-refuter`, requires the remediation
 record, and infers the complete fixed pool; callers do not name or filter it.
 Packet, scope, repository, subject, receipt, and envelope arguments retain the
@@ -667,7 +668,7 @@ Scaffold the table mechanically; keep only the judgment manual:
 
 ```bash
 ./lrhe/epoch.py ledger --manifest panel-selection.json \
-  --member claude=claude.json --member grok=grok.json \
+  --member claude-opus=claude-opus.json --member gemini-argon=gemini-argon.json \
   --review-id <review-id> --out ledger.md
 ```
 
