@@ -230,12 +230,20 @@ API_REVIEW_MODULES = frozenset(
 LEAD_REVIEW_PREFIXES = (
     "apps/api/tests/",
     "deploy/tests/",
+    # Standing-policy documents are inert until an owner-gated publication binds their caps.
+    "deploy/project-loops/policies/",
     "deploy/qualification/",
     "deploy/checkpoint/",
     "deploy/legacy/",
     "deploy/archive/",
     "docs/qualification-evidence/",
 )
+# Deployment profiles: lead verification only for release re-pins, decided from the complete diff
+# (`_pin_only_profiles`); any other profile edit, or a call without the diff, keeps the deploy/
+# floor.
+# The customer bundle's example profiles (one directory level) carry the same release pins.
+PROFILE_PIN_PREFIX = "deploy/profiles/"
+_EXAMPLE_PROFILE = re.compile(r"deploy/customer/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+\.example\.yaml")
 
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 _COMMIT_HEX = re.compile(r"[0-9a-f]{40}")
@@ -500,19 +508,35 @@ def _repository_files(values: Sequence[object]) -> tuple[str, ...]:
     return tuple(sorted(files))
 
 
+# One LF-terminated Git line never contains CR, U+0085, U+2028 or U+2029 in an exempt class.
+_COMMENT = r"#[^\r\n\x85\u2028\u2029]*"
+_TAIL = r"(?:" + _COMMENT + r")?"
+
+
+def _diff_sections(diff: str) -> list[str]:
+    """Per-file sections of a Git diff, split on LF only.
+
+    str.splitlines() would also break on CR and the Unicode separators, letting one Git line be
+    read as an exempt line followed by a harmless context line.
+    """
+    return ("\n" + diff).split("\ndiff --git ")[1:]
+
+
 def _ci_input_workflows(diff: str) -> set[str]:
     """Recognize literal/comment-only edits in a complete no-renames Git diff."""
 
+    # `[ \t]` and `_TAIL` never match CR, U+0085, U+2028 or U+2029: YAML treats those as
+    # line breaks, so a second statement could hide behind one on an exempt literal line.
     literal = re.compile(
-        r"\s*(?:#.*|"
-        r"(?:timeout-minutes|CARRYTHROUGH_DEPLOY_TEST_WORKERS|max-parallel):\s*"
-        r"(?:[0-9]+|'[0-9]+'|\"[0-9]+\")\s*(?:#.*)?|"
-        r"concurrency:\s*(?:[A-Za-z0-9_.-]+|'[A-Za-z0-9_.-]+'|"
-        r"\"[A-Za-z0-9_.-]+\")\s*(?:#.*)?)"
+        r"[ \t]*(?:" + _COMMENT + r"|"
+        r"(?:timeout-minutes|CARRYTHROUGH_DEPLOY_TEST_WORKERS|max-parallel):[ \t]*"
+        r"(?:[0-9]+|'[0-9]+'|\"[0-9]+\")[ \t]*" + _TAIL + r"|"
+        r"concurrency:[ \t]*(?:[A-Za-z0-9_.-]+|'[A-Za-z0-9_.-]+'|"
+        r"\"[A-Za-z0-9_.-]+\")[ \t]*" + _TAIL + r")"
     )
     exempt = set()
-    for section in re.split(r"(?m)^diff --git ", diff)[1:]:
-        lines = section.splitlines()
+    for section in _diff_sections(diff):
+        lines = section.split("\n")
         match = re.fullmatch(r"a/(\.github/workflows/\S+) b/\1", lines[0])
         if not match:
             continue
@@ -531,8 +555,54 @@ def _ci_input_workflows(diff: str) -> set[str]:
                 if not literal.fullmatch(line[1:]):
                     break
                 changed = True
-            elif not line.startswith(" ") and line != r"\ No newline at end of file":
+            elif line and not line.startswith(" ") and line != r"\ No newline at end of file":
                 break
+        else:
+            if changed and headers == {"---", "+++"}:
+                exempt.add(path)
+    return exempt
+
+
+# `[ \t]` and `_TAIL` never match CR, U+0085, U+2028 or U+2029 (see _diff_sections).
+_PIN_LINE = re.compile(
+    r"[ \t]*(?:" + _COMMENT + r"|"
+    r"|"  # a blank line (REVIEW.md names it for profiles, never for workflows)
+    r"sha256:[ \t]*[0-9a-f]{64}[ \t]*" + _TAIL + r"|"
+    r"path:[ \t]*deploy/(?:releases/[A-Za-z0-9._-]+\.json"
+    r"|customer/[A-Za-z0-9_-]+/supply-manifest\.json)[ \t]*" + _TAIL + r"|"
+    r"ref:[ \t]*omp-[0-9]+[ \t]*" + _TAIL + r")"
+)
+
+
+def _pin_only_profiles(diff: str) -> set[str]:
+    """Deployment profiles whose every changed line is a release pin, a cohort ref or a comment."""
+    exempt = set()
+    for section in _diff_sections(diff):
+        lines = section.split("\n")
+        match = re.fullmatch(r"a/(\S+) b/\1", lines[0])
+        if not match:
+            continue
+        path = match[1]
+        if not (
+            path.startswith(PROFILE_PIN_PREFIX) or _EXAMPLE_PROFILE.fullmatch(path)
+        ) or not path.endswith((".yaml", ".yml")):
+            continue  # a JSON overlay or any other file type keeps the deploy/ floor
+        in_hunk = changed = False
+        headers = set()
+        for line in lines[1:]:
+            if line.startswith("@@ "):
+                in_hunk = True
+            elif not in_hunk:
+                if line in (f"--- a/{path}", f"+++ b/{path}"):
+                    headers.add(line[:3])
+                elif not re.fullmatch(r"index [0-9a-f]+\.\.[0-9a-f]+ 100644", line):
+                    break
+            elif line.startswith(("+", "-")):
+                if not _PIN_LINE.fullmatch(line[1:]):
+                    break
+                changed = True
+            elif line and not line.startswith(" ") and line != r"\ No newline at end of file":
+                break  # an empty string only arises from the trailing LF of the diff
         else:
             if changed and headers == {"---", "+++"}:
                 exempt.add(path)
@@ -554,21 +624,21 @@ def risk_floor(paths: Sequence[str], diff: str | None = None) -> str:
     floor = 0
     ci_inputs = _ci_input_workflows(diff) if diff is not None else set()
     ci_inputs.update(("scripts/ci-paths.py", "deploy/tests/test_ci_workflow.py"))
+    pin_only = _pin_only_profiles(diff) if diff is not None else set()
     for path in _repository_files(paths) if paths else ():
         if path in PROTECTED_REVIEW_INPUTS:
             floor = 2
             continue
         if path in ci_inputs:
             continue
-        if path.startswith(LEAD_REVIEW_PREFIXES) or path.endswith(
-            (".test.ts", ".test.tsx", ".test.js", ".test.mjs")
+        if (
+            path in pin_only
+            or path.startswith(LEAD_REVIEW_PREFIXES)
+            or path.endswith((".test.ts", ".test.tsx", ".test.js", ".test.mjs"))
         ):
             continue
-        if (
-            path in FOCUSED_REVIEW_INPUTS
-            or path.startswith(
-                ("deploy/", "apps/api/migrations/", ".github/workflows/", ".github/actions/")
-            )
+        if path in FOCUSED_REVIEW_INPUTS or path.startswith(
+            ("deploy/", "apps/api/migrations/", ".github/workflows/", ".github/actions/")
         ):
             floor = max(floor, 1)
         elif path.startswith("apps/api/src/carrythrough/"):
@@ -1515,9 +1585,7 @@ def resolve_assignments(
             )
         reviewer = canary_reviewer(document, lead_family, requested[0])
         _require_grants(reviewer, verified.packet)
-        assignments = (
-            _assignment(reviewer, CANARY_SELECTION_CLASS, (CANARY_REASON_CODE,)),
-        )
+        assignments = (_assignment(reviewer, CANARY_SELECTION_CLASS, (CANARY_REASON_CODE,)),)
         validate_evidence_compatibility(
             subject, verified.packet, [item.evidence_delivery for item in assignments]
         )
@@ -2184,9 +2252,7 @@ def oracle_shadow_document(
         selected = False
         reason_codes = [ORACLE_EVIDENCE_INCOMPATIBLE]
     selection_value = (
-        qualification.ORACLE_SHADOW_SELECTED
-        if selected
-        else cast(str, selection["selection"])
+        qualification.ORACLE_SHADOW_SELECTED if selected else cast(str, selection["selection"])
     )
     if not selected and selection_value == qualification.ORACLE_SHADOW_SELECTED:
         selection_value = qualification.ORACLE_SHADOW_SKIPPED
@@ -2358,9 +2424,7 @@ def _verified_receipt(
             f"it records: {[item.standing for item in fresh]} instead of "
             f"{[item.standing for item in receipt.assignments]}"
         )
-    return receipt, receipt_sha256, verified, canonical_tasks(
-        receipt, receipt_sha256, verified
-    )
+    return receipt, receipt_sha256, verified, canonical_tasks(receipt, receipt_sha256, verified)
 
 
 def _build_receipt(
@@ -2550,12 +2614,9 @@ def command_prepare(args: argparse.Namespace) -> str:
         if args.review_class == CANARY:
             if args.record is not None:
                 raise DispatchError(
-                    "a qualification canary binds no review record; it probes a lane, not a "
-                    "change"
+                    "a qualification canary binds no review record; it probes a lane, not a change"
                 )
-            reviewers = (
-                canary_reviewer(authority, args.lead_family, args.reviewer).reviewer_id,
-            )
+            reviewers = (canary_reviewer(authority, args.lead_family, args.reviewer).reviewer_id,)
         elif args.review_class == REPLAY:
             reviewers = (
                 qualification.strong_reviewers(authority, args.lead_family)[0].reviewer_id,
@@ -2629,9 +2690,7 @@ def command_dispatch(args: argparse.Namespace) -> str:
     receipt, receipt_sha256, _verified, tasks = _verified_receipt(args.receipt)
     receipt_path = _resolved(args.receipt, "resolver receipt")
     oracle_shadow_value = oracle_shadow_document(receipt, receipt_sha256, _verified)
-    document = envelope_document(
-        receipt, receipt_path, receipt_sha256, tasks, oracle_shadow_value
-    )
+    document = envelope_document(receipt, receipt_path, receipt_sha256, tasks, oracle_shadow_value)
     _, _, schema = bind_public_schema(ENVELOPE_SCHEMA_RELATIVE_PATH)
     _validate(document, schema, "review dispatch envelope")
     envelope_path = _write_once(args.out, _artifact_text(document), "review dispatch envelope")
@@ -2673,9 +2732,8 @@ def command_verify_task(args: argparse.Namespace) -> str:
             f"{document['receiptSha256']} this envelope was built from"
         )
     oracle_shadow_value = oracle_shadow_document(receipt, receipt_sha256, verified)
-    if (
-        envelope_document(receipt, receipt_path, receipt_sha256, tasks, oracle_shadow_value)
-        != dict(document)
+    if envelope_document(receipt, receipt_path, receipt_sha256, tasks, oracle_shadow_value) != dict(
+        document
     ):
         raise DispatchError(
             "rebuilding this envelope from freshly read bytes does not reproduce it; the "
