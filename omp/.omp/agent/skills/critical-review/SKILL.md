@@ -108,7 +108,13 @@ eval submission that may background, native wait, validated plan, guarded
 cleanup — and never restate or vary it here. Cite the plan's `chat_id` and its
 `oracle_export_path` before mutation, packet construction, or freeze. Treat its
 selection and plan as a preservation baseline for the accountable lead to check
-against current evidence. RepoPrompt prose is never a reviewer verdict, standing,
+against current evidence. RepoPrompt proposes context and invariants; mandatory
+requirements come from the founder, governing policy and validated serious
+defects. The lead records adopt/reject with a reason for proposed invariants,
+without dropping mandatory requirements. A parent preparation may support child
+subjects when their relevant sources, boundaries and subsequent deltas are
+identified; materially changed assumptions invalidate the affected preparation.
+RepoPrompt prose is never a reviewer verdict, standing,
 authorization, frozen evidence, or acceptance proof, and reviewers do not receive
 it as an independent finding. A failed, unusable, or unresolved preparation is
 never rerun to unblock a review; continue without it.
@@ -134,7 +140,7 @@ artifacts, or proof receipts into the runtime diagnosis harness.
 5. Close classes, not instances. When a finding names one instance of a mechanical class — an invocation pattern, a predicate shape, a fixture convention — sweep the whole subject for the class in the same remediation and encode the class as an executable invariant (a meta-test that fails the suite). Policy prose alone never closes a class.
 6. Stop-rule: if a round confirms the same defect class as the previous round, halt remediation and land the executable invariant before any re-dispatch.
 7. Freeze the reviewed subject. Never edit the reviewed tree — including its policy and context files — while any reviewer is reading; queue such edits for the disposition commit. A verdict rendered over a moving target is discarded and the round is wasted.
-8. Remediation-scoped verification defaults to the focused-reviewer lane; the full council renders only the sequence's budgeted general passes and the final verdict. Hard cap: two councils per subject per day; a third needs the user's approval through Ask with the stated reason, so the loop is visible instead of self-authorizing.
+8. Remediation-scoped verification defaults to the focused-reviewer lane; the full council renders only the sequence's budgeted general passes and the final verdict. A repository's governing `REVIEW.md` takes precedence for explicit local round, subject, successor and receipt-admission rules; the portable sequence budget applies where it is silent. There is no separate per-day reset or council allowance. Local budgets never erase inherited workstream history, relax qualified independence or make a non-admitting receipt sufficient.
 9. Exit is by disposition, not zero findings: no in-scope residual P0/P1 and clean credential paths close the sequence, and the accountable lead records explicit residual dispositions for every remaining P2/P3 item without a user prompt. A supplemental seat's credential-path claim blocks only after lead verification against the committed bytes.
 
 ### Pragmatic full-council composition
@@ -178,7 +184,22 @@ failure is recorded for later evaluation and has no effect on the council.
 
 Every change admitted to the full council has one `review_sequence_id`. Every frozen epoch has one machine-readable `review-record.json`. `lrhe/review_sequence.py` is the sole dispatch-action selector; packet prose cannot override its result. Its modes are `design`, an optional pre-implementation council on the frozen design artifact; `initial`, the first general council for the sequence; `remediation`, a correction scoped to named findings, changed paths, and adjacent invariants; `material-redesign`, a second general council only after the initial council's named P0/P1 findings are directly verified as resolved and the correction changes architecture, a trust boundary, public compatibility, persistent state, migration/rollback, or production effects; and `founder-requested`, exactly one explicit founder-authorized third implementation council.
 
-The autonomous budget remains one optional design pass, the initial implementation pass, and at most one verified material redesign. Only an already-recorded founder decision selecting `Allow one additional council` permits `founder-requested` after exactly two implementation passes. Its `founder_followup_authorization` binds the decision artifact by path and SHA-256 to the same sequence and latest prior review. Preserve the full bound history: never relabel an epoch, reset a sequence, or request another grant to obtain a fourth pass. The extra pass uses the ordinary full gate and complete resolver-selected council, not a reduced roster; `NO_CLOUD` still overrides it. Verified remediation can close afterward, and one targeted refutation remains the entire refutation budget. Never solicit an extra council merely to continue autonomous remediation.
+Absent an explicit repository override, the autonomous budget remains one optional design pass, the initial implementation pass, and at most one verified material redesign. Only an already-recorded founder decision selecting `Allow one additional council` permits `founder-requested` after exactly two implementation passes. Its `founder_followup_authorization` binds the decision artifact by path and SHA-256 to the same sequence and latest prior review. Preserve the full bound history: never relabel an epoch, reset a sequence, or request another grant to obtain a fourth pass. The extra pass uses the ordinary full gate and complete resolver-selected council, not a reduced roster; `NO_CLOUD` still overrides it. Verified remediation can close afterward, and one targeted refutation remains the entire refutation budget. Never solicit an extra council merely to continue autonomous remediation.
+
+For a parked subject or successor, `lrhe/review_lineage.py` reports the next
+preparation action and required evidence, never dispatch permission. Supply
+`--state parked|successor --subject-rounds N --inherited-rounds N`, the governing
+`--repository-review /path/to/REVIEW.md` when present, and the retained
+`--parent-ledger /path/to/ledger.md` (required for successors). Counts are caller
+observations, not attestations; reconcile them with the ledgers. The report
+hashes references, preserves inherited totals and names parent-finding anchors,
+invariant ownership, class-closure evidence and the exact-head admitting receipt
+as obligations. It neither interprets arbitrary policy prose as authority nor
+modifies frozen records, resolver budgets or reviewer standing. Parked bytes
+stay retired; a new subject budget needs an explicit repository rule, and the
+parent → successors remain one convergence report. If the governing policy and
+the applicable selector cannot express the same action, resolve that mismatch
+before dispatch; a guidance report is never a bypass.
 
 An admitted epoch runs in one order: triage the draft record, freeze the complete change, mint subject-bound proof receipts, pass the full gate on the frozen record, then invoke one `review_dispatch.py prepare` command. That command resolves the roster and panel manifest, rejects incompatible evidence delivery, freezes the manifest-bound subject, resolves standing, builds the envelope, and runs `verify-task` before returning the exact Task payload. Submit it verbatim in one gated wave, normalize every returned item into the ledger, then close on the lead's dispositions. Triage may instead close the epoch on direct lead verification and mint nothing. No triage result authorizes a provider call, and reviewers never see one another's first-round output.
 
