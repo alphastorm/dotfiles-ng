@@ -311,32 +311,18 @@ export HISTSIZE=100000
 export HISTFILE="$HOME/.history"
 export SAVEHIST=$HISTSIZE
 
-# load pyenv and pyenv-virtualenv
+# load pyenv. pyenv-virtualenv's auto-activation (`pyenv virtualenv-init`) stays off: its hook
+# ran `pyenv sh-activate`, about 120 ms, before the first prompt and after every cd.
 export PYENV_ROOT="$HOME/.pyenv"
 (( $+commands[pyenv] )) || path=("$PYENV_ROOT/bin" $path)
-_pyenv_command_key=
 if (( $+commands[pyenv] )); then
   if _shell_cache_key "$commands[pyenv]"; then
-    _pyenv_command_key=$REPLY
-    _evalcache pyenv-init "PYENV_INIT_KEY=$_pyenv_command_key" \
+    _evalcache pyenv-init "PYENV_INIT_KEY=$REPLY" \
       pyenv init --no-push-path --no-rehash - zsh
   else
     _evalcache pyenv-init pyenv init --no-push-path --no-rehash - zsh
   fi
-
-  if (( $+commands[pyenv-virtualenv-init] )); then
-    if [[ -n $_pyenv_command_key ]] &&
-       _shell_cache_key "$commands[pyenv-virtualenv-init]"; then
-      _evalcache \
-        pyenv-virtualenv-init \
-        "PYENV_VIRTUALENV_INIT_KEY=${_pyenv_command_key}:$REPLY" \
-        pyenv virtualenv-init -
-    else
-      _evalcache pyenv-virtualenv-init pyenv virtualenv-init -
-    fi
-  fi
 fi
-unset _pyenv_command_key
 unfunction _shell_cache_key
 
 # pnpm
