@@ -4,6 +4,7 @@ emulate -LR zsh
 setopt err_exit no_unset pipe_fail
 
 runs=20
+budget_ms=500
 while (( $# )); do
   case $1 in
     --runs)
@@ -14,8 +15,16 @@ while (( $# )); do
     --runs=*)
       runs=${1#*=}
       ;;
+    --budget-ms)
+      shift
+      (( $# )) || { print -u2 -- 'error: --budget-ms requires a value'; exit 64; }
+      budget_ms=$1
+      ;;
+    --budget-ms=*)
+      budget_ms=${1#*=}
+      ;;
     -h|--help)
-      print -- 'usage: ./benchmark.sh [--runs N]'
+      print -- 'usage: ./benchmark.sh [--runs N] [--budget-ms MS]'
       exit 0
       ;;
     *)
@@ -28,6 +37,10 @@ done
 
 [[ $runs == <-> ]] && (( runs >= 5 )) || {
   print -u2 -- 'error: --runs must be an integer of at least 5'
+  exit 64
+}
+[[ $budget_ms == <-> ]] && (( budget_ms > 0 )) || {
+  print -u2 -- 'error: --budget-ms must be a positive integer'
   exit 64
 }
 
@@ -60,7 +73,9 @@ for shell_path in $shells; do
 done
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-benchmark.XXXXXX")
+agent_pid=
 cleanup() {
+  [[ -z $agent_pid ]] || kill -- "$agent_pid" 2>/dev/null || true
   rm -rf -- "$work_dir"
 }
 trap cleanup EXIT HUP INT TERM
@@ -85,13 +100,42 @@ measure_startup() {
   fi
   p95_index=$(( (95 * runs + 99) / 100 ))
   p95=${sorted[$p95_index]}
-  printf 'startup shell=%s runs=%d median_ms=%.1f p95_ms=%.1f\n' \
-    "$shell_path" "$runs" "$median" "$p95"
+  printf 'startup shell=%s runs=%d median_ms=%.1f p95_ms=%.1f budget_ms=%d\n' \
+    "$shell_path" "$runs" "$median" "$p95" "$budget_ms"
+  REPLY=$median
 }
 
+# zprof times only functions; this times every traced line, top-level commands included.
+# Traces carry raw bytes (p10k patterns), so the pipeline runs in the C locale.
+print_startup_hotspots() {
+  local shell_path=$1 trace_file=$work_dir/startup-trace.txt
+  local -a hotspots
+  PS4='+%D{%s.%6.} %N:%i> ' "$shell_path" -l -i -x -c exit \
+    >/dev/null 2>"$trace_file" || true
+  hotspots=(${(f)"$(
+    LC_ALL=C awk '/^\+[0-9]+\.[0-9]+ / {
+           now = substr($1, 2) + 0
+           if (seen++) printf "%9.1f ms  %s\n", (now - last) * 1000, line_text
+           last = now
+           line_text = substr($0, length($1) + 2, 160)
+         }' "$trace_file" | LC_ALL=C sort -rn
+  )"})
+  print -u2 -- "slowest startup lines for $shell_path:"
+  print -u2 -l -- ${hotspots[1,10]}
+}
+
+over_budget=()
 for shell_path in $shells; do
   measure_startup "$shell_path"
+  (( REPLY <= budget_ms )) || over_budget+=($shell_path)
 done
+if (( $#over_budget )); then
+  for shell_path in $over_budget; do
+    print_startup_hotspots "$shell_path"
+  done
+  print -u2 -- "error: median startup exceeds --budget-ms=$budget_ms"
+  exit 1
+fi
 
 profile_dir="$work_dir/profile"
 profile_file="$work_dir/zprof.txt"
@@ -173,4 +217,49 @@ temp_files=("$cache_dir"/.evalcache-tmp-*(N))
   exit 1
 }
 print -- 'smoke evalcache_atomicity=ok workers=8'
+
+# A startup on an empty agent, the post-reboot state, must load every Keychain-held key
+# before prezto's prompt path. A private agent plus redirected prezto socket and env paths
+# keep the live agent untouched; failing askpass turns a regression into missing keys
+# instead of a passphrase prompt.
+if [[ $OSTYPE == darwin* ]]; then
+  agent_sock=$work_dir/agent.sock
+  ssh-agent -D -a "$agent_sock" >/dev/null 2>&1 &
+  agent_pid=$!
+  for (( attempt = 1; attempt <= 100; ++attempt )); do
+    [[ -S $agent_sock ]] && break
+    sleep 0.02
+  done
+  [[ -S $agent_sock ]] || {
+    print -u2 -- 'error: temporary ssh-agent did not start'
+    exit 1
+  }
+  SSH_AUTH_SOCK=$agent_sock ssh-add --apple-load-keychain -q 2>/dev/null || true
+  keychain_keys=(${(f)"$(
+    SSH_AUTH_SOCK=$agent_sock ssh-add -l -E sha256 2>/dev/null |
+      awk '{ print $2 }' || true
+  )"})
+  if (( ! $#keychain_keys )); then
+    print -- 'smoke keychain_preload=skipped keychain_keys=0'
+  else
+    for shell_path in $shells; do
+      SSH_AUTH_SOCK=$agent_sock ssh-add -D -q
+      SSH_AUTH_SOCK=$agent_sock \
+        _ssh_agent_sock=$work_dir/prezto-agent.sock \
+        _ssh_agent_env=$work_dir/prezto-agent.env \
+        SSH_ASKPASS=/usr/bin/false SSH_ASKPASS_REQUIRE=force \
+        "$shell_path" -l -i -c exit </dev/null >/dev/null 2>&1
+      loaded_keys=(${(f)"$(
+        SSH_AUTH_SOCK=$agent_sock ssh-add -l -E sha256 2>/dev/null |
+          awk '{ print $2 }' || true
+      )"})
+      missing_keys=(${keychain_keys:|loaded_keys})
+      (( ! $#missing_keys )) || {
+        print -u2 -- "error: $shell_path left ${#missing_keys} Keychain key(s) out of an empty agent"
+        exit 1
+      }
+    done
+    print -- "smoke keychain_preload=ok keychain_keys=${#keychain_keys} shells=${#shells}"
+  fi
+fi
 print -- "smoke account_shell=$account_shell preferred_shell=$preferred_shell"

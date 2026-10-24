@@ -1,7 +1,11 @@
 # Load SSH keys whose passphrases the macOS Keychain holds (ssh-add --apple-use-keychain).
 # prezto's ssh module below prompts only when the agent is empty, and a reboot empties it;
 # this runs first, silently. Without a Keychain entry it loads nothing and prezto prompts.
-[[ $OSTYPE == darwin* ]] && ssh-add --apple-load-keychain -q 2>/dev/null
+# Decrypting every Keychain-held key takes seconds, so it runs only while the agent is
+# reachable and empty: `ssh-add -l` exits 1 then, 0 with identities, 2 without an agent.
+if [[ $OSTYPE == darwin* ]] && { ssh-add -l &>/dev/null; (( $? == 1 )) }; then
+  ssh-add --apple-load-keychain -q 2>/dev/null
+fi
 
 # Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
 # Initialization code that may require console input (password prompts, [y/n]
