@@ -1036,14 +1036,6 @@ def test_triage_cli_never_emits_a_dispatch_action(tmp_path: Path, capsys) -> Non
 
 
 def test_stable_quick_and_full_check_tiers() -> None:
-    assert review_checks.QUICK_TESTS == (
-        "test_review_sequence.py",
-        "test_selector_canary.py",
-        "test_runner.py",
-        "test_consistency.py",
-        "test_invariants.py::test_evaluation_agents_are_hidden_unless_the_lrhe_overlay_is_loaded",
-        "test_invariants.py::test_evaluation_overlay_keeps_failed_lanes_hidden",
-    )
     assert (
         review_checks.command_for("quick")[-len(review_checks.QUICK_TESTS) :]
         == review_checks.QUICK_TESTS
@@ -1758,31 +1750,31 @@ def test_private_qualification_live_gate_fails_closed() -> None:
 
 
 def test_qualification_rejects_an_incomplete_evidence_contract() -> None:
-    current = _live_qualification()
-    current["reviewers"]["grok"].pop("canaryReceipt")
+    document = _panel()
+    document["reviewers"]["grok"].pop("canaryReceipt")
     with pytest.raises(QualificationError, match="incomplete evidence contract"):
-        validate_qualification(current)
+        validate_qualification(document)
 
 
 def test_qualification_rejects_an_unbound_or_disabled_charter_amendment() -> None:
-    current = _live_qualification()
-    current["reviewers"]["grok"]["charterAmendment"] = "../outside.json"
+    document = _panel()
+    document["reviewers"]["grok"]["charterAmendment"] = "../outside.json"
     with pytest.raises(QualificationError, match="must stay under the skill directory"):
-        validate_qualification(current)
+        validate_qualification(document)
 
-    current = _live_qualification()
-    current["reviewers"]["minimax"]["charterAmendment"] = (
-        "lrhe-data/standing-amendment-v1/minimax.amendment.json"
+    document = _panel()
+    document["reviewers"]["gemini"]["charterAmendment"] = (
+        "lrhe-data/standing-amendment-v1/gemini.amendment.json"
     )
     with pytest.raises(QualificationError, match="cannot qualify a disabled lane"):
-        validate_qualification(current)
+        validate_qualification(document)
 
 
 def test_qualification_rejects_repository_delivery_without_repository_tools() -> None:
-    current = _live_qualification()
-    current["reviewers"]["grok"]["tools"] = []
+    document = _panel()
+    document["reviewers"]["grok"]["tools"] = []
     with pytest.raises(QualificationError, match="for repository delivery"):
-        validate_qualification(current)
+        validate_qualification(document)
 
 
 def test_qualification_pins_the_activated_panel_id() -> None:

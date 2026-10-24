@@ -1183,8 +1183,13 @@ def test_probe_pins_bind_version_fixture_and_role(tmp_path):
 
 @needs_agents
 def test_evidence_contract_rejects_an_active_model_override_drift(tmp_path, monkeypatch):
+    lane = next(
+        entry
+        for entry in _live_document()["reviewers"].values()
+        if entry["dispatchEnabled"] and "canaryReceipt" in entry
+    )
     config = yaml.safe_load(preflight.CONFIG.read_text(encoding="utf-8"))
-    config["task"]["agentModelOverrides"]["review-grok"] = "xai-oauth/grok-build"
+    config["task"]["agentModelOverrides"][lane["agent"]] = f"{lane['model']}-drifted"
     wrong = tmp_path / "config.yml"
     wrong.write_text(yaml.safe_dump(config), encoding="utf-8")
     monkeypatch.setattr(preflight, "CONFIG", wrong)
@@ -2084,17 +2089,6 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
         )
 
     assert live["targetedRefuters"] == ["glm"]
-    assert live["evaluationOnly"] == ["kimi", "deepseek", "grok"]
-    assert live["disabled"] == ["minimax", "gemini"]
-    flash = document["reviewers"]["gemini"]
-    assert flash["dispatchEnabled"] is False
-    assert flash["evaluationEnabled"] is False
-    assert not {"evidenceDelivery", "tools", "canaryReceipt"} & flash.keys()
-    # Paused, not retired: Grok keeps its evidence contract so restoring it is a
-    # membership change rather than a requalification.
-    grok = document["reviewers"]["grok"]
-    assert (grok["dispatchEnabled"], grok["evaluationEnabled"]) == (False, True)
-    assert {"evidenceDelivery", "tools", "canaryReceipt"} <= grok.keys()
     assert document["reviewers"]["gemini-argon"]["evaluationEnabled"] is False
     for reviewer_id in ("daybreak-blue", "claude-opus", "claude-mythos", "gemini-argon", "gpt-astra"):
         entry = document["reviewers"][reviewer_id]
@@ -2171,9 +2165,6 @@ def test_reviewer_agent_names_are_stable_lanes_with_exact_model_selectors():
         if entry["dispatchEnabled"]:
             assert task["agentModelOverrides"][agent] == entry["model"]
             assert agent not in task["disabledAgents"]
-    flash = document["reviewers"]["gemini"]
-    assert flash["agent"] in task["disabledAgents"]
-    assert flash["agent"] not in task["agentModelOverrides"]
 
 
 @needs_agents
@@ -2380,7 +2371,7 @@ def test_canary_prompts_refuse_to_overwrite_an_existing_output(tmp_path):
     original = '{"schema":"lrhe-canary-v1","sentinel":"historical"}\n'
     output.write_text(original, encoding="utf-8")
 
-    code = canary.main(["prompts", "--family", "grok", "--out", str(output)])
+    code = canary.main(["prompts", "--family", "daybreak-blue", "--out", str(output)])
 
     assert code == canary.EXIT_UNRESOLVED
     assert output.read_text(encoding="utf-8") == original
@@ -2436,6 +2427,57 @@ def _canary_reply(
     return {"canary_id": canary_id, "served_model": model, "response": body}
 
 
+# The installed floor lanes retired on 2026-10-23, so the response-probe graders run
+# on a synthetic evaluation-only lane that keeps the retired floor reviewers' exact
+# output contract.
+_FLOOR_OUTPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["summary", "evidence", "unresolved"],
+    "properties": {
+        "summary": {"type": "string", "maxLength": 1200},
+        "evidence": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+                "type": "string",
+                "pattern": r"^R[1-9][0-9]*\|P[0-3]\|conf=(0(\.[0-9]{2})?|1(\.00)?)"
+                r"\|claim=.+\|evidence=.+\|impact=.+\|verify=.+$",
+            },
+        },
+        "unresolved": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+                "type": "string",
+                "pattern": r"^U[1-9][0-9]*\|P[0-3]\|conf=(0(\.[0-9]{2})?|1(\.00)?)"
+                r"\|question=.+\|missing=.+\|verify=.+$",
+            },
+        },
+    },
+}
+
+
+@pytest.fixture
+def floor_lane(tmp_path, monkeypatch):
+    """Point the canary at a synthetic `kimi` floor lane and its agent definition."""
+    _qualification(tmp_path, "opencode-go/kimi-k3")
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    front = {
+        "name": "review-kimi-floor",
+        "tools": [],
+        "model": ["opencode-go/kimi-k3"],
+        "output": _FLOOR_OUTPUT_SCHEMA,
+    }
+    (agents / "review-kimi-floor.md").write_text(
+        "---\n" + yaml.safe_dump(front, sort_keys=False) + "---\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(canary, "SKILL", tmp_path)
+    monkeypatch.setattr(run_review, "AGENTS", agents)
+
+
+
 def _graded(tmp_path, replies: list[dict], family: str = "kimi"):
     """Emit that lane's prompts, grade the supplied replies, return (exit, records)."""
     prompts, responses, out = (tmp_path / n for n in ("cp.jsonl", "cr.jsonl", "canary.jsonl"))
@@ -2448,8 +2490,7 @@ def _graded(tmp_path, replies: list[dict], family: str = "kimi"):
     return code, records
 
 
-@needs_agents
-def test_a_clean_reply_through_the_agent_lane_passes_every_probe(tmp_path):
+def test_a_clean_reply_through_the_agent_lane_passes_every_probe(tmp_path, floor_lane):
     """`run` can only ever return `apparatus`, so something else must qualify a lane.
 
     The path to a model is the reviewer agent, not a socket in this repository.
@@ -2501,8 +2542,7 @@ def test_a_clean_reply_through_the_agent_lane_passes_every_probe(tmp_path):
     assert all(r["request_observed"] is False for r in records)
 
 
-@needs_agents
-def test_a_reply_from_a_model_nobody_requested_fails_however_good_it_is(tmp_path):
+def test_a_reply_from_a_model_nobody_requested_fails_however_good_it_is(tmp_path, floor_lane):
     """Zen overflow is a different route, and this canary is about a named lane.
 
     `run.schema.json` gate-fails a measured run whose served model is not the
@@ -2528,8 +2568,7 @@ def test_a_reply_from_a_model_nobody_requested_fails_however_good_it_is(tmp_path
     assert any("identity: served" in f for f in records[0]["failures"])
 
 
-@needs_agents
-def test_a_lane_is_not_qualified_by_the_probes_that_happened_to_answer(tmp_path):
+def test_a_lane_is_not_qualified_by_the_probes_that_happened_to_answer(tmp_path, floor_lane):
     """Two green probes and a silence is not a passed canary.
 
     The probe most likely to go missing is the one a lane is worst at: a family
@@ -2580,8 +2619,7 @@ def test_the_rendered_packet_states_the_anchor_set_it_will_be_graded_against():
     assert "do not read the working tree" in rendered
 
 
-@needs_agents
-def test_a_permanently_silent_lane_is_not_qualified(tmp_path):
+def test_a_permanently_silent_lane_is_not_qualified(tmp_path, floor_lane):
     """Silence used to be the one reply that passed all three probes.
 
     `empty_abstention` only fires on a reply that found something, and
@@ -2602,8 +2640,7 @@ def test_a_permanently_silent_lane_is_not_qualified(tmp_path):
     assert {r["probe_id"] for r in records if not r["passed"]} == {"anchor_lookup"}
 
 
-@needs_agents
-def test_a_malformed_reply_fails_the_probe_it_was_answering(tmp_path):
+def test_a_malformed_reply_fails_the_probe_it_was_answering(tmp_path, floor_lane):
     """Shape is a property of every reply, not of the one probe that asks about it.
 
     A real lane answered the anchor probe with its whole review nested under
@@ -2857,8 +2894,7 @@ def test_the_lock_records_the_selectors_it_cannot_pin():
         assert pin["fingerprint"] is None
 
 
-@needs_agents
-def test_a_lane_whose_tool_surface_went_unmeasured_is_not_qualified(tmp_path):
+def test_a_lane_whose_tool_surface_went_unmeasured_is_not_qualified(tmp_path, floor_lane):
     """An unobserved boundary is a failed probe, not a passed one.
 
     This is the shape of the defect that invalidated 106 measurement units: the tool
@@ -2880,8 +2916,7 @@ def test_a_lane_whose_tool_surface_went_unmeasured_is_not_qualified(tmp_path):
     assert any("unmeasured" in f for f in surface["failures"])
 
 
-@needs_agents
-def test_a_lane_that_used_a_tool_fails_the_surface_probe(tmp_path):
+def test_a_lane_that_used_a_tool_fails_the_surface_probe(tmp_path, floor_lane):
     """One call is enough, and the reply's own account of itself is not consulted.
 
     `screen-S4-6f477b0c-glm` fetched its item's upstream fix commit from

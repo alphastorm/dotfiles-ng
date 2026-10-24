@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 HERE = Path(__file__).parent
 PY = sys.executable
@@ -262,20 +261,6 @@ def test_04_prompt_carries_no_canonical_votes(built: dict):
     # Dispatchable bytes are reproduced from corpus + claim, never from the private map.
     assert prompt == judge_render.render_judge(built["item"], built["claim"])
     assert set(case) == {"case_id", "prompt", "prompt_sha256", "label_ids"}
-
-
-def test_05_every_family_is_tool_less():
-    agents = Path.home() / ".omp/agent/agents"
-    if not agents.is_dir():
-        pytest.skip("judge agent definitions are not present in this checkout")
-    assert len(auto_reliability.FAMILIES) == 4
-    for family, definition in auto_reliability.FAMILIES.items():
-        path = agents / f"{definition['agent']}.md"
-        assert path.is_file(), f"missing {family} definition {path}"
-        parts = path.read_text().split("---", 2)
-        assert len(parts) == 3, f"{path.name} has no YAML front matter"
-        front = yaml.safe_load(parts[1])
-        assert front["tools"] == [], f"{path.name} declares {front.get('tools')}"
 
 
 def test_06_missing_served_model_telemetry_fails_closed():

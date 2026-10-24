@@ -2,7 +2,7 @@
 """The probes a lane must pass before evaluationEnabled may be true.
 
     ./.venv/bin/python canary.py selftest                    # graders vs known-bad
-    ./.venv/bin/python canary.py run --family kimi --transport stub --out apparatus.jsonl
+    ./.venv/bin/python canary.py run --family glm --transport stub --out apparatus.jsonl
     ./.venv/bin/python canary.py prompts --out cp.jsonl      # ... dispatch by hand ...
     ./.venv/bin/python canary.py grade --prompts cp.jsonl --responses cr.jsonl \
         --trace-receipt trace.json --out canary-vN.jsonl

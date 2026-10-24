@@ -44,9 +44,8 @@ reviewer prose:
 - supplements selects always-on cross-family supplemental evidence for every
   full council: useful for cheap decorrelation, but unable to rescue the
   independent floor or break a dispute. Claude leads seat GPT-6 Astra
-  (`gpt-astra`, access profile `openai-codex-default`); GPT leads seat none
-  while Grok 4.7 is paused, and that lane stays evaluation-only with its
-  qualification retained. No model appears twice among the strong critics and
+  (`gpt-astra`, access profile `openai-codex-default`); GPT leads seat none.
+  No model appears twice among the strong critics and
   supplements and each group keeps distinct model families, but a supplement
   may share a strong critic's family, as Astra shares GPT with Daybreak;
 - focusedSupplements names the supplements that also sit on every focused

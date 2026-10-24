@@ -1380,26 +1380,41 @@ def test_focused_refuses_either_withheld_grant_for_every_seat(
         )
 
 
+# A test-owned supplement with its own family, model, vendor and access profile, so
+# stripping its grants never removes one the reciprocal critic also needs.
+_SYNTHETIC_SUPPLEMENT = "test-supplement"
+
+
 @pytest.mark.parametrize(
     ("lead_family", "reviewer_id"),
     (("gpt", "claude-opus"), ("claude", "daybreak-blue")),
 )
-@pytest.mark.parametrize("supplements", (["grok"], []))
+@pytest.mark.parametrize("seat_supplement", (True, False))
 def test_replay_resolves_only_the_reciprocal_critic_without_other_focused_grants(
-    material, authority, repository, lead_family: str, reviewer_id: str, supplements: list[str]
+    material, authority, repository, lead_family: str, reviewer_id: str, seat_supplement: bool
 ):
     profile = authority["liveDispatch"]["byLeadFamily"][lead_family]
-    if supplements:
-        # Seat Grok as a configured supplement whatever its live state, so the
-        # overlay names a real one.
-        live = authority["liveDispatch"]
-        live["evaluationOnly"] = [item for item in live["evaluationOnly"] if item != "grok"]
-        authority["reviewers"]["grok"]["dispatchEnabled"] = True
-        profile["supplements"] = [*profile["supplements"], *supplements]
-    profile["focusedSupplements"] = supplements
+    others = ["gemini-argon"]
+    if seat_supplement:
+        authority["reviewers"][_SYNTHETIC_SUPPLEMENT] = {
+            **authority["reviewers"]["gpt-astra"],
+            "agent": "review-test-supplement",
+            "model_family": "test-family",
+            "correlation_group": "test-supplement-1",
+            "access_profile": "test-supplement-access",
+            "data_allowlist_key": "test-vendor",
+        }
+        profile["supplements"] = [*profile["supplements"], _SYNTHETIC_SUPPLEMENT]
+        others.append(_SYNTHETIC_SUPPLEMENT)
+    profile["focusedSupplements"] = others[1:]
     document = qualification.validate_qualification(authority)
-    packet_text = material["packet"].read_text(encoding="utf-8")
-    for other_reviewer in ("gemini-argon", "grok"):
+    packet_text = _packet_text(
+        authority,
+        record_path="/frozen/review-record.json",
+        record_sha256="a" * 64,
+        diff="src/dispatch.py gained one ordered API.",
+    )
+    for other_reviewer in others:
         for field in ("data_allowlist_key", "access_profile"):
             grant = f"- {authority['reviewers'][other_reviewer][field]}\n"
             assert grant in packet_text
@@ -1433,7 +1448,7 @@ def test_replay_resolves_only_the_reciprocal_critic_without_other_focused_grants
     ) == EXPECTED_TUPLES[(lead_family, "replay", reviewer_id)]
     assert critic.reason_codes == (qualification.STRONG_REASON_CODE,)
     assert rd.roster_arity(document, lead_family, "replay") == (1, 1)
-    for other_reviewer in ("gemini-argon", "grok"):
+    for other_reviewer in others:
         for requested in ([other_reviewer], [reviewer_id, other_reviewer]):
             with pytest.raises(rd.DispatchError, match="complete resolved roster"):
                 rd.resolve_assignments(

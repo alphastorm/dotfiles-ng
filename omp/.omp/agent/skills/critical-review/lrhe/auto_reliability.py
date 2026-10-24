@@ -65,7 +65,9 @@ VERDICTS = ("CONFIRMED", "PLAUSIBLE", "FABRICATED")
 UNRESOLVED = "UNRESOLVED"
 CASE_ID_FMT = "AR-{:04d}"
 
-# The four active families and the exact selector each must be served. Requested,
+# The four judge families of the 2026-07-28 audit and the exact selector each had to
+# be served. Their judge-* agents retired on 2026-10-23, so this table now describes
+# that audit rather than an installed roster. Requested,
 # not trusted: `ingest` compares this against what the session record says answered,
 # and a mismatch drops the response rather than relabelling it. The retired local
 # Qwen lane remains only in historical response and manifest artifacts.

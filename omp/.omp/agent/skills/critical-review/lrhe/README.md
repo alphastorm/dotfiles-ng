@@ -85,25 +85,6 @@ because an unresolved licence is a fact worth seeing even once it has been decid
 regenerating the corpus returns those four to an empty allowlist. Re-run
 `check_packet_gates.py grant` afterwards; the audit will tell you if you forgot.
 
-## Evaluation-only agent visibility
-
-Ordinary OMP sessions hide LRHE judges, contamination probes, and floor reviewers.
-Live council critics and the targeted refuter remain visible because
-`qualification.yml` authorizes those runtime roles. Start a dedicated evaluation
-session with the public overlay only when running LRHE:
-
-```bash
-L=~/.omp/agent/skills/critical-review/lrhe
-omp --config "$L/evaluation-agents.yml"
-```
-
-The overlay re-enables evaluation lanes but keeps `review-minimax-floor` hidden
-because its provider canary and read-only qualification failed, and
-`review-gemini` hidden because Gemini 3.8 Flash is retired from review and
-evaluation alike. Discovery still
-does not authorize live dispatch, tool use, repository mutation, or a provider
-subscription; the qualification resolver and panel manifest remain authoritative.
-
 ## Quick start
 
 ```bash
@@ -289,7 +270,7 @@ profiles exist, and each has four explicit groups:
   Blue for a Claude lead — then Gemini 4 Argon for both leads;
 - supplements selects always-on cross-family supplemental evidence for cheap
   decorrelated coverage on every full council. A profile may carry none: Claude
-  leads seat GPT-6 Astra, and GPT leads seat none while Grok 4.7 is paused;
+  leads seat GPT-6 Astra, and GPT leads seat none;
 - leadFamilySecurity selects the qualified Daybreak security lane for GPT full
   councils and the CVP-bound Mythos 5.1 security lane for Claude full councils,
   as same_lineage_blind_sample and supplemental_evidence. Daybreak reuses its
@@ -329,17 +310,14 @@ focused rosters have two: Opus and Gemini 4 Argon. Every strong critic is
 required; missing, refused, or invalid results never count as approval. A
 focused supplement stays nonblocking supplemental evidence. Replay remains one
 seat: only the first, reciprocal strong critic. The caller never chooses a
-reviewer, and a supplement never replaces a strong critic. The retired Gemini
-Flash lane is disabled, not evaluation-only; paused Grok is evaluation-only and
-keeps its evidence contract, so preflight still checks its trace, fixture, and
-active model override.
+reviewer, and a supplement never replaces a strong critic.
 
 ChatGPT Pro Web remains deliberately outside liveDispatch. For ordinary cloud-permitted full councils, the generated packet grants let the separate `oracleShadow` authority attempt pinned pi-oracle `pro_extended` without a user prompt. Explicit provider restrictions may omit `openai` data egress or the exact `chatgpt-pro-web-asxst0rm` access profile. Its output has no reviewer standing, never blocks closure, receives no peer output, and never substitutes for a qualified lane. Missing grants and every operational failure are persisted as nonblocking outcomes under `lrhe-data/oracle-shadow/`, so browser automation can accumulate evidence without becoming part of the council availability contract.
 
 Agent names are stable lane identifiers, not model-version aliases. Multiple
 qualified lanes in one family use durable variant names such as
 `review-claude-opus` and `review-claude-fable`; a transient release such as
-Grok 4.7 remains in the exact `model` selector, active override, qualification
+Opus 5.5 remains in the exact `model` selector, active override, qualification
 receipt, and emitted manifest. This avoids identity churn on routine model
 upgrades while keeping the served version auditable at every dispatch. A passed
 parent quality cohort may cross only an explicitly allowlisted same-provider,

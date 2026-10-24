@@ -36,7 +36,7 @@ pytestmark = pytest.mark.skipif(
 
 def _args(**over) -> Namespace:
     base = dict(
-        item_id="S1-7e6f82f1", family="grok", lens="architecture", arm="C",
+        item_id="S1-7e6f82f1", family="claude-opus", lens="architecture", arm="C",
         experiment_id="lrhe-core-v1", classification="public_corpus",
         item_authorized=False, policy_id=None,
         corpus=CORPUS, packets=DATA / "packets.jsonl",
@@ -78,6 +78,8 @@ def spy(monkeypatch):
     ({"classification": "secrets_or_credentials"}, None),
     ({"item_id": "does-not-exist"}, "unknown_item"),
     ({"family": "not-a-family"}, "family_not_in_panel"),
+    # Declared by the historical lrhe-core-v1 panel, retired from qualification.
+    ({"family": "grok"}, "lane_unknown"),
 ])
 def test_refusal_never_reaches_a_transport(spy, over, expect_reason):
     """The whole point. A refused request must not be sent, not merely reported.
@@ -94,32 +96,32 @@ def test_refusal_never_reaches_a_transport(spy, over, expect_reason):
     assert spy == [], "a refused request reached a transport"
 
 
-def test_an_unqualified_lane_never_reaches_a_transport(spy):
-    """The qualification gate, proved on held lanes declared for evaluation.
+def test_an_unqualified_lane_never_reaches_a_transport(spy, tmp_path):
+    """The qualification gate, proved on a declared lane whose evaluation is off.
 
-    This case used to name Kimi and became stale after Kimi qualified. Evaluation
-    experiments and live-dispatch roles are separate authorities, so a disabled
-    live-only specialist is not required to appear in panels.yaml.
+    The retired lanes took every declared evaluation-disabled lane with them, so
+    the test holds one back itself: a copy of the authority with the first
+    declared lane's evaluation switched off. Evaluation experiments and
+    live-dispatch roles are separate authorities, so the copy still validates.
     """
     import yaml
-    qual = yaml.safe_load((SKILL / "qualification.yml").read_text())["reviewers"]
-    held = [
-        (family, declared)
-        for family, entry in qual.items()
-        if not entry.get("evaluationEnabled")
-        if (declared := _declaring_experiment(family)) is not None
-    ]
-    if not held:
-        pytest.skip("every declared evaluation lane is enabled")
+    document = yaml.safe_load((SKILL / "qualification.yml").read_text())
+    family, (experiment, lens) = next(
+        (name, declared)
+        for name in document["reviewers"]
+        if (declared := _declaring_experiment(name)) is not None
+    )
+    document["reviewers"][family]["evaluationEnabled"] = False
+    held = tmp_path / "qualification.yml"
+    held.write_text(yaml.safe_dump(document))
 
-    for family, (experiment, lens) in held:
-        outcome = run_review.prepare(
-            _args(family=family, lens=lens, experiment_id=experiment))
-        assert isinstance(outcome, run_review.Refusal), (
-            f"{family} is not qualified but was not refused"
-        )
-        assert outcome.reason_code == "lane_not_qualified"
-        assert spy == [], "a refused request reached a transport"
+    outcome = run_review.prepare(
+        _args(family=family, lens=lens, experiment_id=experiment, qualification=held))
+    assert isinstance(outcome, run_review.Refusal), (
+        f"{family} is not qualified but was not refused"
+    )
+    assert outcome.reason_code == "lane_not_qualified"
+    assert spy == [], "a refused request reached a transport"
 
 
 def test_default_transport_refuses_to_send(spy):
@@ -277,8 +279,8 @@ def test_prompts_emits_nothing_for_an_assignment_the_gates_refuse(spy, tmp_path)
     is reported and dropped rather than emitted with a warning nobody reads.
     """
     code, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "grok", "lens": "architecture"},
-        {"item_id": "does-not-exist", "family": "grok", "lens": "architecture"},
+        {"item_id": "S1-7e6f82f1", "family": "claude-opus", "lens": "architecture"},
+        {"item_id": "does-not-exist", "family": "claude-opus", "lens": "architecture"},
     ])
     assert code == run_review.EXIT_UNRESOLVED
     assert [r["run_key"].split("|")[0] for r in rows] == ["S1-7e6f82f1"]
@@ -294,7 +296,7 @@ def test_ingest_refuses_a_prompts_row_whose_rights_record_was_edited(spy, tmp_pa
     same check, and this is the test that they do.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "grok", "lens": "architecture"}])
+        {"item_id": "S1-7e6f82f1", "family": "claude-opus", "lens": "architecture"}])
     rows[0]["request"]["data_rights"]["egress_decision"] = "deny"
     prompts = tmp_path / "edited.jsonl"
     prompts.write_text(json.dumps(rows[0]) + "\n")
@@ -312,7 +314,7 @@ def test_ingest_refuses_a_prompts_row_whose_rights_record_was_edited(spy, tmp_pa
 def test_a_reply_through_the_agent_lane_becomes_a_valid_run_record(tmp_path):
     """The whole point of the path: a real reply, scored like any other run."""
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "grok", "lens": "architecture", "arm": "smoke"}])
+        {"item_id": "S1-7e6f82f1", "family": "claude-opus", "lens": "architecture", "arm": "smoke"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
     responses.write_text(json.dumps(_reply(rows[0])) + "\n")
@@ -335,7 +337,7 @@ def test_a_reply_that_breaks_the_reviewers_own_schema_is_recorded_as_such(tmp_pa
     and belongs in the record as `schema_valid: false`.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "grok", "lens": "architecture", "arm": "smoke"}])
+        {"item_id": "S1-7e6f82f1", "family": "claude-opus", "lens": "architecture", "arm": "smoke"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
     broken = _reply(rows[0])
@@ -359,7 +361,7 @@ def test_the_route_that_answered_is_recorded_when_the_lane_can_tell(tmp_path):
     was billed is a step past what the route tells you.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "smoke",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "smoke",
          "experiment_id": "lrhe-opencode-v1"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
@@ -375,7 +377,7 @@ def test_the_route_that_answered_is_recorded_when_the_lane_can_tell(tmp_path):
 def test_a_route_the_schema_does_not_model_is_recorded_as_unknown(tmp_path):
     """Recording it verbatim fails validation at the last step and loses the run."""
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "smoke",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "smoke",
          "experiment_id": "lrhe-opencode-v1"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
@@ -396,7 +398,7 @@ def test_the_run_record_states_whether_the_checkpoint_is_identifiable(tmp_path):
     honest value for OpenCode today and has to be written deliberately.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "smoke",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "smoke",
          "experiment_id": "lrhe-opencode-v1"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
@@ -429,7 +431,7 @@ def test_replicates_reach_the_run_record_as_distinct_cells(tmp_path):
     it first.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "T_OC",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "T_OC",
          "experiment_id": "lrhe-opencode-v1", "replicate": f"rep{n}"} for n in (1, 2, 3)])
     assert len(rows) == 3, "three replicates collapsed into fewer prompts"
     assert len({r["run_key"] for r in rows}) == 3, (
@@ -459,7 +461,7 @@ def test_a_reply_that_never_measured_the_tool_surface_is_refused(tmp_path):
     must be present or there is no record.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "OC_FULL",
          "experiment_id": "lrhe-opencode-v1"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
@@ -481,7 +483,7 @@ def test_a_reviewer_that_used_a_tool_is_recorded_invalidated(tmp_path):
     downstream filter -- is what let the first cohort through.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "OC_FULL",
          "experiment_id": "lrhe-opencode-v1"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
@@ -502,19 +504,19 @@ def test_a_reviewer_that_used_a_tool_is_recorded_invalidated(tmp_path):
 def test_a_replacement_run_names_what_it_replaces(tmp_path):
     """`replaces_run_id` and the policy digest are what make "do not pool" checkable."""
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "OC_FULL",
          "experiment_id": "lrhe-opencode-v1"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
     responses.write_text(json.dumps(_reply(
-        rows[0], replaces_run_id="S1-7e6f82f1-kimi-floor-1785241599",
+        rows[0], replaces_run_id="S1-7e6f82f1-glm-floor-1785241599",
         dispatch_policy_digest="sha256:enforced-v1")) + "\n")
 
     run_review.cmd_ingest(Namespace(prompts=prompts, responses=responses, out=out,
                                     omp_version="17.1.6"))
     status = json.loads(out.read_text().strip())["measurement_status"]
     assert status["status"] == "valid"
-    assert status["replaces_run_id"] == "S1-7e6f82f1-kimi-floor-1785241599"
+    assert status["replaces_run_id"] == "S1-7e6f82f1-glm-floor-1785241599"
     assert status["dispatch_policy_digest"] == "sha256:enforced-v1"
 
 
@@ -533,7 +535,6 @@ def test_every_floor_reviewer_declares_a_sanctioned_tool_surface():
     """
     agents = Path.home() / ".omp/agent/agents"
     defs = sorted(agents.glob("review-*-floor.md"))
-    assert len(defs) >= 3, f"expected the floor reviewer definitions in {agents}"
     for path in defs:
         front = yaml.safe_load(path.read_text().split("---")[1])
         tools = front.get("tools")
@@ -553,7 +554,7 @@ def test_a_malformed_call_that_named_no_tool_is_not_a_breach(tmp_path):
     every pre-enforcement `read` returned `Path not found`.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "OC_FULL",
          "experiment_id": "lrhe-opencode-v1"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
@@ -571,7 +572,7 @@ def test_a_malformed_call_that_named_no_tool_is_not_a_breach(tmp_path):
 def test_a_named_call_counts_even_when_the_tool_errored(tmp_path):
     """`Path not found` is a breach the filesystem stopped, not a reviewer that behaved."""
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "OC_FULL",
          "experiment_id": "lrhe-opencode-v1"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
@@ -595,7 +596,7 @@ def test_the_write_and_recursion_gates_are_derived_not_asserted(tmp_path: Path):
     this went unnoticed: the assertions were true.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "OC_FULL",
          "experiment_id": "lrhe-opencode-v1"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
@@ -622,7 +623,7 @@ def test_the_write_and_recursion_gates_are_derived_not_asserted(tmp_path: Path):
 def test_two_disagreeing_counts_of_the_tool_surface_are_refused(tmp_path: Path):
     """One harvest, three gates. Two independent claims about it can drift apart."""
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "OC_FULL",
          "experiment_id": "lrhe-opencode-v1"}])
     prompts, responses, out = (tmp_path / n for n in ("rp.jsonl", "rr.jsonl", "runs.jsonl"))
     prompts.write_text(json.dumps(rows[0]) + "\n")
@@ -657,7 +658,7 @@ def test_run_id_is_stable_across_re_ingest(tmp_path: Path):
     silently returning to 0.00.
     """
     _, rows = _prompted(tmp_path, [
-        {"item_id": "S1-7e6f82f1", "family": "kimi", "lens": "floor", "arm": "OC_FULL",
+        {"item_id": "S1-7e6f82f1", "family": "glm", "lens": "floor", "arm": "OC_FULL",
          "experiment_id": "lrhe-opencode-v1"}])
     prompts, responses = tmp_path / "rp.jsonl", tmp_path / "rr.jsonl"
     prompts.write_text(json.dumps(rows[0]) + "\n")

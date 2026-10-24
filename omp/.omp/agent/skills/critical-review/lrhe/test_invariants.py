@@ -1745,67 +1745,22 @@ def test_kappa_composite_is_below_verdict_when_confirmed_labels_differ(
     assert composite_kappa < verdict_kappa, res.stdout
 
 
-# The agent definitions live in the PRIVATE package; this repository is public and its CI
-# runner has no `~/.omp/agent/agents`. `test_runner.py` gets this for free from a
-# module-level skip on the private corpus, which is why its floor-reviewer equivalent
-# skipped there while this one failed the build.
-@pytest.mark.skipif(not (Path.home() / ".omp/agent/agents/judge-claude.md").is_file(),
-                    reason="judge agent definitions are not present in this checkout")
+# The agent definitions live in the PRIVATE package, and the LRHE judges retired on
+# 2026-10-23. A judge definition that comes back is held to the same surface.
+_JUDGE_DEFINITIONS = sorted((Path.home() / ".omp/agent/agents").glob("judge-*.md"))
+
+
+@pytest.mark.skipif(not _JUDGE_DEFINITIONS, reason="no judge agent definitions are installed")
 def test_every_judge_agent_declares_an_empty_tool_surface():
     """A judge is shown the ground-truth labels, so it needs no repository at all.
 
     Worse than a reviewer reaching for the tree: the corpus answer key for every OTHER
     item is exactly what a judge with `read` would be reaching for.
     """
-    agents = Path.home() / ".omp/agent/agents"
-    defs = sorted(agents.glob("judge-*.md"))
-    assert len(defs) >= 3, f"expected the judge definitions in {agents}"
-    for path in defs:
+    for path in _JUDGE_DEFINITIONS:
         front = yaml.safe_load(path.read_text().split("---")[1])
         assert front["tools"] == [], f"{path.name} declares {front['tools']}"
         assert front["output"]["additionalProperties"] is False, path.name
-
-_EVALUATION_POLICY_INPUTS = (
-    Path.home() / ".omp/agent/config.yml",
-    Path.home() / ".omp/agent/skills/critical-review/qualification.yml",
-    Path.home() / ".omp/agent/agents",
-)
-
-
-@pytest.mark.skipif(not all(path.exists() for path in _EVALUATION_POLICY_INPUTS),
-                    reason="complete private OMP agent policy is not present in this checkout")
-def test_evaluation_agents_are_hidden_unless_the_lrhe_overlay_is_loaded():
-    agents = Path.home() / ".omp/agent/agents"
-    skill = Path.home() / ".omp/agent/skills/critical-review"
-    config = yaml.safe_load((Path.home() / ".omp/agent/config.yml").read_text()) or {}
-    qualification = yaml.safe_load((skill / "qualification.yml").read_text())
-    overlay = yaml.safe_load((HERE / "evaluation-agents.yml").read_text())
-
-    expected_hidden = {path.stem for path in agents.glob("judge-*.md")}
-    expected_hidden.update(path.stem for path in agents.glob("probe-*.md"))
-    live_agents = set()
-    for family, reviewer in qualification["reviewers"].items():
-        agent = reviewer["agent"]
-        if family in qualification["liveDispatch"]["evaluationOnly"] or family in qualification["liveDispatch"]["disabled"]:
-            expected_hidden.add(agent)
-        else:
-            live_agents.add(agent)
-
-    disabled = set(((config.get("task") or {}).get("disabledAgents") or []))
-    assert expected_hidden <= disabled
-    assert live_agents.isdisjoint(disabled)
-
-    expected_overlay_disabled = {
-        qualification["reviewers"][family]["agent"]
-        for family in qualification["liveDispatch"]["disabled"]
-    }
-    assert set(overlay["task"]["disabledAgents"]) == expected_overlay_disabled
-
-
-def test_evaluation_overlay_keeps_failed_lanes_hidden():
-    overlay = yaml.safe_load((HERE / "evaluation-agents.yml").read_text())
-    disabled = set(overlay["task"]["disabledAgents"])
-    assert "review-minimax-floor" in disabled
 
 
 def test_a_judgement_from_an_unrequested_model_drops_its_claim(tmp_path: Path):
