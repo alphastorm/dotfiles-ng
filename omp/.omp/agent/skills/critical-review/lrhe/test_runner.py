@@ -78,8 +78,6 @@ def spy(monkeypatch):
     ({"classification": "secrets_or_credentials"}, None),
     ({"item_id": "does-not-exist"}, "unknown_item"),
     ({"family": "not-a-family"}, "family_not_in_panel"),
-    # Declared by the historical lrhe-core-v1 panel, retired from qualification.
-    ({"family": "grok"}, "lane_unknown"),
 ])
 def test_refusal_never_reaches_a_transport(spy, over, expect_reason):
     """The whole point. A refused request must not be sent, not merely reported.
@@ -121,6 +119,29 @@ def test_an_unqualified_lane_never_reaches_a_transport(spy, tmp_path):
         f"{family} is not qualified but was not refused"
     )
     assert outcome.reason_code == "lane_not_qualified"
+    assert spy == [], "a refused request reached a transport"
+
+
+def test_a_retired_lane_never_reaches_a_transport(spy):
+    """A family a historical panel still declares, after it left qualification.
+
+    Retirement deletes the lane from qualification.yml but leaves the frozen
+    experiments in panels.yaml alone, so the runner meets families it can no
+    longer resolve. Which ones is data, not code: a retired lane can come back.
+    """
+    qualified = yaml.safe_load((SKILL / "qualification.yml").read_text())["reviewers"]
+    retired = [
+        (family["family"], experiment["experimentId"], experiment["lenses"][0])
+        for experiment in yaml.safe_load((HERE / "panels.yaml").read_text())["experiments"]
+        for family in experiment["families"]
+        if family["family"] not in qualified
+    ]
+    if not retired:
+        pytest.skip("every family a panel declares is qualified")
+    family, experiment, lens = retired[0]
+    outcome = run_review.prepare(_args(family=family, lens=lens, experiment_id=experiment))
+    assert isinstance(outcome, run_review.Refusal), f"retired {family} was not refused"
+    assert outcome.reason_code == "lane_unknown"
     assert spy == [], "a refused request reached a transport"
 
 
