@@ -36,10 +36,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import sqlite3
+import shutil
+import subprocess
 import sys
 from collections.abc import Iterable
-from contextlib import closing
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -183,26 +183,37 @@ def reachable_accounts(provider_route: str) -> tuple[set[str] | None, str | None
 
     OMP rotates across every enabled Anthropic credential, and Claude Code sends
     through whichever account it is signed in to, so a route's reach is live state
-    the observation file cannot assert about itself. None means this machine has
-    no such client (a public CI runner) and only the file's own accounts can be
+    the observation file cannot assert about itself. OMP's credentials live in
+    whatever store its client is configured for -- the shared auth broker, not
+    this machine's agent.db -- so they are listed through `omp usage accounts`,
+    which reads that store and only enabled credentials. None means this machine
+    has no such client (a public CI runner) and only the file's own accounts can be
     checked. An unreadable source is a reason, never an empty set.
     """
     home = Path.home()
     if provider_route == "anthropic-subscription":
-        db = home / ".omp/agent/agent.db"
-        if not db.exists():
+        omp = shutil.which("omp")
+        if omp is None:
             return None, None
         try:
-            with closing(sqlite3.connect(db.as_uri() + "?mode=ro", uri=True)) as con:
-                rows = con.execute(
-                    "SELECT identity_key FROM auth_credentials "
-                    "WHERE provider = 'anthropic' AND disabled_cause IS NULL"
-                ).fetchall()
-        except sqlite3.Error as exc:
-            return None, f"cannot read OMP's Anthropic credentials from {db}: {exc}"
-        accounts = {_identity_email(str(identity)) for (identity,) in rows}
+            # The listing revalidates against the broker; bound it so a hung broker
+            # refuses the route instead of hanging the runner.
+            proc = subprocess.run([omp, "usage", "accounts", "--json"], capture_output=True,
+                                  text=True, timeout=60, check=False)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return None, f"cannot list OMP's Anthropic accounts: {exc}"
+        if proc.returncode != 0:
+            return None, (f"`omp usage accounts` exited {proc.returncode}: "
+                          f"{(proc.stderr or proc.stdout).strip()[:200]}")
+        try:
+            identities = [str(row.get("identityKey") or "")
+                          for row in json.loads(proc.stdout)["accounts"]
+                          if row.get("provider") == "anthropic"]
+        except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as exc:
+            return None, f"cannot read `omp usage accounts --json`: {exc!r}"
+        accounts = {_identity_email(identity) for identity in identities}
         if None in accounts:
-            return None, f"an enabled Anthropic credential in {db} names no account email"
+            return None, "an enabled Anthropic credential in OMP names no account email"
         return {account for account in accounts if account}, None
     if provider_route == "claude-code-subscription":
         path = home / ".claude.json"

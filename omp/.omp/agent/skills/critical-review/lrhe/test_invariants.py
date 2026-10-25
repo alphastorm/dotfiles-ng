@@ -24,7 +24,6 @@ import re
 import subprocess
 import datetime
 import csv
-import sqlite3
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -276,9 +275,10 @@ def _write_policy_registry(tmp_path: Path, policy: dict) -> Path:
     return path
 
 
-def _run_check_data_rights(tmp_path: Path, policy: dict, args: list[str],
-                           home: Path | None = None) -> subprocess.CompletedProcess:
+def _run_check_data_rights(tmp_path: Path, policy: dict, args: list[str]) -> subprocess.CompletedProcess:
     registry = _write_policy_registry(tmp_path, policy)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
     return subprocess.run(
         [
             PY,
@@ -291,9 +291,26 @@ def _run_check_data_rights(tmp_path: Path, policy: dict, args: list[str],
         cwd=HERE,
         capture_output=True,
         text=True,
-        # The guard reads the live account set from HOME; never the operator's own.
-        env={**os.environ, "HOME": str(home or tmp_path)},
+        # The guard reads the live account set from HOME and from the `omp` on PATH;
+        # never the operator's own. PATH holds only the stub a test writes, if any.
+        env={**os.environ, "HOME": str(tmp_path), "PATH": str(bin_dir)},
     )
+
+
+def _stub_omp(tmp_path: Path, stdout: str, status: int = 0) -> None:
+    """Stand in for `omp usage accounts --json`, the guard's live Anthropic account list."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (bin_dir / "omp.out").write_text(stdout + "\n", encoding="utf-8")
+    stub = bin_dir / "omp"
+    stub.write_text(
+        "#!/bin/sh\n"
+        '[ "$*" = "usage accounts --json" ] || exit 64\n'
+        f'/bin/cat "{bin_dir / "omp.out"}"\n'
+        f"exit {status}\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
 
 
 def _run_packet_gates(tmp_path: Path, cmd: str, corpus: list[dict], packets: list[dict],
@@ -923,21 +940,16 @@ def test_check_data_rights_stale_observation_records_are_unresolved(tmp_path: Pa
 def test_check_data_rights_requires_every_account_the_route_can_reach(tmp_path: Path):
     """OMP rotates across every enabled Anthropic credential, so one account's fresh
     observation says nothing about an account added later, and the newest record must
-    not stand in for an older one: each reachable account needs its own."""
+    not stand in for an older one: each reachable account needs its own. The accounts
+    come from `omp usage accounts`, which reads the auth broker; when it cannot answer,
+    the route is unresolved rather than limited to the accounts the file happens to name."""
     policy = _build_policy("anthropic-subscription", "anthropic-reachable-accounts",
                            requiredControls={"modelImprovementEnabled": False})
-    home = tmp_path / "home"
-    (home / ".omp/agent").mkdir(parents=True)
-    db = sqlite3.connect(home / ".omp/agent/agent.db")
-    db.execute("create table auth_credentials (provider text, identity_key text, disabled_cause text)")
-    db.executemany("insert into auth_credentials values (?, ?, ?)", [
-        ("anthropic", "email:first@example.com|org:1", None),
-        ("anthropic", "email:added@example.com|org:2", None),
-        ("anthropic", "email:revoked@example.com|org:3", "revoked"),
-        ("openai-codex", "email:other@example.com|org:4", None),
-    ])
-    db.commit()
-    db.close()
+    _stub_omp(tmp_path, json.dumps({"accounts": [
+        {"provider": "anthropic", "identityKey": "email:first@example.com|org:1"},
+        {"provider": "anthropic", "identityKey": "email:added@example.com|org:2"},
+        {"provider": "openai-codex", "identityKey": "email:other@example.com|org:4"},
+    ]}))
     observed_path = tmp_path / "observed-controls.yml"
     today = datetime.datetime.now(datetime.timezone.utc).date()
 
@@ -956,7 +968,7 @@ def test_check_data_rights_requires_every_account_the_route_can_reach(tmp_path: 
             "--item-provider-allowlist", policy["dataAllowlistKey"],
             "--observed-controls", str(observed_path),
             "--max-observation-age-days", "30",
-        ], home=home)
+        ])
 
     unobserved = check(("first@example.com", 0))
     assert unobserved.returncode == 20
@@ -969,6 +981,11 @@ def test_check_data_rights_requires_every_account_the_route_can_reach(tmp_path: 
     assert "added@example.com" in json.loads(masked.stdout)["message"]
 
     assert check(("first@example.com", 0), ("added@example.com", 1)).returncode == 0
+
+    _stub_omp(tmp_path, "auth broker unreachable", status=1)
+    unreadable = check(("first@example.com", 0), ("added@example.com", 1))
+    assert unreadable.returncode == 20
+    assert "omp usage accounts" in json.loads(unreadable.stdout)["message"]
 
 
 @pytest.mark.parametrize("item_allowlist", [[], ["anthropic"]])

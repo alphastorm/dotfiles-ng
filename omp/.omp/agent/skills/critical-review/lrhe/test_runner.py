@@ -36,8 +36,8 @@ pytestmark = pytest.mark.skipif(
 
 def _args(**over) -> Namespace:
     base = dict(
-        # glm's opencode-go route needs no local sign-in record; the anthropic routes
-        # read ~/.omp/agent/agent.db, which differs per machine.
+        # glm's opencode-go route needs no sign-in record; the anthropic routes check
+        # every account OMP's client can reach right now (`omp usage accounts`).
         item_id="S1-7e6f82f1", family="glm", lens="floor", arm="C",
         experiment_id="lrhe-opencode-v1", classification="public_corpus",
         item_authorized=False, policy_id=None,
