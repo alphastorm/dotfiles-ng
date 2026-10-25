@@ -259,10 +259,12 @@ def check_lanes_held() -> Result:
 def _catalogue() -> dict[str, dict[str, set[str]]] | None:
     """Provider -> model -> cached efforts, before local model overrides.
 
-    Scoped providers are keyed `<provider>:models-v1:<hash>` in the cache -- the
-    suffix is a cache discriminator built from the provider id and a scope hash,
-    not part of a selector, so it is stripped. That is why `opencode-go` appears
-    under a hashed key while `anthropic` does not.
+    OMP keys some providers' rows `<provider>:<discriminator>` -- a cache format
+    version, scope hash or client version, never part of a selector:
+    `opencode-go:models-v3:<hash>`, `openai-codex:0.159.0`, while `anthropic` has
+    none. The discriminator changes between OMP releases, so everything from the
+    first colon is stripped rather than one known shape; rows that share a
+    provider merge.
     """
     if not MODELS_DB.is_file():
         return None
@@ -282,7 +284,7 @@ def _catalogue() -> dict[str, dict[str, set[str]]] | None:
         except (TypeError, json.JSONDecodeError):
             continue
         models = parsed if isinstance(parsed, list) else parsed.get("models", [])
-        provider = catalogue.setdefault(provider_id.split(":models-v1:", 1)[0], {})
+        provider = catalogue.setdefault(provider_id.split(":", 1)[0], {})
         for model in models:
             if not isinstance(model, dict) or "id" not in model:
                 continue

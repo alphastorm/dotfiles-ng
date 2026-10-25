@@ -984,19 +984,27 @@ def test_qualification_rejects_oauth_binding_on_a_selector_off_its_route(tmp_pat
         qualification.validate_qualification(document)
 
 
-def test_preflight_resolves_selectors_through_the_hashed_provider_key(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cache_key", [
+    "opencode-go:models-v1:1gswkvxt6z2u9",
+    "opencode-go:models-v3:1gswkvxt6z2u9",
+    "opencode-go:0.159.0",
+])
+def test_preflight_resolves_selectors_through_any_cache_key_discriminator(
+        tmp_path, monkeypatch, cache_key):
     """qualification.yml cannot assert that its own selectors exist.
 
-    The catalogue keys scoped providers as `<provider>:models-v1:<hash>` -- a
-    cache discriminator, not part of the selector -- so a resolver comparing the
-    raw key would find no `opencode-go` at all and report every OpenCode lane
+    OMP keys some providers' catalogue rows `<provider>:<discriminator>` -- a cache
+    format version, scope hash or client version, not part of the selector -- and
+    the discriminator changes between OMP releases (`models-v1` became `models-v3`;
+    openai-codex rows carry the Codex client version). A resolver that matches one
+    known shape finds no such provider at all and reports every lane on it
     unresolvable. That is the shape the blocker "selector not discovered against
     the installed build" was standing in for.
     """
     db = tmp_path / "models.db"
     _fake_catalogue(
         db,
-        "opencode-go:models-v1:1gswkvxt6z2u9",
+        cache_key,
         [
             {"id": "kimi-k3", "thinking": {"efforts": ["low", "high", "max"]}},
             {"id": "no-effort-metadata"},

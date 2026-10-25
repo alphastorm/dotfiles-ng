@@ -808,9 +808,11 @@ than a hardcoded list of names.
 It also resolves every selector against OMP's model cache — provider, model, and
 any `:effort` suffix. `qualification.yml` cannot assert that its own selectors
 exist, and the alternative to checking is spending a request to find out. Note
-the cache keys scoped providers as `<provider>:models-v1:<hash>`, a discriminator
-rather than part of the selector, so `opencode-go` appears hashed while
-`anthropic` does not; a resolver comparing raw keys finds no OpenCode lane at all.
+the cache keys some providers as `<provider>:<discriminator>` (a cache version,
+scope hash or client version: `opencode-go:models-v3:<hash>`, `openai-codex:0.159.0`)
+rather than by the bare provider, and the discriminator changes between OMP
+releases; a resolver comparing raw keys, or stripping one known shape, finds no
+lane on those providers at all.
 That is why "add the credential" is no longer a manual step — an unauthenticated
 provider has no cached catalogue, and the gate says so by name.
 
