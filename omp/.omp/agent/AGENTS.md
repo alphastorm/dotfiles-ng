@@ -14,6 +14,7 @@
 - Simplification reviews classify findings `delete` | `stdlib` | `native` | `yagni` | `shrink`, each naming the exact location, replacement, preserved behavior, and evidence; net line count is never the objective.
 - After a completed, committed implementation package in a repository exposing `bun run cleanse:auto` or `scripts/run_cleanse_lane.sh`, launch the lane once, detached, and report its receipt or `cleanse/auto-*` branch. It is mechanical repair only and enforces its own skip conditions; merging its branch is the founder's decision.
 - Use `goal` only for one open-ended objective that needs autonomous continuation across turns — never for bounded retrieval, routine edits, user checklists, or work awaiting a decision. Omit `token_budget` unless the user asks for a cap, and encode observable success, non-goals, verification, and stop conditions.
+- Fresh sessions: offer one at a phase boundary (a packet, release, or window is done, or an unrelated objective arrives) or after the second failed attempt on the same hypothesis — never mid-council, mid-window, or while jobs are running, and never force it. Write a resume packet with the objective and next action; repo, branch, and SHA; verified facts kept apart from opinions; failed hypotheses; standing prohibitions; authority grants; and jobs in flight. End the report with its path; the founder resumes with `/new` and "Read <path> and continue" (after `/restart` when upgrading OMP).
 
 ## RepoPrompt
 
