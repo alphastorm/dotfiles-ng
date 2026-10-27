@@ -776,6 +776,19 @@ def _qualification(path: Path, selector: str) -> None:
                 "authority": "live-qualification",
             },
         },
+        "oracleShadow": {
+            "enabled": True,
+            "shadow_id": "oracle-chatgpt-pro-web",
+            "model_family": "gpt",
+            "correlation_group": "openai-chatgpt-pro-web",
+            "provider_route": "openai-chatgpt-web",
+            "access_profile": "chatgpt-pro-web-asxst0rm",
+            "data_allowlist_key": "openai",
+            "preset": "pro_extended",
+            "execution_mode": "pi_oracle_async",
+            "evidence_delivery": "repository",
+            "dataset_path": "lrhe-data/oracle-shadow",
+        },
         "liveDispatch": {
             "panelId": qualification.LIVE_PANEL_ID,
             "byLeadFamily": {

@@ -9,6 +9,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import criticalReviewPolicy, {
 	DISPATCH_MARKER_HEADER,
 	type DispatchMarker,
+	type LaunchOracleShadow,
 	deepEqual,
 	evaluateTaskDispatch,
 	parseDispatchMarker,
@@ -100,6 +101,7 @@ type ToolCall = {
 function gate(
 	promptParts: string[],
 	verify: VerifyTask = approvingVerifier(),
+	launchShadow: LaunchOracleShadow = async () => undefined,
 ): ToolCall {
 	let toolCallHandler: ((event: unknown, ctx: unknown) => unknown) | undefined;
 	let toolResultHandler: ((event: unknown, ctx: unknown) => unknown) | undefined;
@@ -112,7 +114,7 @@ function gate(
 			if (event === "tool_result") toolResultHandler = registered;
 		},
 	};
-	criticalReviewPolicy(pi as unknown as ExtensionAPI, verify);
+	criticalReviewPolicy(pi as unknown as ExtensionAPI, verify, launchShadow);
 	const ctx = { getSystemPrompt: () => promptParts };
 	let callCount = 0;
 	const call = (async (toolName, input, toolCallId) => {
@@ -270,6 +272,30 @@ describe("unprotected task calls", () => {
 });
 
 describe("protected task calls", () => {
+	test("launches one Oracle shadow only after a protected dispatch verifies", async () => {
+		const launches: Array<{ envelopePath: string; envelopeSha256: string }> = [];
+		const launchShadow: LaunchOracleShadow = async (
+			envelopePath,
+			envelopeSha256,
+		) => {
+			launches.push({ envelopePath, envelopeSha256 });
+		};
+		const call = gate(LEAD_PROMPT, approvingVerifier(), launchShadow);
+
+		expect(
+			await call("task", structuredClone(CANONICAL_INPUT), "verified-council"),
+		).toEqual({ input: CANONICAL_INPUT });
+		expect(launches).toEqual([
+			{ envelopePath: ENVELOPE_PATH, envelopeSha256: ENVELOPE_SHA256 },
+		]);
+
+		const rejected = structuredClone(CANONICAL_INPUT);
+		rejected.context = "unverified council";
+		expect(await call("task", rejected, "unverified-council")).toMatchObject({
+			block: true,
+		});
+		expect(launches).toHaveLength(1);
+	});
 	test("blocks a reviewer batch whose context carries no marker", async () => {
 		const verify = approvingVerifier();
 		const decision = await evaluateTaskDispatch(
@@ -491,10 +517,14 @@ describe("protected task calls", () => {
 
 	test("admits the canonical dispatch after the harness strips its intent field", async () => {
 		// omp 18.5.1 removes `i` from tool-call arguments before any tool_call hook runs.
-		const call = gate(LEAD_PROMPT);
+		const launches: string[] = [];
+		const call = gate(LEAD_PROMPT, approvingVerifier(), async (envelopePath) => {
+			launches.push(envelopePath);
+		});
 		const { i: _intent, ...delivered } = structuredClone(CANONICAL_INPUT);
 
 		expect(await call("task", delivered)).toEqual({ input: delivered });
+		expect(launches).toEqual([ENVELOPE_PATH]);
 	});
 
 	test("blocks an intent-stripped call that deviates from the canonical dispatch", async () => {

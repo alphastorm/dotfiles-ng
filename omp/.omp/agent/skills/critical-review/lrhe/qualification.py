@@ -141,6 +141,31 @@ FOCUSED_SUPPLEMENTS = "focusedSupplements"
 PROFILE_FIELDS = (*PROFILE_GROUPS, FOCUSED_SUPPLEMENTS)
 GLOBAL_GROUPS = ("targetedRefuters", "evaluationOnly", "disabled")
 CROSS_FAMILY_GROUPS = ("strongCritic", "supplements", "targetedRefuters")
+ORACLE_SHADOW_FIELDS = frozenset(
+    {
+        "enabled",
+        "shadow_id",
+        "model_family",
+        "correlation_group",
+        "provider_route",
+        "access_profile",
+        "data_allowlist_key",
+        "preset",
+        "execution_mode",
+        "evidence_delivery",
+        "dataset_path",
+    }
+)
+ORACLE_SHADOW_EXECUTION_MODE = "pi_oracle_async"
+ORACLE_SHADOW_EVIDENCE_DELIVERY = "repository"
+ORACLE_SHADOW_MODEL_FAMILY = "gpt"
+ORACLE_SHADOW_PROVIDER_ROUTE = "openai-chatgpt-web"
+ORACLE_SHADOW_DATA_ALLOWLIST_KEY = "openai"
+ORACLE_SHADOW_PRESET = "pro_extended"
+ORACLE_SHADOW_SELECTED = "selected"
+ORACLE_SHADOW_SKIPPED = "skipped"
+ORACLE_SHADOW_DISABLED = "disabled"
+ORACLE_SHADOW_DISABLED_REASON_CODE = "oracle_shadow_disabled"
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 QUALIFICATION_FIELDS = frozenset({"common", "scopes"})
@@ -312,6 +337,23 @@ class LiveReviewer:
 
 
 @dataclass(frozen=True)
+class OracleShadow:
+    """One asynchronous no-standing consultation outside the resolver roster."""
+
+    enabled: bool
+    shadow_id: str
+    model_family: str
+    correlation_group: str
+    provider_route: str
+    access_profile: str
+    data_allowlist_key: str
+    preset: str
+    execution_mode: str
+    evidence_delivery: str
+    dataset_path: str
+
+
+@dataclass(frozen=True)
 class ConditionalCritic:
     reviewer: LiveReviewer
     policy: ConditionalPolicy
@@ -336,6 +378,48 @@ def _names(value: object, field: str) -> tuple[str, ...]:
     if len(names) != len(set(names)):
         raise QualificationError(f"{field} contains duplicate names")
     return tuple(names)
+
+
+def oracle_shadow(document: Mapping[str, object]) -> OracleShadow | None:
+    """Validate the asynchronous ChatGPT Pro shadow configuration."""
+
+    raw = document.get("oracleShadow")
+    if raw is None:
+        return None
+    block = _mapping(raw, "oracleShadow")
+    if set(block) != ORACLE_SHADOW_FIELDS:
+        raise QualificationError(
+            f"oracleShadow fields must be {sorted(ORACLE_SHADOW_FIELDS)}, got {sorted(block)}"
+        )
+    enabled = block.get("enabled")
+    if not isinstance(enabled, bool):
+        raise QualificationError("oracleShadow.enabled must be boolean")
+    values: dict[str, str] = {}
+    for field in ORACLE_SHADOW_FIELDS - {"enabled"}:
+        value = block.get(field)
+        if not isinstance(value, str) or not value.strip() or value != value.strip():
+            raise QualificationError(f"oracleShadow.{field} must be a non-empty trimmed string")
+        values[field] = value
+    if values["execution_mode"] != ORACLE_SHADOW_EXECUTION_MODE:
+        raise QualificationError(
+            f"oracleShadow.execution_mode must be {ORACLE_SHADOW_EXECUTION_MODE!r}"
+        )
+    if values["evidence_delivery"] != ORACLE_SHADOW_EVIDENCE_DELIVERY:
+        raise QualificationError(
+            f"oracleShadow.evidence_delivery must be {ORACLE_SHADOW_EVIDENCE_DELIVERY!r}"
+        )
+    for field, expected in (
+        ("model_family", ORACLE_SHADOW_MODEL_FAMILY),
+        ("provider_route", ORACLE_SHADOW_PROVIDER_ROUTE),
+        ("data_allowlist_key", ORACLE_SHADOW_DATA_ALLOWLIST_KEY),
+        ("preset", ORACLE_SHADOW_PRESET),
+    ):
+        if values[field] != expected:
+            raise QualificationError(f"oracleShadow.{field} must be {expected!r}")
+    dataset = Path(values["dataset_path"])
+    if dataset.is_absolute() or ".." in dataset.parts or not dataset.parts or dataset.parts[0] != "lrhe-data":
+        raise QualificationError("oracleShadow.dataset_path must stay under lrhe-data")
+    return OracleShadow(enabled=enabled, **values)
 
 
 def selector_thinking_level(selector: str) -> str:
@@ -657,6 +741,9 @@ def validate_qualification(document: object) -> Mapping[str, object]:
                 raise QualificationError(
                     f"canaryLedgers.{ledger_name}.prefixRows must be a positive integer"
                 )
+
+    if oracle_shadow(root) is None:
+        raise QualificationError("qualification must declare oracleShadow for full-council shadowing")
 
     live = _mapping(root.get("liveDispatch"), "liveDispatch")
     expected_live_fields = {"panelId", "byLeadFamily", *GLOBAL_GROUPS}
@@ -1337,6 +1424,45 @@ def packet_authorization_reason_codes(
         data_allowlist_key=reviewer.data_allowlist_key,
         packet=packet,
     )
+
+
+def oracle_shadow_selection(
+    document: Mapping[str, object], packet: Mapping[str, object]
+) -> dict[str, object] | None:
+    """Resolve the no-standing shadow and its packet-specific data grants."""
+
+    shadow = oracle_shadow(document)
+    if shadow is None:
+        return None
+    if not shadow.enabled:
+        selection = ORACLE_SHADOW_DISABLED
+        reasons = (ORACLE_SHADOW_DISABLED_REASON_CODE,)
+    else:
+        missing = _packet_authorization_reason_codes(
+            access_profile=shadow.access_profile,
+            data_allowlist_key=shadow.data_allowlist_key,
+            packet=packet,
+        )
+        selection = ORACLE_SHADOW_SKIPPED if missing else ORACLE_SHADOW_SELECTED
+        reasons = missing
+    return {
+        "schemaVersion": 1,
+        "shadowId": shadow.shadow_id,
+        "selection": selection,
+        "reasonCodes": list(reasons),
+        "modelFamily": shadow.model_family,
+        "correlationGroup": shadow.correlation_group,
+        "providerRoute": shadow.provider_route,
+        "accessProfile": shadow.access_profile,
+        "dataAllowlistKey": shadow.data_allowlist_key,
+        "preset": shadow.preset,
+        "executionMode": shadow.execution_mode,
+        "evidenceDelivery": shadow.evidence_delivery,
+        "datasetPath": shadow.dataset_path,
+        "standing": "none",
+        "blocksClosure": False,
+        "receivesPeerOutput": False,
+    }
 
 
 def _require_packet_authorization(reviewer: LiveReviewer, packet: Mapping[str, object]) -> None:

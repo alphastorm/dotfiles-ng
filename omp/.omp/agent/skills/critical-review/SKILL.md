@@ -79,7 +79,7 @@ When a full council is justified, encode the same brief using the existing packe
 
 Both independent paths transmit reviewed material to hosted reviewers, so this floor applies before any dispatch, focused or full council:
 
-1. Repository work and research are cloud-permitted by default. That default is standing unattended authorization for the exact live reviewers and access profiles selected by the resolver. Never invoke Ask merely to authorize a focused review, council, provider, or access profile.
+1. Repository work and research are cloud-permitted by default. That default is standing unattended authorization for the exact live reviewers and access profiles selected by the resolver. Never invoke Ask merely to authorize a focused review, council, provider, access profile, or Oracle shadow.
 2. Block hosted review only when the user, repository, or applicable customer policy explicitly marks the task or material `NO_CLOUD`; do not infer a separate confidential or local-only category. Never send `NO_CLOUD` material to a hosted reviewer.
 3. An explicit provider list in the current request narrows the resolver to those providers for that review epoch. If the deterministic class cannot resolve its required roster under that restriction, do not ask, substitute, or shop fallbacks: use direct lead verification when the class permits it, otherwise report the explicit restriction as the blocker.
 4. Populate `provider_data_allowlist` and `reviewer_access_profile_allowlist` mechanically from the deterministic class, lead-family profile, and live authority. These packet fields record the standing policy decision; they are not user prompts or caller-selected reviewer definitions.
@@ -165,6 +165,15 @@ supplies independent assurance, replaces the strong critic, or relaxes the
 cross-family rules for ordinary supplements. Focused reviews include every
 strong critic; reciprocal-only replay and the targeted-refuter pool are unchanged.
 
+ChatGPT Pro Web through pinned pi-oracle is an asynchronous shadow on every full
+council, outside the resolver roster. It has no council standing, never blocks
+closure or retries, receives no peer output, and never substitutes for a missing
+qualified reviewer. The envelope selects it only when the packet separately grants
+`openai` and the exact `chatgpt-pro-web-asxst0rm` access profile; otherwise it
+records a nonblocking skip. A selected shadow uses `pro_extended` against the
+frozen repository commit. Browser auth, submission, collection, or output-schema
+failure is recorded for later evaluation and has no effect on the council.
+
 ## Full council at a glance
 
 Every change admitted to the full council has one `review_sequence_id`. Every frozen epoch has one machine-readable `review-record.json`. `lrhe/review_sequence.py` is the sole dispatch-action selector; packet prose cannot override its result. Its modes are `design`, an optional pre-implementation council on the frozen design artifact; `initial`, the first general council for the sequence; `remediation`, a correction scoped to named findings, changed paths, and adjacent invariants; `material-redesign`, a second general council only after the initial council's named P0/P1 findings are directly verified as resolved and the correction changes architecture, a trust boundary, public compatibility, persistent state, migration/rollback, or production effects; and `founder-requested`, exactly one explicit founder-authorized third implementation council.
@@ -244,7 +253,7 @@ Every evidence item must identify the protected asset or invariant and the resid
 
 A reviewer's charter bytes and model selector are pinned: `qualification.yml` binds each lane's `canaryReceipt`, and `preflight.py` validates that receipt against the live agent definition or, when a `charterAmendment` is present, against the amended parent. So editing a reviewer definition invalidates its qualification until one fresh trace of the amended charter exists. That trace is produced by the `canary` review class, never by spawning a reviewer beside the dispatch gate.
 
-`canary` is a one-seat class: it names exactly one configured lane, resolves that lane's existing standing under `selectionClass: canary`, binds no review record, and discloses the probe to the reviewer in its assignment. Its result is boundary evidence about the lane — read-only tools, pinned served model, one schema-valid terminal response — and never evidence about a reviewed change. The receipt schema pins `canary` standing as its own tuple, so a probe result cannot be recorded as a council or focused seat.
+`canary` is a one-seat class: it names exactly one configured lane, resolves that lane's existing standing under `selectionClass: canary`, binds no review record, selects no Oracle shadow, and discloses the probe to the reviewer in its assignment. Its result is boundary evidence about the lane — read-only tools, pinned served model, one schema-valid terminal response — and never evidence about a reviewed change. The receipt schema pins `canary` standing as its own tuple, so a probe result cannot be recorded as a council or focused seat.
 
 A probe is prepared and dispatched exactly like a council: the canary tool's `trace-dispatch` materializes a frozen probe subject — the declared fixture committed into a throwaway repository, because freezing needs a clean HEAD and a working tree is never one — and returns verifier-approved Task input whose packet carries only the probed lane's two grants. The lead submits that payload verbatim through the same gate, then derives the boundary receipt from the reviewer's session transcript. The live protocol carries both commands.
 
