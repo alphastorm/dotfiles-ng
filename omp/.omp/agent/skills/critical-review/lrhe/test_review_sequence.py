@@ -1452,19 +1452,6 @@ def _panel(with_conditional: bool = True) -> dict:
                 "authority": "live-qualification",
             }
         },
-        "oracleShadow": {
-            "enabled": True,
-            "shadow_id": "oracle-chatgpt-pro-web",
-            "model_family": "gpt",
-            "correlation_group": "openai-chatgpt-pro-web",
-            "provider_route": "openai-chatgpt-web",
-            "access_profile": "chatgpt-pro-web-asxst0rm",
-            "data_allowlist_key": "openai",
-            "preset": "pro_extended",
-            "execution_mode": "pi_oracle_async",
-            "evidence_delivery": "repository",
-            "dataset_path": "lrhe-data/oracle-shadow",
-        },
         "liveDispatch": {
             "panelId": LIVE_PANEL_ID,
             "byLeadFamily": profiles,
@@ -1530,7 +1517,6 @@ _PACKET_ACCESS_PROFILES = [
     "daybreak-blue",
     "google-antigravity-default",
     "opencode-go-default",
-    "chatgpt-pro-web-asxst0rm",
     "xai-oauth-default",
 ]
 
@@ -1614,74 +1600,6 @@ def _resolve(
 
 def _reviewer_ids(manifest: dict, key: str = "selected") -> list[str]:
     return [entry["reviewer_id"] for entry in manifest[key]]
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("execution_mode", "task_agent"),
-        ("evidence_delivery", "inline"),
-        ("model_family", "claude"),
-        ("provider_route", "other-route"),
-        ("data_allowlist_key", "anthropic"),
-        ("preset", "fast"),
-        ("dataset_path", "../outside-lrhe-data"),
-    ],
-)
-def test_oracle_shadow_authority_pins_execution_and_data_boundaries(
-    field: str, value: str
-) -> None:
-    document = _panel()
-    document["oracleShadow"][field] = value
-
-    with pytest.raises(qualification.QualificationError, match=rf"oracleShadow\.{field}"):
-        validate_qualification(document)
-
-
-def test_oracle_shadow_requires_both_packet_grants_without_joining_the_roster() -> None:
-    document = validate_qualification(_panel())
-    packet = {
-        "provider_data_allowlist": list(_PACKET_VENDORS),
-        "reviewer_access_profile_allowlist": list(_PACKET_ACCESS_PROFILES),
-    }
-
-    selected = qualification.oracle_shadow_selection(document, packet)
-    assert selected is not None
-    assert selected["selection"] == qualification.ORACLE_SHADOW_SELECTED
-    assert selected["reasonCodes"] == []
-    assert selected["standing"] == "none"
-    assert selected["blocksClosure"] is False
-    assert selected["receivesPeerOutput"] is False
-    assert selected["shadowId"] not in document["reviewers"]
-
-    packet["provider_data_allowlist"].remove("openai")
-    packet["reviewer_access_profile_allowlist"].remove("chatgpt-pro-web-asxst0rm")
-    skipped = qualification.oracle_shadow_selection(document, packet)
-    assert skipped is not None
-    assert skipped["selection"] == qualification.ORACLE_SHADOW_SKIPPED
-    assert skipped["reasonCodes"] == sorted(
-        [
-            qualification.PROVIDER_DATA_RIGHTS_SKIP_REASON_CODE,
-            qualification.ACCESS_PROFILE_SKIP_REASON_CODE,
-        ]
-    )
-
-
-def test_oracle_shadow_disabled_authority_records_a_nonblocking_skip() -> None:
-    document = _panel()
-    document["oracleShadow"]["enabled"] = False
-    validated = validate_qualification(document)
-    selection = qualification.oracle_shadow_selection(
-        validated,
-        {
-            "provider_data_allowlist": list(_PACKET_VENDORS),
-            "reviewer_access_profile_allowlist": list(_PACKET_ACCESS_PROFILES),
-        },
-    )
-    assert selection is not None
-    assert selection["selection"] == qualification.ORACLE_SHADOW_DISABLED
-    assert selection["reasonCodes"] == [qualification.ORACLE_SHADOW_DISABLED_REASON_CODE]
-    assert selection["blocksClosure"] is False
 
 
 def test_live_panel_roles_are_derived_from_private_authority() -> None:

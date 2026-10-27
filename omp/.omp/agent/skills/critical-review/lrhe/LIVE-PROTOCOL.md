@@ -63,11 +63,6 @@ reviewer prose:
   its own security qualification and exact model/access profile; it never
   substitutes for a strong critic or becomes a same-family ordinary supplement.
   Reciprocal-only replay and targeted refuters are unchanged;
-- ChatGPT Pro Web through pi-oracle remains outside liveDispatch but is attempted
-  asynchronously for every full council. The separate oracleShadow authority has
-  no standing and no effect on closure, retries, or reviewer substitution. It is
-  selected only when the packet grants both its OpenAI data key and exact access
-  profile; every withheld grant records a nonblocking skip;
 - standing reaches each reviewer only inside the generated
   CRITICAL_REVIEW_RESOLVER_RECEIPT_V1 block. evaluationOnly and disabled lanes,
   and every experiment in lrhe/panels.yaml, never authorize live review.
@@ -383,8 +378,6 @@ provider_data_allowlist:
 reviewer_access_profile_allowlist:
 ```
 
-For ordinary cloud-permitted full councils, the generated grants include `openai` in `provider_data_allowlist` and `chatgpt-pro-web-asxst0rm` in `reviewer_access_profile_allowlist`, so the standard Oracle shadow is attempted without a user prompt. An explicit provider restriction may omit either grant; that records the Oracle lane as skipped and never fails or shrinks the qualified Task council.
-
 The declared class, named assets and invariants, credible adversary, caps, recovery contract, result-validity conditions, and non-goals are binding review scope. Review invocation does not promote the artifact class or create a future consumer. Critics may report an omitted risk only when they show a concrete in-scope consequence after current controls. General hardening and speculative future-proofing are not findings.
 
 Use concise facts and primary anchors. Include the decision record, not hidden
@@ -539,21 +532,6 @@ session rebuilds the budget from those records. A later call is admitted only as
 an unchanged, order-preserving subset of failed seats, each at most once. This
 state follows the protected Task lifecycle rather than the enclosing eval
 lifecycle, so an outer nonterminal transition cannot authorize redispatch.
-
-After the same final verifier approves the canonical Task input, the policy reads
-the envelope's resolver-derived `oracleShadow` state. A selected lane submits
-once through pi-oracle from a hook-free detached worktree at `subject_commit`.
-Before preflight or provider submission, it persists a launch-phase pointer and
-starts a detached collector. Restarts retain the pointer's original six-hour
-deadline; an interrupted or uncertain submission becomes finite evidence and is
-never resubmitted. The immutable result artifact is canonical, and collectors or
-later launches repair the run-keyed dataset row from it rather than contradicting
-it. Request, dispatch, and result artifacts remain beside the review record;
-every council keeps a separate row under `lrhe-data/oracle-shadow/`. Selected,
-skipped, disabled, launch-failed, launch-outcome-unknown, collector-timeout,
-schema-invalid, and terminal job outcomes are evidence for later evaluation only.
-The launch is not awaited by Task, receives no reviewer output, cannot authorize
-a retry, and a Task retry reuses the durable request or job.
 
 The extension treats every Task item whose agent name starts with `review-` as
 protected. A protected or mixed call without the exact
@@ -780,7 +758,7 @@ A reviewer's charter bytes are pinned: `qualification.yml` binds each lane's
 definition, or against the amended parent when a `charterAmendment` is present.
 Editing a reviewer definition therefore invalidates that lane's qualification
 until one fresh trace of the amended charter exists. Produce it with the `canary`
-review class — one seat, one bound fixture, no review record, no Oracle shadow,
+review class — one seat, one bound fixture, no review record,
 and disclosed to the reviewer — never by spawning a reviewer beside the dispatch
 gate:
 
