@@ -54,7 +54,7 @@ When the deterministic result is not a full council, stop before review ceremony
 
 Only GPT/ChatGPT and Claude are qualified accountable leads. A focused review uses every strong critic — the reciprocal critic, review-claude-opus under CVP for a GPT lead or review-daybreak-blue for a Claude lead, and review-gemini-argon for both — plus the profile's `focusedSupplements`: review-gpt-astra for a Claude lead, none for a GPT lead. `qualification.yml` owns those profile entries, and `review_dispatch.py prepare --review-class focused` resolves every seat in profile order from the accountable lead family; the packet grants every seat's vendor and access profiles. The caller cannot name, replace, reorder, or add a reviewer.
 
-Every strong critic is required cross-family independent evidence. Missing, refused, or invalid strong-critic results are missing, never approved. A configured focused supplement keeps its council supplement's standing: cross-family supplemental evidence that never replaces a strong critic or counts toward the independent floor. Its findings get the same lead verification and disposition as any other; a missing, refused, or invalid supplement result is recorded and never blocks closure or triggers a substitute. Review-claude-fable remains resolver-qualified architecture synthesis for full councils, not a focused shortcut. This routing does not modify the full council roster.
+Every strong critic is required cross-family independent evidence. Missing, refused, or invalid strong-critic results are missing, never approved. A configured focused supplement keeps its council supplement's standing: cross-family supplemental evidence that never replaces a strong critic or counts toward the independent floor. Its findings get the same lead verification and disposition as any other; a missing, refused, or invalid supplement result is recorded and never blocks closure or triggers a substitute. This routing does not modify the full council roster.
 
 Routing selects the reviewer; it never states the reviewer's standing. The emitted Task payload is submitted verbatim. The resolver emits `selectionClass`, `role`, `independence_class`, and `authority` from the live authority; the lead never writes, derives, or hand-copies a standing field, and a reviewer reached any other way is not a review.
 
@@ -146,16 +146,14 @@ The resolver uses four explicit profile groups, not one role per model:
 | strongCritic | Opus 5.5 through the CVP-approved route + Gemini 4 Argon | Daybreak Blue + Gemini 4 Argon | required cross-family independent evidence |
 | supplements | none | GPT-6 Astra | always-on cross-family supplemental evidence |
 | leadFamilySecurity | qualified Daybreak Blue | Mythos 5.1 through the CVP-approved route | always-on same-lineage blind sample; supplemental evidence only |
-| architectureSpecialists | Fable 5.1 when eligible | Fable 5.1 when eligible | record-selected supplemental architecture synthesis, security-touching subjects included |
+| architectureSpecialists | none | none | no live architecture specialist while Fable is paused |
 
 No model appears twice among the strong critics and supplements, and each group
 keeps distinct model families; a supplement may share a strong critic's family
 (Astra beside Daybreak) because it never counts toward the independent floor.
-Fable may intentionally share a lineage because its standing
-is always supplemental. Fable is eligible whenever the record names an
-architecture-lens domain; security domains, authorization proofs, and
-security-looking paths no longer exclude it. It may identify vulnerabilities it
-finds but never writes exploits, and it never becomes the council's security lane.
+Fable 5.1 is paused in `liveDispatch.disabled`, with dispatch and evaluation
+disabled. Its charter and qualification history remain on disk, but it is not
+selected for full councils or focused reviews.
 
 GPT full councils include Daybreak through the explicit leadFamilySecurity group,
 reusing its qualified security scope and exact model/access contract. Claude full

@@ -52,11 +52,11 @@ reviewer prose:
   review: Astra for Claude leads, none for GPT leads. Each member must be in the
   same profile's supplements and keeps that supplemental standing beside every
   strong critic;
-- architectureSpecialists is additive and record-selected. Eligible Fable is
-  supplemental whether cross-family or same-lineage, and its absence never
-  shrinks the unconditional council. An architecture-lens domain activates it;
-  security domains, authorization proofs, and security-looking paths do not
-  exclude it;
+- architectureSpecialists is additive and record-selected; a selected specialist
+  is supplemental whether cross-family or same-lineage, and its absence never
+  shrinks the unconditional council. Both profiles currently leave the group
+  empty: Fable is paused in `liveDispatch.disabled`, with dispatch and
+  evaluation disabled. Its charter and qualification history remain on disk;
 - leadFamilySecurity explicitly selects qualified Daybreak Blue on every GPT
   full council and CVP-bound Mythos 5.1 on every Claude full council, with
   same_lineage_blind_sample and supplemental_evidence standing. Each lane keeps
@@ -69,7 +69,7 @@ reviewer prose:
 
 Before dispatch, in addition to the hosted-material floor in `SKILL.md`:
 
-1. Read skill://critical-review/qualification.yml. A reviewer is enabled only when its reviewer_id is in the selected profile or required global group, dispatchEnabled is true, its canary and read-only gates pass, and its exact selector resolves. Fable additionally needs a passed scope receipt for the requested architecture domain.
+1. Read skill://critical-review/qualification.yml. A reviewer is enabled only when its reviewer_id is in the selected profile or required global group, dispatchEnabled is true, its canary and read-only gates pass, and its exact selector resolves. A configured architecture specialist additionally needs a passed scope receipt for the requested architecture domain.
 2. For ordinary cloud-permitted work, populate `provider_data_allowlist` and `reviewer_access_profile_allowlist` from the complete deterministic candidate set for the selected class and lead-family profile. Match access_profile, not provider_route. An explicit provider restriction may only narrow those generated grants; it never triggers Ask or model substitution. A missing generated grant on any strong critic, an always-on supplement, or lead-family security fails resolution; a record-selected architecture specialist is skipped with every reason recorded.
 
 A missing, disabled, timed-out, schema-invalid, restricted, or unqualified reviewer is missing, never approved. Do not substitute another model or ask the user to pick one. An architecture specialist the resolver did not select is not_selected/ineligible. Any selected supplemental_evidence row remains additive: it cannot rescue the independent floor, break a disagreement, or earn a retry that the strong critic would not get.

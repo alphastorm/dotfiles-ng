@@ -200,7 +200,6 @@ def test_proportional_assurance_policy_contract():
     focused_routing = focused_routing.split("when a full council is justified", 1)[0]
     assert "review-daybreak-blue for a claude lead" in focused_routing
     assert "review-claude-opus under cvp for" in focused_routing
-    assert "review-claude-fable remains resolver-qualified architecture synthesis" in focused_routing
     assert "the caller cannot name, replace, reorder, or add a reviewer" in focused_routing
     assert "this routing does not modify the full council roster" in focused_routing
 
@@ -1093,12 +1092,6 @@ needs_agents = pytest.mark.skipif(
 @needs_agents
 def test_live_evidence_contract_matches_active_config_and_receipt():
     result = preflight.check_reviewer_evidence_contracts()
-    assert result.state == preflight.PASS, result.detail
-
-
-@needs_agents
-def test_live_conditional_scope_evidence_contract_is_current():
-    result = preflight.check_conditional_critic_scope()
     assert result.state == preflight.PASS, result.detail
 
 
@@ -2068,14 +2061,14 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
             "supplements": [],
             "focusedSupplements": [],
             "leadFamilySecurity": ["daybreak-blue"],
-            "architectureSpecialists": ["claude"],
+            "architectureSpecialists": [],
         },
         "claude": {
             "strongCritic": ["daybreak-blue", "gemini-argon"],
             "supplements": ["gpt-astra"],
             "focusedSupplements": ["gpt-astra"],
             "leadFamilySecurity": ["claude-mythos"],
-            "architectureSpecialists": ["claude"],
+            "architectureSpecialists": [],
         },
     }
     for lead_family, profile in profiles.items():
@@ -2103,9 +2096,6 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
     astra = document["reviewers"]["gpt-astra"]
     assert "oauthAccount" not in astra
     assert astra["correlation_group"] != document["reviewers"]["daybreak-blue"]["correlation_group"]
-    # Reviewing security-touching subjects never promotes Fable to a security lane.
-    fable_scopes = document["reviewers"]["claude"]["qualification"]["scopes"]
-    assert fable_scopes["security-review"]["status"] == "ineligible"
     qualification.validate_qualification(document)
 
 

@@ -117,10 +117,6 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-daybreak-blue", "canary", qualification.LEAD_FAMILY_SECURITY_ROLE,
         qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
-    ("gpt", "canary", "claude"): (
-        "review-claude-fable", "canary", qualification.ARCHITECTURE_ROLE,
-        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
-    ),
     ("gpt", "canary", "glm"): (
         "review-glm-floor", "canary", "targeted_refuter",
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
@@ -149,10 +145,6 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-daybreak-blue", "supplement", qualification.LEAD_FAMILY_SECURITY_ROLE,
         qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
-    ("gpt", "initial", "claude"): (
-        "review-claude-fable", "conditional", qualification.ARCHITECTURE_ROLE,
-        qualification.CROSS_FAMILY, qualification.SUPPLEMENTAL_EVIDENCE,
-    ),
     ("gpt", "targeted-refuter", "glm"): (
         "review-glm-floor", "targeted", "targeted_refuter",
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
@@ -171,10 +163,6 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
     ),
     ("claude", "canary", "claude-mythos"): (
         "review-claude-mythos", "canary", qualification.LEAD_FAMILY_SECURITY_ROLE,
-        qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
-    ),
-    ("claude", "canary", "claude"): (
-        "review-claude-fable", "canary", qualification.ARCHITECTURE_ROLE,
         qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
     ("claude", "canary", "glm"): (
@@ -213,10 +201,6 @@ EXPECTED_TUPLES: dict[tuple[str, str, str], tuple[str, str, str, str, str]] = {
         "review-claude-mythos", "supplement", qualification.LEAD_FAMILY_SECURITY_ROLE,
         qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
     ),
-    ("claude", "initial", "claude"): (
-        "review-claude-fable", "conditional", qualification.ARCHITECTURE_ROLE,
-        qualification.SAME_LINEAGE_BLIND_SAMPLE, qualification.SUPPLEMENTAL_EVIDENCE,
-    ),
     ("claude", "targeted-refuter", "glm"): (
         "review-glm-floor", "targeted", "targeted_refuter",
         qualification.CROSS_FAMILY, qualification.INDEPENDENT_EVIDENCE,
@@ -227,12 +211,12 @@ EXPECTED_ARITY: dict[tuple[str, str], tuple[int, int]] = {
     ("gpt", "canary"): (1, 1),
     ("gpt", "focused"): (2, 2),
     ("gpt", "replay"): (1, 1),
-    ("gpt", "initial"): (3, 4),
+    ("gpt", "initial"): (3, 3),
     ("gpt", "targeted-refuter"): (1, 1),
     ("claude", "canary"): (1, 1),
     ("claude", "focused"): (3, 3),
     ("claude", "replay"): (1, 1),
-    ("claude", "initial"): (4, 5),
+    ("claude", "initial"): (4, 4),
     ("claude", "targeted-refuter"): (1, 1),
 }
 

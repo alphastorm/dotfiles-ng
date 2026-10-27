@@ -276,12 +276,10 @@ profiles exist, and each has four explicit groups:
   as same_lineage_blind_sample and supplemental_evidence. Daybreak reuses its
   existing qualified scope and exact model/access contract; Mythos carries its
   own canary receipt;
-- architectureSpecialists is record-selected. Fable is default-on for eligible
-  design, architecture-heavy initial, material-redesign, and founder-requested councils, but always
-  carries supplemental authority. Security domains, authorization proofs, and
-  security-looking paths do not exclude it; a record with no architecture-lens
-  domain still skips it. Its independence_class still records whether
-  its Claude lineage matches the lead.
+- architectureSpecialists is record-selected and always carries supplemental
+  authority. Both profiles currently leave the group empty: Fable is paused in
+  `liveDispatch.disabled`, with dispatch and evaluation disabled. Its charter,
+  cohort evidence, and amendment history remain on disk.
 
 The explicit security group never replaces the reciprocal strong critic or
 weakens the cross-family ordinary-supplement rule. Reviewer entries carry
@@ -350,10 +348,11 @@ a repeated family within either group, duplicate memberships, an unavailable
 strong floor, and a focused
 supplement that is not one of the profile's supplements. The explicit
 lead-family security group requires matching lineage, the security lens, and the
-existing passed provider/schema/read-only qualification gates. Fable proves
-the common schema/read-only gates and its passed architecture quality scope,
-the Fable 5 cohort that `fable-architecture-v2` names as its cohort policy, through
-a validated standing-amendment chain; its `security-review` scope stays ineligible.
+existing passed provider/schema/read-only qualification gates. A configured
+architecture specialist instead proves the common schema/read-only gates and
+its passed architecture quality scope through the registered cohort and any
+validated standing-amendment chain. Fable's retained evidence is historical while
+the lane is disabled, not live qualification.
 targeted-refuter returns only its separately configured global pool.
 
 The v13/panel-v10 activation changes strongCritic cardinality from one to
