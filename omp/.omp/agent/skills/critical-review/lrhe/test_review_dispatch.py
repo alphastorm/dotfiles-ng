@@ -1514,6 +1514,68 @@ def test_focused_prepare_rejects_every_reviewer_override(
     assert not any(path.exists() for path in paths.values())
 
 
+@pytest.mark.parametrize(
+    ("requirement_form", "deduplicated"),
+    [
+        ("one-line-label", True),
+        ("different-policy", False),
+        ("multiple-label-lines", False),
+        ("exact-policy", True),
+    ],
+)
+def test_repository_review_policy_in_packet_requirements(
+    tmp_path, material, repository, capsys, requirement_form, deduplicated
+):
+    policy = "# Subject review policy\n\nPreserve the frozen dispatch boundary.\n"
+    repo = repository["path"]
+    (repo / "REVIEW.md").write_text(policy, encoding="utf-8")
+    _git(repo, "add", "REVIEW.md")
+    _git(repo, "commit", "-q", "-m", "review policy")
+    repository["commit"] = _git(repo, "rev-parse", "HEAD").strip()
+
+    label = f"Trusted base REVIEW.md sha256={_digest(policy)}:"
+    requirement = {
+        "one-line-label": f"{label}\n{policy}",
+        "different-policy": f"{label}\n{policy}Require a different boundary.\n",
+        "multiple-label-lines": f"{label}\nAdditional policy context:\n{policy}",
+        "exact-policy": policy,
+    }[requirement_form]
+    packet = dict(qualification.parse_packet(material["packet"]))
+    packet["requirements"] = [*packet["requirements"], "Keep the policy intact.", requirement]
+    material["packet"].write_text(json.dumps(packet) + "\n", encoding="utf-8")
+
+    paths, argv = _record_free_prepare_args(tmp_path, material, repository)
+    assert rd.main(argv) == 0
+    emitted = json.loads(capsys.readouterr().out)["task_input"]
+    heading = f"# Repository review policy (REVIEW.md, sha256 {_digest(policy)})"
+    for item in emitted["tasks"]:
+        task = item["task"]
+        assert task.count("# Repository review policy") == 1
+        policy_section = task.split(heading + "\n", 1)[1].split("# Assurance scope", 1)[0]
+        if deduplicated:
+            label_note = (
+                " (after its one-line label)" if requirement_form == "one-line-label" else ""
+            )
+            assert policy_section == (
+                f"These exact bytes are packet `requirements[2]` below{label_note}, matched "
+                "byte-for-byte against the subject commit by the resolver, and not repeated here.\n\n"
+            )
+            assert policy not in policy_section
+        else:
+            assert policy_section == policy + "\n\n"
+
+    assert rd.main(
+        [
+            "verify-task",
+            "--envelope",
+            str(paths["envelope"]),
+            "--sha256",
+            _digest(paths["envelope"].read_text(encoding="utf-8")),
+        ]
+    ) == 0
+    assert json.loads(capsys.readouterr().out)["task_input"] == emitted
+
+
 def test_focused_prepare_end_to_end(tmp_path, material, repository, capsys):
     paths, argv = _record_free_prepare_args(tmp_path, material, repository)
     assert rd.main(argv) == 0

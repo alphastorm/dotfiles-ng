@@ -459,6 +459,11 @@ any provider call is possible:
 6. run `verify-task`, which repeats the evidence invariant from freshly read
    bytes before printing the approved Task input.
 
+`prepare` embeds committed `REVIEW.md` bytes and SHA-256 in every repository task,
+replacing a repeated policy body with a `requirements[i]` pointer only when that
+packet list item equals the subject commit's exact text, optionally after one
+label line.
+
 For an initial council, run exactly:
 
 ```bash

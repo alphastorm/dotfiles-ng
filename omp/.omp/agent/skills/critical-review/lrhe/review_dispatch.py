@@ -703,16 +703,34 @@ def repository_review_policy(subject: FrozenSubject) -> tuple[str, str] | None:
     return text, _digest_bytes(raw)
 
 
-def repository_review_policy_sections(subject: FrozenSubject) -> list[str]:
+def repository_review_policy_sections(
+    subject: FrozenSubject, packet: Mapping[str, object]
+) -> list[str]:
     policy = repository_review_policy(subject)
     if policy is None:
         return []
     text, sha256 = policy
-    return [
-        f"# Repository review policy ({REVIEW_POLICY_PATH}, sha256 {sha256})",
-        text,
-        "",
-    ]
+    heading = f"# Repository review policy ({REVIEW_POLICY_PATH}, sha256 {sha256})"
+    requirements = packet.get("requirements")
+    if isinstance(requirements, list):
+        for index, requirement in enumerate(requirements):
+            if not isinstance(requirement, str):
+                continue
+            if requirement == text:
+                label_note = ""
+            else:
+                label, separator, body = requirement.partition("\n")
+                if not label or "\r" in label or not separator or body != text:
+                    continue
+                label_note = " (after its one-line label)"
+            return [
+                heading,
+                f"These exact bytes are packet `requirements[{index}]` below{label_note}, "
+                "matched byte-for-byte against the subject commit by the resolver, "
+                "and not repeated here.",
+                "",
+            ]
+    return [heading, text, ""]
 
 
 def verify_repository(repository_path: Path, subject_commit: str, files: Sequence[str]) -> None:
@@ -2113,7 +2131,7 @@ def canonical_task_text(
         "These values were resolved from the live qualification authority and are bound to "
         f"receipt {receipt_sha256}. Never infer, choose, or renegotiate your own standing.",
         "",
-        *repository_review_policy_sections(subject),
+        *repository_review_policy_sections(subject, verified.packet),
         f"# Assurance scope (verified bytes, sha256 {subject.scope_sha256})",
         verified.scope_text.rstrip("\n"),
         "",
