@@ -47,6 +47,11 @@ if [ "$status" -ne 0 ] || [ -n "$errors" ]; then
   exit 1
 fi
 
+if ! "$bin" setup python --check; then
+  echo "error: Python execution is unavailable; run ~/.dotfiles/setup.sh, or: uv venv --python 3.14 ~/.omp/python-env" >&2
+  exit 1
+fi
+
 if [ "$bin" = "$old_bin" ]; then
   echo "$after is the tap's latest; pinned"
 else

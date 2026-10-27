@@ -749,6 +749,20 @@ function install_lrhe_venv() {
   uv pip install --python "$lrhe/.venv/bin/python" -r "$lrhe/requirements.txt"
 }
 
+# OMP's eval py cells run in ~/.omp/python-env because the private config pins
+# python.interpreter there, so OMP never falls back to PATH when it is set.
+function install_omp_python_env() {
+  local env="$HOME/.omp/python-env"
+
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "note: uv not found; skipping the OMP eval Python env" >&2
+    return 0
+  fi
+  echo "installing the OMP eval Python env..."
+  [ -x "$env/bin/python" ] || uv venv --clear --python 3.14 "$env"
+  uv pip install --python "$env/bin/python" brotli jsonschema orjson pillow PyYAML websockets zstandard
+}
+
 # run main installation
 echo "dotfiles path: $SCRIPTDIR"
 
@@ -778,6 +792,7 @@ sync_omp_runtime_worktrees
 install_omp_plugins
 check_key_dirs
 install_lrhe_venv
+install_omp_python_env
 install_zplug
 install_zplug_plugins
 install_vim_plug
