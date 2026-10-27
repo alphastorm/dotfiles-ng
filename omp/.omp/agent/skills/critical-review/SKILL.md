@@ -110,8 +110,11 @@ cleanup — and never restate or vary it here. Cite the plan's `chat_id` and its
 selection and plan as a preservation baseline for the accountable lead to check
 against current evidence. RepoPrompt prose is never a reviewer verdict, standing,
 authorization, frozen evidence, or acceptance proof, and reviewers do not receive
-it as an independent finding. A failed, unusable, or unresolved preparation is
-never rerun to unblock a review; continue without it.
+it as an independent finding. A preparation that failed, proved unusable, or
+stayed unresolved after it may have dispatched work is never rerun to unblock a
+review; continue without it. Only a failure proven to have dispatched nothing
+may take the recipe's one recovery retry; a timeout, cancellation notice, lost
+connection, or `bg_*` acknowledgement is not that proof.
 
 ### Runtime discovery boundary
 
@@ -134,7 +137,7 @@ artifacts, or proof receipts into the runtime diagnosis harness.
 5. Close classes, not instances. When a finding names one instance of a mechanical class — an invocation pattern, a predicate shape, a fixture convention — sweep the whole subject for the class in the same remediation and encode the class as an executable invariant (a meta-test that fails the suite). Policy prose alone never closes a class.
 6. Stop-rule: if a round confirms the same defect class as the previous round, halt remediation and land the executable invariant before any re-dispatch.
 7. Freeze the reviewed subject. Never edit the reviewed tree — including its policy and context files — while any reviewer is reading; queue such edits for the disposition commit. A verdict rendered over a moving target is discarded and the round is wasted.
-8. Remediation-scoped verification defaults to the focused-reviewer lane; the full council renders only the sequence's budgeted general passes and the final verdict. Hard cap: two councils per subject per day; a third needs the user's approval through Ask with the stated reason, so the loop is visible instead of self-authorizing.
+8. Remediation-scoped verification defaults to the focused-reviewer lane; the full council renders only the sequence's budgeted general passes and the final verdict. That budget belongs to the review sequence: `lrhe/review_sequence.py` selects every dispatch from its bound history, there is no separate per-day reset or council allowance, and a new day, review ID, or successor label never resets that history. A founder-requested third implementation council still needs the founder's recorded Ask decision with the stated reason, so the loop is visible instead of self-authorizing.
 9. Exit is by disposition, not zero findings: no in-scope residual P0/P1 and clean credential paths close the sequence, and the accountable lead records explicit residual dispositions for every remaining P2/P3 item without a user prompt. A supplemental seat's credential-path claim blocks only after lead verification against the committed bytes.
 
 ### Pragmatic full-council composition
