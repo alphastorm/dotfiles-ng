@@ -266,8 +266,11 @@ def test_restricted_required_provider_is_refused_not_substituted(case):
     save_input(case)
     result = invoke(case)
     assert result.returncode == 1
-    assert b"prepare failed" in result.stderr
+    assert b"provider_data_restriction" in result.stderr
     assert b"does not authorize" in result.stderr
+    assert b"freeze;" not in result.stderr
+    assert not case["counter"].exists()
+    assert not (case["out"] / "prepare-input.json").exists()
     assert not (case["out"] / "review-dispatch-envelope.json").exists()
 
 
@@ -313,3 +316,137 @@ def test_failed_proof_reports_exit_stderr_log_and_next_action(case):
         assert expected in result.stderr
     assert result.stdout == b""
     assert not (case["out"] / "proof-focused-proof.json").exists()
+
+
+@pytest.mark.parametrize("change", ["different", "missing"])
+def test_envelope_rerun_requires_its_pinned_input(case, change):
+    first = invoke(case)
+    assert first.returncode == 0, first.stderr.decode()
+    envelope = case["out"] / "review-dispatch-envelope.json"
+    before = envelope.read_bytes()
+    if change == "different":
+        case["spec"]["provider_data_restriction"] = ["openai"]
+        save_input(case)
+    else:
+        (case["out"] / "prepare-input.json").unlink()
+    result = invoke(case)
+    assert result.returncode == 1
+    assert result.stdout == b""
+    assert b"verify-task;" not in result.stderr
+    assert b"new review_id" in result.stderr
+    assert b"byte-equal" in result.stderr if change == "different" else b"verify-task directly" in result.stderr
+    assert envelope.read_bytes() == before
+    assert case["counter"].read_text() == "run\n"
+
+
+@pytest.mark.parametrize("argument", ["", " \t "])
+def test_exact_proof_argv_preserves_blank_arguments(case, argument):
+    case["spec"]["proofs"][0]["command"] = [
+        str(fc.PYTHON), "-c", f"import sys; assert sys.argv[1:] == [{argument!r}]", argument]
+    save_input(case)
+    result = invoke(case)
+    assert result.returncode == 0, result.stderr.decode()
+    receipt = json.loads((case["out"] / "proof-focused-proof.json").read_text())
+    assert receipt["command"] == case["spec"]["proofs"][0]["command"]
+
+
+@pytest.mark.parametrize("command", [[], [""], [" \t "], ["python", 1], ["python", "\0"]])
+def test_proof_argv_rejects_invalid_program_or_argument(case, command):
+    case["spec"]["proofs"][0]["command"] = command
+    with pytest.raises((TypeError, ValueError), match=r"proofs\[0\].command"):
+        fc.validate_input(case["spec"])
+
+
+def set_diff(case, contents):
+    artifact = case["input"].parent / "changes.diff"
+    artifact.write_text(contents, encoding="utf-8")
+    case["spec"]["subject"]["artifact_source"] = str(artifact)
+    save_input(case)
+
+
+@pytest.mark.parametrize("header,missing", [
+    ("diff --git a/omitted.py b/omitted.py\n", "omitted.py"),
+    ('diff --git "a/na\\303\\257ve name.py" "b/na\\303\\257ve name.py"\n', "naïve name.py"),
+    ("diff --git a/old.py b/new.py\n", "old.py"),
+])
+def test_diff_completeness_refuses_missing_and_extra_paths(case, header, missing):
+    set_diff(case, header + "diff --git a/deleted.py b/deleted.py\n")
+    result = invoke(case)
+    assert result.returncode == 1
+    reason = result.stderr.decode()
+    assert "missing=" in reason and missing in reason
+    assert "extra=" in reason and "controller.py" in reason
+    assert b"freeze;" not in result.stderr
+    assert not case["counter"].exists()
+
+
+@pytest.mark.parametrize("old,new", [
+    ("old name.txt", "new name.txt"),
+    ("old naïve.txt", "new naïve.txt"),
+    ("old b/name.txt", "new b/name.txt"),
+])
+def test_git_rename_diff_covers_both_paths(case, old, new):
+    source, destination = case["repo"] / old, case["repo"] / new
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("unique renamed evidence\n")
+    _git(case["repo"], "add", "-A")
+    _git(case["repo"], "commit", "-q", "-m", "rename predecessor")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(destination)
+    _git(case["repo"], "add", "-A")
+    _git(case["repo"], "commit", "-q", "-m", "rename subject")
+    subject = case["spec"]["subject"]
+    subject.update(commit=_git(case["repo"], "rev-parse", "HEAD").strip(),
+                   changed_paths=[new], deleted_paths=[old], evidence_files=[new])
+    case["spec"]["record_fields"]["invariant_proof_matrix"][0]["changed_paths"] = [old, new]
+    set_diff(case, _git(case["repo"], "-c", "core.quotePath=true", "diff", "-M", "HEAD~1", "HEAD"))
+    result = invoke(case)
+    assert result.returncode == 0, result.stderr.decode()
+
+
+def test_diff_dev_null_is_not_a_subject_path(case):
+    set_diff(case, "diff --git /dev/null b/controller.py\n"
+                  "diff --git a/deleted.py /dev/null\n")
+    result = invoke(case)
+    assert result.returncode == 0, result.stderr.decode()
+
+
+@pytest.mark.parametrize("mode", ["initial", "material-redesign"])
+def test_stale_prior_refuses_unbound_sequence_epoch_before_scaffold(tmp_path, mode):
+    case = make_case(tmp_path, mode)
+    latest = _ready_record(tmp_path / "latest", "material-redesign")
+    latest["review_id"] = "CR-newer"
+    retained = case["out"].parent / "CR-newer" / "review-record.json"
+    retained.parent.mkdir(parents=True)
+    retained.write_text(json.dumps(latest))
+    result = invoke(case)
+    assert result.returncode == 1
+    assert b"CR-newer" in result.stderr
+    assert b"action that actually ran" in result.stderr
+    assert b"scaffold;" not in result.stderr
+    assert not (case["out"] / "review-record.json").exists()
+    assert not case["counter"].exists()
+
+
+def test_sequence_scan_tolerates_foreign_and_unreadable_records(case):
+    root = case["out"].parent
+    for name, contents in (("foreign", '{"review_sequence_id":"other","review_id":"other"}'),
+                           ("invalid", "{"), ("non-object", "[]"),
+                           ("no-identity", json.dumps({"review_sequence_id": case["spec"]["review_sequence_id"]}))):
+        path = root / name / "review-record.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(contents)
+    unreadable = root / "directory" / "review-record.json"
+    unreadable.mkdir(parents=True)
+    result = invoke(case)
+    assert result.returncode == 0, result.stderr.decode()
+
+
+def test_empty_deleted_paths_prepares_without_inventing_changes(case):
+    case["spec"]["subject"]["deleted_paths"] = []
+    case["spec"]["record_fields"]["invariant_proof_matrix"][0]["changed_paths"] = ["controller.py"]
+    save_input(case)
+    result = invoke(case)
+    assert result.returncode == 0, result.stderr.decode()
+    record = json.loads((case["out"] / "review-record.json").read_text())
+    assert record["changed_files"] == [str(case["repo"] / "controller.py")]

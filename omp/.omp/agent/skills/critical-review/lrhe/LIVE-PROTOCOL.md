@@ -103,6 +103,10 @@ optional `provider_data_restriction` vendor keys. `subject` names an absolute
 `repository_path`, full `commit`, absolute `artifact_source`, and explicit
 repository-relative `changed_paths`, `deleted_paths`, and `evidence_files`.
 Every surviving changed file belongs in evidence; deleted paths never do.
+For a git-diff artifact, both header paths (including rename sources and
+C-quoted names) must exactly cover changed plus deleted paths; design documents
+skip that check. Before scaffold, locally retained records in the same sequence
+must all appear in the supplied prior history, except the current epoch.
 
 `record_fields` supplies `touched_risk_domains`, `invariant_proof_matrix`,
 `proof_classes`, and all four honesty lists (`known_deterministic_failures`,
@@ -115,14 +119,19 @@ Optional correction judgments are `remediated_finding_ids`, `resolved_finding_id
 Matrix and correction-scope changed paths are repository-relative.
 Each proof is `{id, command: [exact, argv], cwd: absolute_path}` with optional
 absolute `reuse_from`; proof IDs must exactly match the proof-class references.
+The program must be nonblank; later argv elements may be empty or whitespace,
+but every element must be a string without NUL. Restricted grants must authorize
+every mandatory council seat through the existing resolver check before freeze.
 `packet_fields` supplies every packet context field documented below except the
 generated record path/SHA-256 and provider/access-profile allowlists.
 
 Artifacts live in `~/.omp/agent/critical-review/<review_id>/`, outside the reviewed
 repository. Proof output and step diagnostics go to `prepare-logs/`; stdout is
 the unchanged verified payload from `review_dispatch.py prepare`. This command
-does not dispatch. Once an envelope exists, a rerun invokes only `verify-task`
-and returns its payload, never another preparation or permission to redispatch.
+does not dispatch. Every rerun first checks byte-equality with pinned input.
+Once an envelope exists, matching input permits only `verify-task` and its
+payload, never another preparation or permission to redispatch. An envelope
+without pinned input is not wrapper-owned: verify it directly or use a new ID.
 Before publication, a byte-equal `prepare-input.json` and frozen record permit
 resume without refreezing; existing receipts require matching command/cwd and
 subject verification, never overwriting. Conflicts require a new review ID in

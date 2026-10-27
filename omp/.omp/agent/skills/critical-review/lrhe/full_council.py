@@ -8,6 +8,7 @@ and matching receipts can resume without refreezing or repeating a passed proof.
 from __future__ import annotations
 
 import argparse
+import codecs
 import hashlib
 import json
 import re
@@ -188,7 +189,13 @@ def validate_input(value):
         if identifier in ids:
             raise ValueError(name + ".id is duplicated")
         ids.add(identifier)
-        _strings(proof["command"], name + ".command", nonempty=True)
+        command = proof["command"]
+        if not isinstance(command, list) or not command:
+            raise ValueError(name + ".command must be a nonempty string list")
+        for argument_index, argument in enumerate(command):
+            if not isinstance(argument, str) or "\0" in argument:
+                raise ValueError(f"{name}.command[{argument_index}] must be a string without NUL")
+        _text(command[0], name + ".command[0]")
         proof["cwd"] = _absolute(proof["cwd"], name + ".cwd")
         if "reuse_from" in proof:
             proof["reuse_from"] = _absolute(proof["reuse_from"], name + ".reuse_from")
@@ -212,6 +219,94 @@ def grants(document, lead_family, restriction=None):
         "provider_data_allowlist": sorted({vendor for vendor, _ in pairs}),
         "reviewer_access_profile_allowlist": sorted({profile for _, profile in pairs}),
     }
+
+
+def _git_path(value):
+    """Decode Git's C-quoted filename bytes, including octal UTF-8 escapes."""
+    if value.startswith(b'"'):
+        if not re.fullmatch(rb'"(?:[^"\\]|\\(?:[abfnrtv"\\]|[0-7]{3}))*"', value):
+            raise ValueError("invalid C-quoted git diff path")
+        value = codecs.escape_decode(value[1:-1])[0]
+    return value.decode("utf-8")
+
+
+def _diff_paths(artifact):
+    sections = re.split(rb"(?m)^diff --git ", artifact)
+    if len(sections) == 1:
+        return None
+    paths = set()
+    for section in sections[1:]:
+        lines = section.split(b"\n")
+        header = lines[0]
+        candidates = set()
+        # Git does not quote spaces alone. Enumerate separators instead of
+        # shell-splitting; a filename may itself contain the text ' b/'.
+        for separator in re.finditer(b" ", header):
+            try:
+                pair = tuple(_git_path(part) for part in (
+                    header[:separator.start()], header[separator.end():]))
+            except (ValueError, UnicodeError):
+                continue
+            if all(path == "/dev/null" or path.startswith(prefix)
+                   for path, prefix in zip(pair, ("a/", "b/"), strict=True)):
+                candidates.add(tuple(None if path == "/dev/null" else path[2:] for path in pair))
+        if len(candidates) > 1:
+            hints = {}
+            for line in lines[1:]:
+                if line.startswith((b"@@", b"GIT binary patch")):
+                    break
+                for prefix, side, strip_prefix in (
+                    (b"rename from ", 0, False), (b"rename to ", 1, False),
+                    (b"copy from ", 0, False), (b"copy to ", 1, False),
+                    (b"--- ", 0, True), (b"+++ ", 1, True),
+                ):
+                    if line.startswith(prefix):
+                        raw = line[len(prefix):]
+                        path = _git_path(raw.rstrip(b"\t") if strip_prefix else raw)
+                        hints[side] = (None if path == "/dev/null" else
+                                       path[2:] if strip_prefix else path)
+            if hints:
+                candidates = {pair for pair in candidates
+                              if all(pair[side] == path for side, path in hints.items())}
+            else:
+                candidates = {pair for pair in candidates if pair[0] == pair[1]}
+        if len(candidates) != 1:
+            raise ValueError(f"artifact_source has an ambiguous or invalid git diff header: {header!r}")
+        paths.update(path for path in candidates.pop() if path is not None)
+    return paths
+
+
+def _check_diff_paths(artifact, subject):
+    paths = _diff_paths(artifact)
+    if paths is None:
+        return
+    declared = set(subject["changed_paths"]) | set(subject["deleted_paths"])
+    if paths != declared:
+        raise ValueError("subject changed_paths/deleted_paths do not match artifact_source: "
+                         f"missing={sorted(paths - declared)}, extra={sorted(declared - paths)}")
+
+
+def _check_latest_epoch(spec, root):
+    """Refuse a locally retained epoch omitted from the supplied history."""
+    known = {spec["review_id"]}
+    if spec["prior_epoch"]:
+        previous = _load(Path(spec["prior_epoch"]["record_path"]))
+        history = previous.get("sequence_history")
+        if not isinstance(history, list):
+            raise ValueError("prior_epoch.record_path: sequence_history must be a list")
+        for row in [*history, previous]:
+            if isinstance(row, dict) and isinstance(row.get("review_id"), str):
+                known.add(row["review_id"])
+    for path in sorted(root.glob("*/review-record.json")):
+        try:
+            record = _load(path)
+        except (OSError, ValueError, TypeError):
+            continue
+        review_id = record.get("review_id")
+        if (record.get("review_sequence_id") == spec["review_sequence_id"]
+                and isinstance(review_id, str) and review_id.strip() and review_id not in known):
+            raise ValueError(f"prior_epoch omits retained epoch {review_id!r} at {path}; "
+                             "bind that epoch with the action that actually ran")
 
 
 def _sha(path):
@@ -292,11 +387,17 @@ class Preparation:
         self.logs.mkdir(exist_ok=True)
         record_path = out / "review-record.json"
         envelope = out / "review-dispatch-envelope.json"
+        pinned_input = out / "prepare-input.json"
+        self.begin("input-binding")
+        if pinned_input.is_file() and pinned_input.read_bytes() != raw:
+            raise ValueError("prepare-input.json must be byte-equal to the supplied input")
         if envelope.exists():
+            if not pinned_input.is_file():
+                self.next_action = "run verify-task directly for this envelope, or " + NEW_EPOCH
+                raise ValueError("envelope has no pinned prepare-input.json; not wrapper-owned")
             return self.run("verify-task", "review_dispatch.py", "verify-task", "--envelope", envelope,
                             "--sha256", _sha(envelope))
         self.begin("existing-artifacts")
-        pinned_input = out / "prepare-input.json"
         record = _load(record_path) if record_path.exists() else None
         frozen = record is not None and "artifact_digest" in record
         if frozen:
@@ -304,6 +405,9 @@ class Preparation:
                 raise ValueError("prepare-input.json must be byte-equal to the frozen epoch input")
         elif any(path != self.logs for path in out.iterdir()):
             raise ValueError("existing artifacts without a frozen record cannot be overwritten")
+        self.begin("sequence-history", "bind the named epoch with the action that actually ran; "
+                   "preserve the complete sequence history")
+        _check_latest_epoch(spec, out.parent)
         if not frozen:
             self.run("scaffold", "epoch.py", "scaffold", "--mode", spec["review_mode"],
                      "--sequence-id", spec["review_sequence_id"], "--review-id", spec["review_id"],
@@ -345,10 +449,22 @@ class Preparation:
         self.begin("authority")
         document = dispatch.bind_live_authority()[2]
         generated = grants(document, spec["lead_family"], spec.get("provider_data_restriction"))
+        self.begin("provider-authorization", "honor the provider_data_restriction; "
+                   "do not run this council while required grants are blocked")
+        try:
+            for group in ("strongCritic", "supplements", "leadFamilySecurity"):
+                for reviewer in qualification.profile_reviewers(document, spec["lead_family"], group):
+                    qualification._require_packet_authorization(reviewer, generated)
+        except qualification.QualificationError as exc:
+            raise ValueError(f"provider_data_restriction={spec.get('provider_data_restriction')!r} "
+                             f"blocks preparation: {exc}") from exc
+        self.begin("artifact-paths")
+        artifact_bytes = Path(subject["artifact_source"]).read_bytes()
+        _check_diff_paths(artifact_bytes, subject)
         self.begin("pin-input")
         _pin(pinned_input, raw)
         artifact = out / "artifact.diff"
-        _pin(artifact, Path(subject["artifact_source"]).read_bytes())
+        _pin(artifact, artifact_bytes)
         scope = out / "scope.md"
         _pin(scope, spec["assurance_scope"].encode())
         if frozen:
