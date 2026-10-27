@@ -103,7 +103,7 @@ diagnostic-red discovery, a narrow reproduced fix, mechanical work, or when the
 same work package already has a successful preparation. This is context
 discovery, not another review seat.
 
-Run it with the native recipe in the global `AGENTS.md` — owned tab, one
+Run it with the native recipe in `skill://repoprompt-preparation` — owned tab, one
 eval submission that may background, native wait, validated plan, guarded
 cleanup — and never restate or vary it here. Cite the plan's `chat_id` and its
 `oracle_export_path` before mutation, packet construction, or freeze. Treat its
@@ -139,29 +139,7 @@ artifacts, or proof receipts into the runtime diagnosis harness.
 
 ### Pragmatic full-council composition
 
-The resolver uses four explicit profile groups, not one role per model:
-
-| Group | GPT lead | Claude lead | Standing |
-|---|---|---|---|
-| strongCritic | Opus 5.5 through the CVP-approved route + Gemini 4 Argon | Daybreak Blue + Gemini 4 Argon | required cross-family independent evidence |
-| supplements | none | GPT-6 Astra | always-on cross-family supplemental evidence |
-| leadFamilySecurity | qualified Daybreak Blue | Mythos 5.1 through the CVP-approved route | always-on same-lineage blind sample; supplemental evidence only |
-| architectureSpecialists | none | none | no live architecture specialist while Fable is paused |
-
-No model appears twice among the strong critics and supplements, and each group
-keeps distinct model families; a supplement may share a strong critic's family
-(Astra beside Daybreak) because it never counts toward the independent floor.
-Fable 5.1 is paused in `liveDispatch.disabled`, with dispatch and evaluation
-disabled. Its charter and qualification history remain on disk, but it is not
-selected for full councils or focused reviews.
-
-GPT full councils include Daybreak through the explicit leadFamilySecurity group,
-reusing its qualified security scope and exact model/access contract. Claude full
-councils include Mythos 5.1 through the same group, bound to the CVP account like
-Opus. That same_lineage_blind_sample and supplemental_evidence standing never
-supplies independent assurance, replaces the strong critic, or relaxes the
-cross-family rules for ordinary supplements. Focused reviews include every
-strong critic; reciprocal-only replay and the targeted-refuter pool are unchanged.
+Full-council composition lives in the on-demand live protocol, reached through [Full council at a glance](#full-council-at-a-glance).
 
 ## Full council at a glance
 
@@ -240,17 +218,7 @@ Every evidence item must identify the protected asset or invariant and the resid
 
 ## Reviewer qualification canary
 
-A reviewer's charter bytes and model selector are pinned: `qualification.yml` binds each lane's `canaryReceipt`, and `preflight.py` validates that receipt against the live agent definition or, when a `charterAmendment` is present, against the amended parent. So editing a reviewer definition invalidates its qualification until one fresh trace of the amended charter exists. That trace is produced by the `canary` review class, never by spawning a reviewer beside the dispatch gate.
-
-`canary` is a one-seat class: it names exactly one configured lane, resolves that lane's existing standing under `selectionClass: canary`, binds no review record, and discloses the probe to the reviewer in its assignment. Its result is boundary evidence about the lane — read-only tools, pinned served model, one schema-valid terminal response — and never evidence about a reviewed change. The receipt schema pins `canary` standing as its own tuple, so a probe result cannot be recorded as a council or focused seat.
-
-A probe is prepared and dispatched exactly like a council: the canary tool's `trace-dispatch` materializes a frozen probe subject — the declared fixture committed into a throwaway repository, because freezing needs a clean HEAD and a working tree is never one — and returns verifier-approved Task input whose packet carries only the probed lane's two grants. The lead submits that payload verbatim through the same gate, then derives the boundary receipt from the reviewer's session transcript. The live protocol carries both commands.
-
-A charter change then lands as a `lrhe-charter-standing-amendment-v1` document binding the parent definition, the parent evidence receipt named by `canaryReceipt`, the current definition bytes, the unified-diff digest, and that fresh trace; `qualification.yml` references it as `charterAmendment`. A lane whose `charterAmendment` already exists chains it instead, through `lrhe-chained-charter-standing-amendment-v1` with the parent amendment's path and digest, so older traces stay bound to the charter and selector that produced them. Nothing here grants dispatch authority: live council membership stays owned by `liveDispatch`.
-
-A model or effort change is the same boundary: repin the lane everywhere it is bound, take one fresh canary trace of the new definition on a neutral probe, and bind that trace directly as its `canaryReceipt`, retiring any `charterAmendment` chain. A cohort-qualified lane instead crosses only an allowlisted point release through the model-upgrade standing amendment. The live protocol lists the bind points and selector rules.
-
-A lane bound to one OAuth account by `oauthAccount` never takes a `charterAmendment`: every charter or model change binds its fresh `lrhe-live-review-trace-v3` trace directly as `canaryReceipt`, because only that receipt is held to the bound account's credential pin.
+Reviewer qualification canary mechanics live in the on-demand live protocol, reached through [Full council at a glance](#full-council-at-a-glance).
 
 ## Lead verification and dispositions
 
