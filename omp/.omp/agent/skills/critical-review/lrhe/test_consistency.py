@@ -136,6 +136,7 @@ LIVE_PROTOCOL_OWNED_MECHANICS = (
 # its tool through `./lrhe/`. The pre-split spellings resolved from two different
 # directories, which is how `./review_checks.py` came to name nothing.
 MOVED_COMMANDS = (
+    "./lrhe/full_council.py prepare",
     "./lrhe/review_sequence.py --triage",
     "./lrhe/review_sequence.py review-record.json",
     "./lrhe/epoch.py scaffold",

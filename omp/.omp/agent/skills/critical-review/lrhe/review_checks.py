@@ -15,6 +15,7 @@ HERE = Path(__file__).resolve().parent
 VENV_PYTHON = HERE / ".venv/bin/python"
 VENV_RUFF = HERE / ".venv/bin/ruff"
 QUICK_TESTS = (
+    "test_full_council.py",
     "test_review_sequence.py",
     "test_selector_canary.py",
     "test_runner.py",

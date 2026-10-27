@@ -86,6 +86,49 @@ When inspecting resources below `skill://critical-review/`:
 - If glob matching is still needed, use the resolved filesystem path displayed
   by the directory `read` as the glob root instead of the internal URL.
 
+## One-command council preparation
+
+After admission, prepare a repository-backed `design`, `initial`,
+`material-redesign`, or `founder-requested` epoch from the skill root:
+
+```bash
+./lrhe/.venv/bin/python -- ./lrhe/full_council.py prepare --input FILE.json
+```
+
+The strict JSON contract is `version: 1`, `review_mode`, `review_sequence_id`,
+`review_id` (one safe directory component), `lead_family` (`gpt` or `claude`),
+`prior_epoch` (null or the latest `{record_path, action}`; history is preserved),
+`subject`, `assurance_scope`, `record_fields`, `proofs`, and `packet_fields`, with
+optional `provider_data_restriction` vendor keys. `subject` names an absolute
+`repository_path`, full `commit`, absolute `artifact_source`, and explicit
+repository-relative `changed_paths`, `deleted_paths`, and `evidence_files`.
+Every surviving changed file belongs in evidence; deleted paths never do.
+
+`record_fields` supplies `touched_risk_domains`, `invariant_proof_matrix`,
+`proof_classes`, and all four honesty lists (`known_deterministic_failures`,
+`new_risk_classes`, `cross_subsystem_omissions`, `incomplete_invariant_ids`).
+Optional correction judgments are `remediated_finding_ids`, `resolved_finding_ids`,
+`disputed_or_unresolved_p01`, `remediation_scope`, `lead_verification`, and
+`material_change_categories`; optional `lifecycle_design_artifacts` maps
+`state_machine` and `failure_matrix` to absolute paths, and
+`founder_followup_authorization` is an absolute decision-artifact path.
+Matrix and correction-scope changed paths are repository-relative.
+Each proof is `{id, command: [exact, argv], cwd: absolute_path}` with optional
+absolute `reuse_from`; proof IDs must exactly match the proof-class references.
+`packet_fields` supplies every packet context field documented below except the
+generated record path/SHA-256 and provider/access-profile allowlists.
+
+Artifacts live in `~/.omp/agent/critical-review/<review_id>/`, outside the reviewed
+repository. Proof output and step diagnostics go to `prepare-logs/`; stdout is
+the unchanged verified payload from `review_dispatch.py prepare`. This command
+does not dispatch. Once an envelope exists, a rerun invokes only `verify-task`
+and returns its payload, never another preparation or permission to redispatch.
+Before publication, a byte-equal `prepare-input.json` and frozen record permit
+resume without refreezing; existing receipts require matching command/cwd and
+subject verification, never overwriting. Conflicts require a new review ID in
+the same sequence, not resetting history. The manual steps below remain the
+reference contract.
+
 ## Sequence and readiness gate
 
 The selector's modes are:
