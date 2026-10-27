@@ -17,7 +17,7 @@ from test_review_dispatch import _git, _packet_text
 from test_review_sequence import _design_record, _founder_record, _panel, _ready_record
 
 
-def make_case(tmp_path, mode="initial"):
+def make_case(tmp_path, mode="initial", *, with_deletion=True):
     """Build only public synthetic data; also usable by an end-to-end smoke."""
     home = tmp_path / "home"
     authority_path = home / ".omp/agent/skills/critical-review/qualification.yml"
@@ -34,7 +34,12 @@ def make_case(tmp_path, mode="initial"):
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "predecessor")
-    (repo / "deleted.py").unlink()
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    changed = ["design.md"] if mode == "design" else ["controller.py"]
+    (repo / changed[0]).write_text("Revised design\n" if mode == "design" else "VALUE = 2\n")
+    deleted = ["deleted.py"] if with_deletion else []
+    if with_deletion:
+        (repo / "deleted.py").unlink()
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "subject")
     record = (_design_record(tmp_path / "records") if mode == "design" else
@@ -42,10 +47,9 @@ def make_case(tmp_path, mode="initial"):
               _ready_record(tmp_path / "records", mode))
     fields = {key: copy.deepcopy(value) for key, value in record.items()
               if key in fc.REQUIRED_RECORD_FIELDS | fc.OPTIONAL_RECORD_FIELDS}
-    changed = ["design.md"] if mode == "design" else ["controller.py"]
-    fields["invariant_proof_matrix"][0]["changed_paths"] = [*changed, "deleted.py"]
+    fields["invariant_proof_matrix"][0]["changed_paths"] = [*changed, *deleted]
     if fields.get("remediation_scope"):
-        fields["remediation_scope"]["changed_paths"] = [*changed, "deleted.py"]
+        fields["remediation_scope"]["changed_paths"] = [*changed, *deleted]
     if fields.get("founder_followup_authorization"):
         fields["founder_followup_authorization"] = fields["founder_followup_authorization"]["path"]
     history = record["sequence_history"]
@@ -65,9 +69,10 @@ def make_case(tmp_path, mode="initial"):
         "review_sequence_id": record["review_sequence_id"], "review_id": "CR-" + mode,
         "lead_family": "gpt",
         "prior_epoch": {"record_path": history[-1]["record_path"], "action": history[-1]["action"]} if history else None,
-        "subject": {"repository_path": str(repo.resolve()), "commit": _git(repo, "rev-parse", "HEAD").strip(),
+        "subject": {"repository_path": str(repo.resolve()), "base": base,
+                    "commit": _git(repo, "rev-parse", "HEAD").strip(),
                     "artifact_source": str(repo / "design.md"), "changed_paths": changed,
-                    "deleted_paths": ["deleted.py"], "evidence_files": changed},
+                    "deleted_paths": deleted, "evidence_files": changed},
         "assurance_scope": "# Assurance scope\nProduction/hard-to-reverse: dispatch integrity.\n",
         "record_fields": fields, "proofs": [] if mode == "design" else [proof],
         "packet_fields": {key: value for key, value in packet.items() if key in fc.PACKET_INPUT_FIELDS},
@@ -75,7 +80,7 @@ def make_case(tmp_path, mode="initial"):
     input_path = tmp_path / "input.json"
     input_path.write_text(json.dumps(spec, indent=2) + "\n", encoding="utf-8")
     return {"spec": spec, "input": input_path, "home": home, "authority": authority_path,
-            "document": document, "repo": repo, "counter": counter,
+            "document": document, "repo": repo, "counter": counter, "base": base,
             "out": home / ".omp/agent/critical-review" / spec["review_id"]}
 
 
@@ -229,6 +234,9 @@ def test_repository_refusal_before_proofs(case, kind):
     (lambda s: s.update(standing="independent"), "standing"),
     (lambda s: s.update(version=True), "version"),
     (lambda s: s.update(review_id="../escape"), "review_id"),
+    (lambda s: s["subject"].pop("base"), "base"),
+    (lambda s: s["subject"].update(base="HEAD~1"), "subject.base"),
+    (lambda s: s["subject"].update(base="z" * 40), "subject.base"),
     (lambda s: s["subject"].update(repository_path="relative"), "subject.repository_path"),
     (lambda s: s["subject"].update(evidence_files=["../escape"]), "subject.evidence_files"),
     (lambda s: s["subject"]["evidence_files"].append("deleted.py"), "subject.deleted_paths"),
@@ -357,96 +365,159 @@ def test_proof_argv_rejects_invalid_program_or_argument(case, command):
         fc.validate_input(case["spec"])
 
 
-def set_diff(case, contents):
-    artifact = case["input"].parent / "changes.diff"
-    artifact.write_text(contents, encoding="utf-8")
-    case["spec"]["subject"]["artifact_source"] = str(artifact)
-    save_input(case)
-
-
-@pytest.mark.parametrize("header,missing", [
-    ("diff --git a/omitted.py b/omitted.py\n", "omitted.py"),
-    ('diff --git "a/na\\303\\257ve name.py" "b/na\\303\\257ve name.py"\n', "naïve name.py"),
-    ("diff --git a/old.py b/new.py\n", "old.py"),
-])
-def test_diff_completeness_refuses_missing_and_extra_paths(case, header, missing):
-    set_diff(case, header + "diff --git a/deleted.py b/deleted.py\n")
-    result = invoke(case)
-    assert result.returncode == 1
-    reason = result.stderr.decode()
-    assert "missing=" in reason and missing in reason
-    assert "extra=" in reason and "controller.py" in reason
-    assert b"freeze;" not in result.stderr
-    assert not case["counter"].exists()
-
-
-@pytest.mark.parametrize("old,new", [
-    ("old name.txt", "new name.txt"),
-    ("old naïve.txt", "new naïve.txt"),
-    ("old b/name.txt", "new b/name.txt"),
-])
-def test_git_rename_diff_covers_both_paths(case, old, new):
-    source, destination = case["repo"] / old, case["repo"] / new
-    source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text("unique renamed evidence\n")
-    _git(case["repo"], "add", "-A")
-    _git(case["repo"], "commit", "-q", "-m", "rename predecessor")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    source.rename(destination)
-    _git(case["repo"], "add", "-A")
-    _git(case["repo"], "commit", "-q", "-m", "rename subject")
-    subject = case["spec"]["subject"]
-    subject.update(commit=_git(case["repo"], "rev-parse", "HEAD").strip(),
-                   changed_paths=[new], deleted_paths=[old], evidence_files=[new])
-    case["spec"]["record_fields"]["invariant_proof_matrix"][0]["changed_paths"] = [old, new]
-    set_diff(case, _git(case["repo"], "-c", "core.quotePath=true", "diff", "-M", "HEAD~1", "HEAD"))
-    result = invoke(case)
-    assert result.returncode == 0, result.stderr.decode()
-
-
-def test_diff_dev_null_is_not_a_subject_path(case):
-    set_diff(case, "diff --git /dev/null b/controller.py\n"
-                  "diff --git a/deleted.py /dev/null\n")
-    result = invoke(case)
-    assert result.returncode == 0, result.stderr.decode()
-
-
-@pytest.mark.parametrize("mode", ["initial", "material-redesign"])
-def test_stale_prior_refuses_unbound_sequence_epoch_before_scaffold(tmp_path, mode):
-    case = make_case(tmp_path, mode)
-    latest = _ready_record(tmp_path / "latest", "material-redesign")
-    latest["review_id"] = "CR-newer"
-    retained = case["out"].parent / "CR-newer" / "review-record.json"
-    retained.parent.mkdir(parents=True)
-    retained.write_text(json.dumps(latest))
-    result = invoke(case)
-    assert result.returncode == 1
-    assert b"CR-newer" in result.stderr
-    assert b"action that actually ran" in result.stderr
-    assert b"scaffold;" not in result.stderr
-    assert not (case["out"] / "review-record.json").exists()
-    assert not case["counter"].exists()
-
-
-def test_sequence_scan_tolerates_foreign_and_unreadable_records(case):
-    root = case["out"].parent
-    for name, contents in (("foreign", '{"review_sequence_id":"other","review_id":"other"}'),
-                           ("invalid", "{"), ("non-object", "[]"),
-                           ("no-identity", json.dumps({"review_sequence_id": case["spec"]["review_sequence_id"]}))):
-        path = root / name / "review-record.json"
-        path.parent.mkdir(parents=True)
-        path.write_text(contents)
-    unreadable = root / "directory" / "review-record.json"
-    unreadable.mkdir(parents=True)
-    result = invoke(case)
-    assert result.returncode == 0, result.stderr.decode()
-
-
-def test_empty_deleted_paths_prepares_without_inventing_changes(case):
+def test_design_artifact_cannot_omit_committed_deletion(case):
     case["spec"]["subject"]["deleted_paths"] = []
     case["spec"]["record_fields"]["invariant_proof_matrix"][0]["changed_paths"] = ["controller.py"]
     save_input(case)
     result = invoke(case)
+    assert result.returncode == 1
+    assert b"deleted_paths: missing=['deleted.py']" in result.stderr
+    assert b"freeze;" not in result.stderr
+    assert not case["counter"].exists()
+
+
+def test_design_document_can_quote_git_diff(tmp_path):
+    case = make_case(tmp_path, "design")
+    (case["repo"] / "design.md").write_text(
+        "# Example only\n```diff\ndiff --git a/example.py b/example.py\n```\n")
+    _git(case["repo"], "add", "-A")
+    _git(case["repo"], "commit", "-q", "-m", "design example")
+    case["spec"]["subject"]["commit"] = _git(case["repo"], "rev-parse", "HEAD").strip()
+    save_input(case)
+    result = invoke(case)
+    assert result.returncode == 0, result.stderr.decode()
+
+
+def test_git_subject_accepts_space_b_slash_path(case):
+    name = "dir b/item.txt"
+    path = case["repo"] / name
+    path.parent.mkdir()
+    path.write_text("added evidence\n")
+    _git(case["repo"], "add", "-A")
+    _git(case["repo"], "commit", "-q", "-m", "add spaced path")
+    subject = case["spec"]["subject"]
+    subject["commit"] = _git(case["repo"], "rev-parse", "HEAD").strip()
+    subject["changed_paths"].append(name)
+    subject["evidence_files"] = list(subject["changed_paths"])
+    case["spec"]["record_fields"]["invariant_proof_matrix"][0]["changed_paths"].append(name)
+    artifact = case["input"].parent / "changes.diff"
+    artifact.write_text(_git(case["repo"], "diff", case["base"], subject["commit"]))
+    subject["artifact_source"] = str(artifact)
+    save_input(case)
+    result = invoke(case)
+    assert result.returncode == 0, result.stderr.decode()
+
+
+def test_aborted_draft_does_not_block_new_review_id(case):
+    source = case["repo"] / "controller.py"
+    original = source.read_bytes()
+    source.write_text("dirty\n")
+    assert invoke(case).returncode == 1
+    source.write_bytes(original)
+    case["spec"]["review_id"] = "CR-after-abort"
+    save_input(case)
+    result = invoke(case)
+    assert result.returncode == 0, result.stderr.decode()
+
+
+@pytest.mark.parametrize("mode", ["initial", "design"])
+def test_prefreeze_dirty_refusal_can_retry_same_id(tmp_path, mode):
+    case = make_case(tmp_path, mode)
+    source = case["repo"] / case["spec"]["subject"]["changed_paths"][0]
+    original = source.read_bytes()
+    source.write_text("dirty\n")
+    first = invoke(case)
+    assert first.returncode == 1
+    source.write_bytes(original)
+    case["spec"]["assurance_scope"] += "Corrected scope detail.\n"
+    save_input(case)
+    result = invoke(case)
+    assert result.returncode == 0, result.stderr.decode()
+    assert b"fix the input and rerun the same command" in first.stderr
+
+
+def test_prefreeze_retry_replaces_only_known_drafts(case):
+    case["out"].mkdir(parents=True)
+    for name, contents in (("review-record.json", "{}"), ("prepare-input.json", "old input"),
+                           ("artifact.diff", "old artifact"), ("scope.md", "old scope")):
+        (case["out"] / name).write_text(contents)
+    logs = case["out"] / "prepare-logs"
+    logs.mkdir()
+    (logs / "old.log").write_text("old log")
+    result = invoke(case)
+    assert result.returncode == 0, result.stderr.decode()
+    assert not (logs / "old.log").exists()
+    assert (case["out"] / "prepare-input.json").read_bytes() == case["input"].read_bytes()
+
+
+def test_prefreeze_unknown_file_refuses_without_deleting_drafts(case):
+    case["out"].mkdir(parents=True)
+    (case["out"] / "review-record.json").write_text("{}")
+    (case["out"] / "proof-existing.json").write_text("preserve evidence")
+    result = invoke(case)
+    assert result.returncode == 1
+    assert b"proof-existing.json" in result.stderr
+    assert (case["out"] / "review-record.json").read_text() == "{}"
+    assert (case["out"] / "proof-existing.json").read_text() == "preserve evidence"
+
+
+def test_empty_deleted_paths_prepares_without_inventing_changes(tmp_path):
+    case = make_case(tmp_path, with_deletion=False)
+    result = invoke(case)
     assert result.returncode == 0, result.stderr.decode()
     record = json.loads((case["out"] / "review-record.json").read_text())
     assert record["changed_files"] == [str(case["repo"] / "controller.py")]
+
+
+@pytest.mark.parametrize("kind", ["missing", "blob"])
+def test_base_must_name_an_existing_commit(case, kind):
+    case["spec"]["subject"]["base"] = (
+        "0" * 40 if kind == "missing" else _git(case["repo"], "rev-parse", "HEAD:controller.py").strip())
+    save_input(case)
+    result = invoke(case)
+    assert result.returncode == 1
+    assert b"cat-file -e" in result.stderr
+    assert b"freeze;" not in result.stderr
+    assert not case["counter"].exists()
+
+
+@pytest.mark.parametrize("field,paths,reason", [
+    ("changed_paths", [], "changed_paths: missing=['controller.py'], extra=[]"),
+    ("changed_paths", ["controller.py", "design.md"], "changed_paths: missing=[], extra=['design.md']"),
+    ("deleted_paths", [], "deleted_paths: missing=['deleted.py'], extra=[]"),
+    ("deleted_paths", ["deleted.py", "absent.py"], "deleted_paths: missing=[], extra=['absent.py']"),
+])
+def test_git_inventory_requires_each_declared_list_exact(case, field, paths, reason):
+    subject = case["spec"]["subject"]
+    subject[field] = paths
+    subject["evidence_files"] = sorted(set(subject["changed_paths"]) | {"controller.py"})
+    save_input(case)
+    result = invoke(case)
+    assert result.returncode == 1
+    assert reason.encode() in result.stderr
+    assert b"freeze;" not in result.stderr
+
+
+def test_git_native_inventory_accepts_add_modify_typechange_delete(case, monkeypatch):
+    calls = []
+
+    def git(repo, *args):
+        calls.append(args)
+        return "" if args[0] == "cat-file" else "A\0new\0M\0modified\0T\0typechanged\0D\0gone\0"
+
+    monkeypatch.setattr(rd, "_git", git)
+    subject = {**case["spec"]["subject"], "changed_paths": ["new", "modified", "typechanged"],
+               "deleted_paths": ["gone"]}
+    fc._check_git_subject(case["repo"], subject)
+    assert calls == [
+        ("cat-file", "-e", subject["base"] + "^{commit}"),
+        ("diff", "--name-status", "--no-renames", "-z", subject["base"], subject["commit"]),
+    ]
+
+
+@pytest.mark.parametrize("status", ["R100", "C100", "U", "X", "B"])
+def test_git_native_inventory_refuses_other_statuses(case, monkeypatch, status):
+    monkeypatch.setattr(rd, "_git", lambda repo, *args:
+                        "" if args[0] == "cat-file" else status + "\0path\0")
+    with pytest.raises(ValueError, match="unsupported git status"):
+        fc._check_git_subject(case["repo"], case["spec"]["subject"])

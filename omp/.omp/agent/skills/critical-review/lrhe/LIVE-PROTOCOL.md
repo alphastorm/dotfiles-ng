@@ -100,13 +100,12 @@ The strict JSON contract is `version: 1`, `review_mode`, `review_sequence_id`,
 `prior_epoch` (null or the latest `{record_path, action}`; history is preserved),
 `subject`, `assurance_scope`, `record_fields`, `proofs`, and `packet_fields`, with
 optional `provider_data_restriction` vendor keys. `subject` names an absolute
-`repository_path`, full `commit`, absolute `artifact_source`, and explicit
+`repository_path`, full 40-hex `base` and `commit`, absolute `artifact_source`, and explicit
 repository-relative `changed_paths`, `deleted_paths`, and `evidence_files`.
 Every surviving changed file belongs in evidence; deleted paths never do.
-For a git-diff artifact, both header paths (including rename sources and
-C-quoted names) must exactly cover changed plus deleted paths; design documents
-skip that check. Before scaffold, locally retained records in the same sequence
-must all appear in the supplied prior history, except the current epoch.
+Before freeze, every mode verifies the base commit and compares both declared
+path lists to Git's NUL-delimited, no-renames diff from base to commit: A/M/T
+are changed and D is deleted; other statuses refuse. Artifact prose is not parsed.
 
 `record_fields` supplies `touched_risk_domains`, `invariant_proof_matrix`,
 `proof_classes`, and all four honesty lists (`known_deterministic_failures`,
@@ -128,15 +127,14 @@ generated record path/SHA-256 and provider/access-profile allowlists.
 Artifacts live in `~/.omp/agent/critical-review/<review_id>/`, outside the reviewed
 repository. Proof output and step diagnostics go to `prepare-logs/`; stdout is
 the unchanged verified payload from `review_dispatch.py prepare`. This command
-does not dispatch. Every rerun first checks byte-equality with pinned input.
-Once an envelope exists, matching input permits only `verify-task` and its
-payload, never another preparation or permission to redispatch. An envelope
-without pinned input is not wrapper-owned: verify it directly or use a new ID.
-Before publication, a byte-equal `prepare-input.json` and frozen record permit
-resume without refreezing; existing receipts require matching command/cwd and
-subject verification, never overwriting. Conflicts require a new review ID in
-the same sequence, not resetting history. The manual steps below remain the
-reference contract.
+does not dispatch. Before freeze, fix the input and rerun the same command:
+only `review-record.json`, `prepare-input.json`, `artifact.diff`, `scope.md`, and
+`prepare-logs/` are regenerated; any other file refuses without deletion.
+Frozen records require byte-equal pinned input and matching command/cwd receipts
+verified against the subject, never overwriting. An existing envelope requires
+matching pinned input and permits only `verify-task`; an unowned envelope must
+be verified directly. Post-freeze conflicts require a new review ID in the same
+sequence, never resetting history. The manual steps below remain the reference.
 
 ## Sequence and readiness gate
 

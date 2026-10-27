@@ -8,10 +8,10 @@ and matching receipts can resume without refreezing or repeating a passed proof.
 from __future__ import annotations
 
 import argparse
-import codecs
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -42,6 +42,7 @@ OPTIONAL_RECORD_FIELDS = {
     "lifecycle_design_artifacts", "founder_followup_authorization",
 }
 NEW_EPOCH = "use a new review_id in the same sequence; preserve the bound history"
+FIX_INPUT = "fix the input and rerun the same command"
 
 
 def _object(value, field, required, optional=()):
@@ -111,13 +112,14 @@ def validate_input(value):
         if _text(prior["action"], "prior_epoch.action") not in ACTIONS:
             raise ValueError("prior_epoch.action must be full-council, targeted-refuter or none")
     subject = _object(spec["subject"], "subject", {
-        "repository_path", "commit", "artifact_source", "changed_paths", "deleted_paths",
+        "repository_path", "base", "commit", "artifact_source", "changed_paths", "deleted_paths",
         "evidence_files",
     })
     for field in ("repository_path", "artifact_source"):
         subject[field] = _absolute(subject[field], f"subject.{field}")
-    if not re.fullmatch(r"[0-9a-f]{40}", _text(subject["commit"], "subject.commit")):
-        raise ValueError("subject.commit must be a full lowercase 40-hex commit")
+    for field in ("base", "commit"):
+        if not re.fullmatch(r"[0-9a-f]{40}", _text(subject[field], f"subject.{field}")):
+            raise ValueError(f"subject.{field} must be a full lowercase 40-hex commit")
     for field in ("changed_paths", "deleted_paths", "evidence_files"):
         subject[field] = _paths(subject[field], f"subject.{field}", nonempty=field == "evidence_files")
     changed, deleted, evidence = (set(subject[key]) for key in (
@@ -221,92 +223,24 @@ def grants(document, lead_family, restriction=None):
     }
 
 
-def _git_path(value):
-    """Decode Git's C-quoted filename bytes, including octal UTF-8 escapes."""
-    if value.startswith(b'"'):
-        if not re.fullmatch(rb'"(?:[^"\\]|\\(?:[abfnrtv"\\]|[0-7]{3}))*"', value):
-            raise ValueError("invalid C-quoted git diff path")
-        value = codecs.escape_decode(value[1:-1])[0]
-    return value.decode("utf-8")
-
-
-def _diff_paths(artifact):
-    sections = re.split(rb"(?m)^diff --git ", artifact)
-    if len(sections) == 1:
-        return None
-    paths = set()
-    for section in sections[1:]:
-        lines = section.split(b"\n")
-        header = lines[0]
-        candidates = set()
-        # Git does not quote spaces alone. Enumerate separators instead of
-        # shell-splitting; a filename may itself contain the text ' b/'.
-        for separator in re.finditer(b" ", header):
-            try:
-                pair = tuple(_git_path(part) for part in (
-                    header[:separator.start()], header[separator.end():]))
-            except (ValueError, UnicodeError):
-                continue
-            if all(path == "/dev/null" or path.startswith(prefix)
-                   for path, prefix in zip(pair, ("a/", "b/"), strict=True)):
-                candidates.add(tuple(None if path == "/dev/null" else path[2:] for path in pair))
-        if len(candidates) > 1:
-            hints = {}
-            for line in lines[1:]:
-                if line.startswith((b"@@", b"GIT binary patch")):
-                    break
-                for prefix, side, strip_prefix in (
-                    (b"rename from ", 0, False), (b"rename to ", 1, False),
-                    (b"copy from ", 0, False), (b"copy to ", 1, False),
-                    (b"--- ", 0, True), (b"+++ ", 1, True),
-                ):
-                    if line.startswith(prefix):
-                        raw = line[len(prefix):]
-                        path = _git_path(raw.rstrip(b"\t") if strip_prefix else raw)
-                        hints[side] = (None if path == "/dev/null" else
-                                       path[2:] if strip_prefix else path)
-            if hints:
-                candidates = {pair for pair in candidates
-                              if all(pair[side] == path for side, path in hints.items())}
-            else:
-                candidates = {pair for pair in candidates if pair[0] == pair[1]}
-        if len(candidates) != 1:
-            raise ValueError(f"artifact_source has an ambiguous or invalid git diff header: {header!r}")
-        paths.update(path for path in candidates.pop() if path is not None)
-    return paths
-
-
-def _check_diff_paths(artifact, subject):
-    paths = _diff_paths(artifact)
-    if paths is None:
-        return
-    declared = set(subject["changed_paths"]) | set(subject["deleted_paths"])
-    if paths != declared:
-        raise ValueError("subject changed_paths/deleted_paths do not match artifact_source: "
-                         f"missing={sorted(paths - declared)}, extra={sorted(declared - paths)}")
-
-
-def _check_latest_epoch(spec, root):
-    """Refuse a locally retained epoch omitted from the supplied history."""
-    known = {spec["review_id"]}
-    if spec["prior_epoch"]:
-        previous = _load(Path(spec["prior_epoch"]["record_path"]))
-        history = previous.get("sequence_history")
-        if not isinstance(history, list):
-            raise ValueError("prior_epoch.record_path: sequence_history must be a list")
-        for row in [*history, previous]:
-            if isinstance(row, dict) and isinstance(row.get("review_id"), str):
-                known.add(row["review_id"])
-    for path in sorted(root.glob("*/review-record.json")):
-        try:
-            record = _load(path)
-        except (OSError, ValueError, TypeError):
-            continue
-        review_id = record.get("review_id")
-        if (record.get("review_sequence_id") == spec["review_sequence_id"]
-                and isinstance(review_id, str) and review_id.strip() and review_id not in known):
-            raise ValueError(f"prior_epoch omits retained epoch {review_id!r} at {path}; "
-                             "bind that epoch with the action that actually ran")
+def _check_git_subject(repo, subject):
+    """Use Git's NUL-delimited inventory, independently of artifact content."""
+    dispatch._git(repo, "cat-file", "-e", subject["base"] + "^{commit}")
+    fields = dispatch._git(repo, "diff", "--name-status", "--no-renames", "-z",
+                           subject["base"], subject["commit"]).split("\0")[:-1]
+    actual = {"changed_paths": set(), "deleted_paths": set()}
+    for status, path in zip(fields[::2], fields[1::2], strict=True):
+        if status not in {"A", "M", "T", "D"}:
+            raise ValueError(f"subject.base..commit has unsupported git status {status!r}: {path}")
+        actual["deleted_paths" if status == "D" else "changed_paths"].add(path)
+    mismatches = []
+    for field, paths in actual.items():
+        declared = set(subject[field])
+        if paths != declared:
+            mismatches.append(f"{field}: missing={sorted(paths - declared)}, "
+                              f"extra={sorted(declared - paths)}")
+    if mismatches:
+        raise ValueError("subject.base..commit mismatch: " + "; ".join(mismatches))
 
 
 def _sha(path):
@@ -340,13 +274,15 @@ def _pin(path, content):
 class Preparation:
     def __init__(self):
         self.logs = None
+        self.frozen = False
         self.step = "input"
         self.code = 2
         self.log = None
-        self.next_action = "correct the named input field and rerun --input FILE.json"
+        self.next_action = FIX_INPUT
 
     def begin(self, step, next_action=NEW_EPOCH):
-        self.step, self.code, self.next_action = step, 1, next_action
+        self.step, self.code = step, 1
+        self.next_action = next_action if self.frozen else FIX_INPUT
         with tempfile.NamedTemporaryFile(prefix=step + "-", suffix=".log", dir=self.logs, delete=False) as stream:
             self.log = Path(stream.name)
         print(f"full-council: {step}; log={self.log}", file=sys.stderr)
@@ -383,13 +319,29 @@ class Preparation:
         if out.is_relative_to(repo):
             raise ValueError(f"output directory {out} is inside subject.repository_path")
         out.mkdir(parents=True, exist_ok=True)
-        self.logs = out / "prepare-logs"
-        self.logs.mkdir(exist_ok=True)
         record_path = out / "review-record.json"
         envelope = out / "review-dispatch-envelope.json"
         pinned_input = out / "prepare-input.json"
+        self.begin("existing-artifacts")
+        record = _load(record_path) if record_path.exists() else None
+        frozen = record is not None and "artifact_digest" in record
+        self.frozen = frozen or envelope.exists()
+        if not self.frozen:
+            drafts = {"review-record.json", "prepare-input.json", "artifact.diff",
+                      "scope.md", "prepare-logs"}
+            entries = list(out.iterdir())
+            unknown = sorted(path.name for path in entries if path.name not in drafts)
+            if unknown:
+                raise ValueError(f"unknown pre-freeze artifacts must be preserved: {unknown}")
+            for path in entries:
+                if path.name == "prepare-logs" and path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+        self.logs = out / "prepare-logs"
+        self.logs.mkdir(exist_ok=True)
         self.begin("input-binding")
-        if pinned_input.is_file() and pinned_input.read_bytes() != raw:
+        if self.frozen and pinned_input.is_file() and pinned_input.read_bytes() != raw:
             raise ValueError("prepare-input.json must be byte-equal to the supplied input")
         if envelope.exists():
             if not pinned_input.is_file():
@@ -397,17 +349,9 @@ class Preparation:
                 raise ValueError("envelope has no pinned prepare-input.json; not wrapper-owned")
             return self.run("verify-task", "review_dispatch.py", "verify-task", "--envelope", envelope,
                             "--sha256", _sha(envelope))
-        self.begin("existing-artifacts")
-        record = _load(record_path) if record_path.exists() else None
-        frozen = record is not None and "artifact_digest" in record
         if frozen:
             if not pinned_input.is_file() or pinned_input.read_bytes() != raw:
                 raise ValueError("prepare-input.json must be byte-equal to the frozen epoch input")
-        elif any(path != self.logs for path in out.iterdir()):
-            raise ValueError("existing artifacts without a frozen record cannot be overwritten")
-        self.begin("sequence-history", "bind the named epoch with the action that actually ran; "
-                   "preserve the complete sequence history")
-        _check_latest_epoch(spec, out.parent)
         if not frozen:
             self.run("scaffold", "epoch.py", "scaffold", "--mode", spec["review_mode"],
                      "--sequence-id", spec["review_sequence_id"], "--review-id", spec["review_id"],
@@ -446,6 +390,8 @@ class Preparation:
         self.decision("triage", record_path, triage=True)
         self.begin("repository", "commit or restore the dirty paths named below, then " + NEW_EPOCH)
         dispatch.verify_repository(repo, subject["commit"], subject["evidence_files"])
+        self.begin("git-subject")
+        _check_git_subject(repo, subject)
         self.begin("authority")
         document = dispatch.bind_live_authority()[2]
         generated = grants(document, spec["lead_family"], spec.get("provider_data_restriction"))
@@ -458,13 +404,10 @@ class Preparation:
         except qualification.QualificationError as exc:
             raise ValueError(f"provider_data_restriction={spec.get('provider_data_restriction')!r} "
                              f"blocks preparation: {exc}") from exc
-        self.begin("artifact-paths")
-        artifact_bytes = Path(subject["artifact_source"]).read_bytes()
-        _check_diff_paths(artifact_bytes, subject)
         self.begin("pin-input")
         _pin(pinned_input, raw)
         artifact = out / "artifact.diff"
-        _pin(artifact, artifact_bytes)
+        _pin(artifact, Path(subject["artifact_source"]).read_bytes())
         scope = out / "scope.md"
         _pin(scope, spec["assurance_scope"].encode())
         if frozen:
@@ -473,6 +416,7 @@ class Preparation:
             self.run("freeze", "epoch.py", "freeze", "--record", record_path, "--artifact", artifact,
                      "--changed", *(repo / path for path in subject["changed_paths"]),
                      "--deleted", *(repo / path for path in subject["deleted_paths"]))
+            self.frozen = True
         record = _load(record_path)
         for proof in spec["proofs"]:
             self.begin("receipt-" + proof["id"])
