@@ -285,11 +285,6 @@ def _packet_text(document: dict, *, record_path: str, record_sha256: str, diff: 
         ),
         "reviewer_access_profile_allowlist": sorted(
             {entry["access_profile"] for entry in reviewers.values()}
-            | (
-                {document["oracleShadow"]["access_profile"]}
-                if document.get("oracleShadow", {}).get("enabled") is True
-                else set()
-            )
         ),
     }
     return "# Packet\n\n```yaml\n" + yaml.safe_dump(body, sort_keys=True) + "```\n"
@@ -901,28 +896,7 @@ def test_prepare_builds_the_verified_initial_dispatch_atomically(
     manifest = json.loads(manifest_text)
     assert len(emitted["tasks"]) == len(manifest["selected"])
     envelope = json.loads(paths["envelope"].read_text(encoding="utf-8"))
-    shadow = envelope["oracleShadow"]
     assert envelope["schemaVersion"] == 2
-    assert shadow["selection"] == qualification.ORACLE_SHADOW_SELECTED
-    assert shadow["reasonCodes"] == []
-    assert shadow["standing"] == "none"
-    assert shadow["blocksClosure"] is False
-    assert shadow["receivesPeerOutput"] is False
-    assert shadow["request"]["subjectCommit"] == repository["commit"]
-    assert shadow["request"]["files"] == ["src/dispatch.py"]
-    assert shadow["request"]["prompt"].startswith(rd.ORACLE_SHADOW_MARKER + "\n")
-    assert _digest(shadow["request"]["prompt"]) == shadow["request"]["promptSha256"]
-    assert shadow["requestPath"].startswith(str(council_material["record"].parent))
-    record = json.loads(council_material["record"].read_text(encoding="utf-8"))
-    run_digest = hashlib.sha256(
-        f"{record['review_id']}\0{envelope['receiptSha256']}".encode("utf-8")
-    ).hexdigest()[:16]
-    assert Path(shadow["requestPath"]).name == (
-        f"oracle-shadow-{envelope['subjectDigest'][:16]}-{run_digest}-request.json"
-    )
-    assert Path(shadow["datasetRecordPath"]).name == (
-        f"{envelope['subjectDigest']}-{run_digest}.json"
-    )
 
     envelope_sha256 = _digest(paths["envelope"].read_text(encoding="utf-8"))
     paths["manifest"].chmod(0o644)
@@ -1636,7 +1610,6 @@ def test_replay_prepare_end_to_end(
     ) == EXPECTED_TUPLES[(lead_family, "replay", reviewer_id)]
     envelope = json.loads(paths["envelope"].read_text(encoding="utf-8"))
     assert envelope["reviewClass"] == "replay"
-    assert envelope["oracleShadow"] is None
     assert [task["agent"] for task in emitted["tasks"]] == [assignment["agent"]]
     assert "review_class=replay" in emitted["tasks"][0]["task"]
     assert rd.main(
@@ -1734,7 +1707,6 @@ def test_canary_prepare_probes_one_named_lane(tmp_path, material, repository, ca
 
     envelope = json.loads(paths["envelope"].read_text(encoding="utf-8"))
     assert envelope["reviewClass"] == rd.CANARY
-    assert envelope["oracleShadow"] is None
     assert len(emitted["tasks"]) == 1
     task = emitted["tasks"][0]["task"]
     assert f"review_class={rd.CANARY}" in task

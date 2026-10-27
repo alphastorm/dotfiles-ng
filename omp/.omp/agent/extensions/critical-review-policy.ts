@@ -2,14 +2,12 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import {
-	launchOracleShadow,
+	isJsonObject,
 	readJson,
-	resumeOracleShadowCollectors,
 	writeJsonOnce,
-} from "../skills/critical-review/lrhe/oracle-shadow.ts";
-import { isJsonObject } from "../skills/critical-review/lrhe/json-object.ts";
+} from "../skills/critical-review/lrhe/json-object.ts";
 
 const REVIEWER_MARKER = "CRITICAL_REVIEWER_READ_ONLY_V1";
 const FABLE_REVIEWER_MARKER = "FABLE_ARCHITECTURE_REVIEWER_READ_ONLY_V2";
@@ -77,11 +75,6 @@ export type DeliveredTaskInput = CanonicalTaskInput | Omit<CanonicalTaskInput, "
 
 /** Resolves the verifier's stdout on a clean exit; rejects on any other outcome. */
 export type VerifyTask = (marker: DispatchMarker) => Promise<string>;
-export type LaunchOracleShadow = (
-	envelopePath: string,
-	envelopeSha256: string,
-	ctx: ExtensionContext,
-) => Promise<void>;
 
 /** A verified protected call carries its delivered input, each item's canonical seat, and the full batch. */
 export type DispatchDecision =
@@ -374,7 +367,6 @@ async function loadEnvelopeState(
 export default function criticalReviewPolicy(
 	pi: ExtensionAPI,
 	verify: VerifyTask = verifyTaskViaSkill,
-	launchShadow: LaunchOracleShadow = launchOracleShadow,
 ): void {
 	// Keyed by envelope digest, so a path alias shares one budget; calls racing on an envelope's
 	// first sight share one load, and so one state.
@@ -453,7 +445,6 @@ export default function criticalReviewPolicy(
 			envelopeSha256: marker.envelopeSha256,
 			seats: decision.seats,
 		});
-		void launchShadow(marker.envelopePath, marker.envelopeSha256, ctx);
 		return { input: decision.input };
 	});
 
@@ -537,10 +528,6 @@ export default function criticalReviewPolicy(
 				{ type: "text" as const, text: `${BLOCK_PREFIX}: ${note}. ${seatSummary}.${retry}` },
 			],
 		};
-	});
-
-	pi.on("session_start", () => {
-		void resumeOracleShadowCollectors();
 	});
 
 	pi.on("session_shutdown", () => {

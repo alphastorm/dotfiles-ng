@@ -312,8 +312,6 @@ focused supplement stays nonblocking supplemental evidence. Replay remains one
 seat: only the first, reciprocal strong critic. The caller never chooses a
 reviewer, and a supplement never replaces a strong critic.
 
-ChatGPT Pro Web remains deliberately outside liveDispatch. For ordinary cloud-permitted full councils, the generated packet grants let the separate `oracleShadow` authority attempt pinned pi-oracle `pro_extended` without a user prompt. Explicit provider restrictions may omit `openai` data egress or the exact `chatgpt-pro-web-asxst0rm` access profile. Its output has no reviewer standing, never blocks closure, receives no peer output, and never substitutes for a qualified lane. Missing grants and every operational failure are persisted as nonblocking outcomes under `lrhe-data/oracle-shadow/`, so browser automation can accumulate evidence without becoming part of the council availability contract.
-
 Agent names are stable lane identifiers, not model-version aliases. Multiple
 qualified lanes in one family use durable variant names such as
 `review-claude-opus` and `review-claude-fable`; a transient release such as
