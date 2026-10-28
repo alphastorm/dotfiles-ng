@@ -1,0 +1,30 @@
+# The OMP extensions import only types from @oh-my-pi/pi-coding-agent, so nothing
+# at runtime checks them against OMP's API. Typecheck them here to catch API drift.
+
+name: typecheck
+
+on:
+  push:
+    paths: ['**/*.ts', 'package.json', 'bun.lock', 'tsconfig.json', '.github/workflows/typecheck.yml']
+  pull_request:
+    paths: ['**/*.ts', 'package.json', 'bun.lock', 'tsconfig.json', '.github/workflows/typecheck.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck

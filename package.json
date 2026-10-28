@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "18.13.3",
+    "@types/bun": "1.4.4",
+    "typescript": "7.0.2"
+  }
+}

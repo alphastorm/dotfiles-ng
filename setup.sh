@@ -713,6 +713,19 @@ EOF
   fi
 }
 
+# Typecheck dependencies are local to each checkout, not stowed into HOME.
+function install_typecheck_tooling() {
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "note: bun not found; skipping the dotfiles typecheck tooling" >&2
+    return 0
+  fi
+  echo "installing dotfiles typecheck tooling..."
+  bun install --frozen-lockfile
+  if [ -d "$PRIVATE_DIR/.git" ] && [ -f "$PRIVATE_DIR/package.json" ]; then
+    (cd "$PRIVATE_DIR" && bun install --frozen-lockfile)
+  fi
+}
+
 # Tracked plugin files must converge before installing their frozen dependencies.
 function sync_omp_runtime_worktrees() {
   bun omp/.omp/agent/extensions/stow-health.ts --sync-runtime-worktrees
@@ -788,6 +801,7 @@ fi
 install_language_tooling
 stow_dotfiles
 stow_private_dotfiles
+install_typecheck_tooling
 sync_omp_runtime_worktrees
 install_omp_plugins
 check_key_dirs
