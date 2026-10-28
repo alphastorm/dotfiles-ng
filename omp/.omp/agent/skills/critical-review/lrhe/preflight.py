@@ -82,7 +82,7 @@ EXIT_UNRESOLVED = 20
 
 # Bumping this is the deliberate act that says "the upgrade happened". Freezing a
 # lock under a version this does not name is the mistake the file exists to stop.
-EXPECTED_OMP = "omp/18.13.2"
+EXPECTED_OMP = "omp/18.13.3"
 
 PASS, FAIL, UNKNOWN, SKIP = "pass", "fail", "unknown", "skip"
 
