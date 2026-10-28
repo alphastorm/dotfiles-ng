@@ -52,13 +52,16 @@ def make_case(tmp_path, mode="initial", *, with_deletion=True):
         fields["remediation_scope"]["changed_paths"] = [*changed, *deleted]
     if fields.get("founder_followup_authorization"):
         fields["founder_followup_authorization"] = fields["founder_followup_authorization"]["path"]
+    for row in fields["proof_classes"].values():
+        if row["status"] == "passed":
+            row["receipt_id"] = "e2e-proof"
     history = record["sequence_history"]
     packet = qualification._parse_packet_text(_packet_text(
         document, record_path="/not-yet-frozen.json", record_sha256="0" * 64,
         diff="Remove deleted.py while keeping the dispatch boundary fail closed."))
     counter = tmp_path / "proof-executions.txt"
     proof = {
-        "id": "focused-proof",
+        "id": "e2e-proof",
         "command": [str(fc.PYTHON), "-c", "from pathlib import Path; "
                     f"p=Path({str(counter)!r}); p.write_text(p.read_text()+'run\\n' if p.exists() else 'run\\n'); "
                     "print('proof-only-stdout'); import sys; print('proof-only-stderr', file=sys.stderr)"],
@@ -101,6 +104,30 @@ def case(tmp_path, monkeypatch):
     return result
 
 
+@pytest.mark.parametrize("mode", ["initial", "material-redesign", "founder-requested"])
+@pytest.mark.parametrize("proof_id", [None, "unit-proof"])
+def test_implementation_epoch_requires_e2e_proof(tmp_path, mode, proof_id):
+    spec = make_case(tmp_path, mode)["spec"]
+    for row in spec["record_fields"]["proof_classes"].values():
+        if row["status"] == "passed":
+            if proof_id is None:
+                row["status"] = "not-applicable"
+                row.pop("receipt_id")
+            else:
+                row["receipt_id"] = proof_id
+    if proof_id is None:
+        spec["proofs"] = []
+    else:
+        spec["proofs"][0]["id"] = proof_id
+    with pytest.raises(ValueError, match="implementation epochs require.*e2e"):
+        fc.validate_input(spec)
+
+
+def test_design_epoch_is_exempt_from_e2e_proof(tmp_path):
+    spec = make_case(tmp_path, "design")["spec"]
+    assert fc.validate_input(spec)["proofs"] == []
+
+
 @pytest.mark.parametrize("mode", fc.MODES)
 def test_every_mode_prepares_and_verifies_identical_bytes(tmp_path, mode):
     case = make_case(tmp_path, mode)
@@ -122,11 +149,11 @@ def test_every_mode_prepares_and_verifies_identical_bytes(tmp_path, mode):
     assert second.returncode == 0, second.stderr.decode()
     assert second.stdout == first.stdout
     assert b"verify-task;" in second.stderr
-    for step in (b"scaffold;", b"bind;", b"triage;", b"freeze;", b"prepare;", b"proof-focused-proof;"):
+    for step in (b"scaffold;", b"bind;", b"triage;", b"freeze;", b"prepare;", b"proof-e2e-proof;"):
         assert step not in second.stderr
     if mode != "design":
         assert case["counter"].read_text() == "run\n"
-        proof_logs = list((case["out"] / "prepare-logs").glob("proof-focused-proof-*.log"))
+        proof_logs = list((case["out"] / "prepare-logs").glob("proof-e2e-proof-*.log"))
         assert "proof-only-stdout" in proof_logs[0].read_text()
         assert "proof-only-stderr" in proof_logs[0].read_text()
 
@@ -168,7 +195,7 @@ def stop_full_gate(case, monkeypatch):
 
 def test_full_gate_without_council_stops_and_resume_reuses_receipt(case, monkeypatch):
     stop_full_gate(case, monkeypatch)
-    receipt = case["out"] / "proof-focused-proof.json"
+    receipt = case["out"] / "proof-e2e-proof.json"
     previous = receipt.read_bytes(), receipt.stat().st_mtime_ns
     result = invoke(case)
     assert result.returncode == 0, result.stderr.decode()
@@ -180,14 +207,14 @@ def test_full_gate_without_council_stops_and_resume_reuses_receipt(case, monkeyp
 @pytest.mark.parametrize("field,value", [("command", ["different-command"]), ("cwd", "/"), ("cwd", None)])
 def test_receipt_identity_mismatch_never_reexecutes(case, monkeypatch, field, value):
     stop_full_gate(case, monkeypatch)
-    receipt = case["out"] / "proof-focused-proof.json"
+    receipt = case["out"] / "proof-e2e-proof.json"
     stored = json.loads(receipt.read_text())
     stored[field] = value
     receipt.write_text(json.dumps(stored))
     before = receipt.read_bytes()
     result = invoke(case)
     assert result.returncode == 1
-    assert f"proofs.focused-proof.{field} differs".encode() in result.stderr
+    assert f"proofs.e2e-proof.{field} differs".encode() in result.stderr
     assert b"next action:" in result.stderr and b"log=" in result.stderr
     assert receipt.read_bytes() == before
     assert case["counter"].read_text() == "run\n"
@@ -320,10 +347,10 @@ def test_failed_proof_reports_exit_stderr_log_and_next_action(case):
     save_input(case)
     result = invoke(case)
     assert result.returncode == 1
-    for expected in (b"proof-focused-proof failed (exit 7)", b"decisive failure", b"log=", b"next action:"):
+    for expected in (b"proof-e2e-proof failed (exit 7)", b"decisive failure", b"log=", b"next action:"):
         assert expected in result.stderr
     assert result.stdout == b""
-    assert not (case["out"] / "proof-focused-proof.json").exists()
+    assert not (case["out"] / "proof-e2e-proof.json").exists()
 
 
 @pytest.mark.parametrize("change", ["different", "missing"])
@@ -354,7 +381,7 @@ def test_exact_proof_argv_preserves_blank_arguments(case, argument):
     save_input(case)
     result = invoke(case)
     assert result.returncode == 0, result.stderr.decode()
-    receipt = json.loads((case["out"] / "proof-focused-proof.json").read_text())
+    receipt = json.loads((case["out"] / "proof-e2e-proof.json").read_text())
     assert receipt["command"] == case["spec"]["proofs"][0]["command"]
 
 

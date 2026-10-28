@@ -201,6 +201,8 @@ def validate_input(value):
         proof["cwd"] = _absolute(proof["cwd"], name + ".cwd")
         if "reuse_from" in proof:
             proof["reuse_from"] = _absolute(proof["reuse_from"], name + ".reuse_from")
+    if spec["review_mode"] != "design" and not any(identifier.startswith("e2e") for identifier in ids):
+        raise ValueError("pre-review end-to-end rule: implementation epochs require a proofs entry whose id starts with e2e")
     if ids != referenced:
         raise ValueError(f"proofs.id must equal referenced receipt IDs: missing={sorted(referenced - ids)}, unreferenced={sorted(ids - referenced)}")
     _object(spec["packet_fields"], "packet_fields", PACKET_INPUT_FIELDS)

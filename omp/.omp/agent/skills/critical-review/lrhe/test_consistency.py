@@ -81,7 +81,6 @@ SKILL_OWNED_CONTROLS = (
     "decision rules:",
     "a confirmed p0 or p1 blocks closure",
     "findings are proposals, not implementation orders",
-    "p2/p3 items receive explicit dispositions",
     "every returned item receives a ledger row and final disposition",
     "there is no majority verdict",
     "merge duplicates only when they share a root cause",

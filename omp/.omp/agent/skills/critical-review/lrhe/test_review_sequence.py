@@ -2346,7 +2346,6 @@ def test_skill_preserves_critical_review_safety_controls() -> None:
     for control in (
         "Every returned item receives a ledger row and final disposition",
         "A confirmed P0 or P1 blocks closure",
-        "P2/P3 items receive explicit dispositions but do not trigger open-ended debate",
         "There is no majority verdict",
     ):
         assert control in admission, f"admission lost {control!r}"
