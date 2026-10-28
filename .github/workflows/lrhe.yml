@@ -75,23 +75,27 @@ jobs:
           cache: pip
           cache-dependency-path: omp/.omp/agent/skills/critical-review/lrhe/requirements.txt
 
-      - name: Install pinned dependencies
+      # The review tooling runs from lrhe/.venv, the interpreter the review policy
+      # pins (setup.sh builds the same one with uv); full_council.py and its tests
+      # invoke .venv/bin/python by path, so every step below runs inside it.
+      - name: Create the review environment
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt
 
       - name: Lint
-        run: ruff check . --exclude .venv
+        run: .venv/bin/ruff check . --exclude .venv
 
       # Fails on a schema that stopped parsing, a policy citing a snapshot nobody
       # fetched, a panel route with no policy behind it. Cheap, and none of it
       # needs the corpus. Run before the slow suite so a config break reports in
       # seconds rather than after a minute of scoring.
       - name: Cross-file invariants
-        run: python -m pytest test_consistency.py -q
+        run: .venv/bin/python -m pytest test_consistency.py -q
 
       - name: Test suite
-        run: python -m pytest -q --durations=10
+        run: .venv/bin/python -m pytest -q --durations=10
 
       # A gate is only a gate if nothing can reach a provider around it. `none` is
       # the default transport and raises on any send; assert here that no live
@@ -99,7 +103,7 @@ jobs:
       # starts mattering more than it does now.
       - name: No live transport exists
         run: |
-          python - <<'PY'
+          .venv/bin/python - <<'PY'
           import sys; sys.path.insert(0, '.')
           import run_review
           assert 'live' not in run_review.TRANSPORTS, 'a live transport was added'
@@ -174,23 +178,24 @@ jobs:
           cache: pip
           cache-dependency-path: omp/.omp/agent/skills/critical-review/lrhe/requirements.txt
 
-      - name: Install pinned dependencies
+      - name: Create the review environment
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt
 
       - name: Lint
-        run: ruff check . --exclude .venv
+        run: .venv/bin/ruff check . --exclude .venv
 
       - name: Cross-file invariants
-        run: python -m pytest test_consistency.py -q
+        run: .venv/bin/python -m pytest test_consistency.py -q
 
       - name: Test suite
-        run: python -m pytest -q --durations=10
+        run: .venv/bin/python -m pytest -q --durations=10
 
       - name: No live transport exists
         run: |
-          python - <<'PY'
+          .venv/bin/python - <<'PY'
           import sys; sys.path.insert(0, '.')
           import run_review
           assert 'live' not in run_review.TRANSPORTS, 'a live transport was added'
