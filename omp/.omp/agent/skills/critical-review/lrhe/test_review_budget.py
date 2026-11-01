@@ -184,3 +184,109 @@ def test_e2e_inside_a_checkout_binds_its_actual_clean_head(tmp_path, spec):
     subprocess.run([*git, "checkout", "-q", "--", "tracked.txt"], check=True)
     assert run(lane, repo, head=head).returncode == 0
     assert invoke(lane, "check", "--spec", spec, head=head).returncode == 0
+
+
+R2_HEAD, R3_HEAD = "2" * 40, "3" * 40
+
+
+def decision(tmp_path, **overrides):
+    record = {"schema": "carrythrough.founder-decision.v1", "requested_by": "founder",
+              "selection": "Allow one additional council", "additional_full_councils": 1,
+              "after_round": 2, "after_head": R2_HEAD, "decided_at": "2026-10-31T07:30:00Z"}
+    for key, value in overrides.items():
+        if value is ...:
+            record.pop(key)
+        else:
+            record[key] = value
+    path = tmp_path / "founder-decision.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    return path
+
+
+def third_round_lane(tmp_path):
+    lane = tmp_path / "lane"
+    assert run(lane, tmp_path, round_number=2, head=R2_HEAD).returncode == 0
+    assert run(lane, tmp_path, round_number=3, head=R3_HEAD).returncode == 0
+    return lane
+
+
+def test_founder_decision_admits_exactly_one_third_round(tmp_path, spec):
+    lane = third_round_lane(tmp_path)
+    bound = decision(tmp_path)
+    admitted = invoke(lane, "check", "--spec", spec, "--founder-decision", bound, round_number=3, head=R3_HEAD)
+    assert admitted.returncode == 0, admitted.stderr.decode()
+    assert run(lane, tmp_path, round_number=4, head="4" * 40).returncode == 0
+    fourth = invoke(lane, "check", "--spec", spec, "--founder-decision", bound, round_number=4, head="4" * 40)
+    assert fourth.returncode == 1
+    assert b"two-round cap" in fourth.stderr
+
+
+def test_third_round_without_a_decision_still_refuses(tmp_path, spec):
+    lane = third_round_lane(tmp_path)
+    result = invoke(lane, "check", "--spec", spec, round_number=3, head=R3_HEAD)
+    assert result.returncode == 1
+    assert b"two-round cap" in result.stderr
+
+
+@pytest.mark.parametrize("overrides, message", [
+    ({"schema": "carrythrough.founder-decision.v2"}, b"is not a carrythrough.founder-decision.v1 record"),
+    ({"schema": ...}, b"is not a carrythrough.founder-decision.v1 record"),
+    ({"additional_full_councils": 0}, b"grants no additional council"),
+    ({"additional_full_councils": True}, b"grants no additional council"),
+    ({"additional_full_councils": "1"}, b"grants no additional council"),
+    ({"additional_full_councils": ...}, b"grants no additional council"),
+    ({"after_round": 1}, b"must follow round 2"),
+    ({"after_round": 3}, b"must follow round 2"),
+    ({"after_round": "2"}, b"must follow round 2"),
+    ({"after_round": ...}, b"must follow round 2"),
+    ({"after_head": "f" * 40}, b"different head"),
+    ({"after_head": ...}, b"names no after_head"),
+    ({"after_head": 17}, b"names no after_head"),
+])
+def test_third_round_refuses_unbound_or_malformed_decisions(tmp_path, spec, overrides, message):
+    lane = third_round_lane(tmp_path)
+    result = invoke(lane, "check", "--spec", spec, "--founder-decision", decision(tmp_path, **overrides),
+                    round_number=3, head=R3_HEAD)
+    assert result.returncode == 1
+    assert message in result.stderr
+    assert b"Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("content", ["[]", "{not json", None])
+def test_third_round_refuses_unreadable_decisions(tmp_path, spec, content):
+    lane = third_round_lane(tmp_path)
+    path = tmp_path / "founder-decision.json"
+    if content is not None:
+        path.write_text(content, encoding="utf-8")
+    result = invoke(lane, "check", "--spec", spec, "--founder-decision", path, round_number=3, head=R3_HEAD)
+    assert result.returncode == 1
+    assert b"Traceback" not in result.stderr
+
+
+def test_third_round_requires_the_round_two_receipt(tmp_path, spec):
+    lane = tmp_path / "lane"
+    assert run(lane, tmp_path, round_number=3, head=R3_HEAD).returncode == 0
+    result = invoke(lane, "check", "--spec", spec, "--founder-decision", decision(tmp_path),
+                    round_number=3, head=R3_HEAD)
+    assert result.returncode == 1
+    assert b"missing e2e receipt" in result.stderr and b"e2e-r2.json" in result.stderr
+
+
+def test_third_round_still_requires_its_own_passing_receipt(tmp_path, spec):
+    lane = tmp_path / "lane"
+    assert run(lane, tmp_path, round_number=2, head=R2_HEAD).returncode == 0
+    bound = decision(tmp_path)
+    missing = invoke(lane, "check", "--spec", spec, "--founder-decision", bound, round_number=3, head=R3_HEAD)
+    assert missing.returncode == 1 and b"missing e2e receipt" in missing.stderr
+    assert run(lane, tmp_path, "raise SystemExit(3)", round_number=3, head=R3_HEAD).returncode == 3
+    failed = invoke(lane, "check", "--spec", spec, "--founder-decision", bound, round_number=3, head=R3_HEAD)
+    assert failed.returncode == 1 and b"nonzero" in failed.stderr
+
+
+def test_a_founder_decision_never_relaxes_round_two(tmp_path, spec):
+    lane = tmp_path / "lane"
+    assert run(lane, tmp_path, round_number=2, head=R2_HEAD).returncode == 0
+    result = invoke(lane, "check", "--spec", spec, "--founder-decision", decision(tmp_path),
+                    round_number=2, head=R2_HEAD)
+    assert result.returncode == 1
+    assert b"fix-only round 2 requires non-empty affected_invariants" in result.stderr

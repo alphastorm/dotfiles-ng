@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Record exact-head end-to-end runs and enforce the two-round review budget.
+"""Record exact-head end-to-end runs and enforce the review budget: two rounds, plus one
+founder-decided third round.
 
 Receipts contain one head and an append-only runs list. A failed run remains a
 failure even if a later run passes; use a new lane directory for a new candidate.
+A third round is admitted only with a ``carrythrough.founder-decision.v1`` record
+whose ``after_head`` is the head this lane's round-2 receipt binds; nothing admits a
+fourth.
 """
 from __future__ import annotations
 
@@ -16,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TAIL_BYTES = 2048
+FOUNDER_DECISION_SCHEMA = "carrythrough.founder-decision.v1"
 
 
 def _receipt(path, head):
@@ -68,9 +73,32 @@ def e2e(lane_dir, round_number, head, name, cwd, argv):
     return result.returncode
 
 
-def check(lane_dir, round_number, head, spec_path):
-    if round_number > 2:
-        raise ValueError("two-round cap: never dispatch a third review round")
+def _bound_founder_decision(lane_dir, path):
+    """Verify the recorded founder decision against this lane's round-2 head; never a new approval."""
+    decision = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(decision, dict) or decision.get("schema") != FOUNDER_DECISION_SCHEMA:
+        raise ValueError(f"founder decision {path} is not a {FOUNDER_DECISION_SCHEMA} record")
+    councils = decision.get("additional_full_councils")
+    if type(councils) is not int or councils < 1:
+        raise ValueError(f"founder decision {path} grants no additional council")
+    if type(decision.get("after_round")) is not int or decision["after_round"] != 2:
+        raise ValueError(f"founder decision {path} must follow round 2 (after_round)")
+    after_head = decision.get("after_head")
+    if not isinstance(after_head, str) or not after_head:
+        raise ValueError(f"founder decision {path} names no after_head")
+    receipt = lane_dir / "e2e-r2.json"
+    if not receipt.is_file():
+        raise ValueError(f"missing e2e receipt: {receipt}")
+    _receipt(receipt, after_head)
+
+
+def check(lane_dir, round_number, head, spec_path, founder_decision=None):
+    if round_number > 3:
+        raise ValueError("two-round cap: never dispatch a review round past the founder-decided third")
+    if round_number == 3:
+        if founder_decision is None:
+            raise ValueError("two-round cap: a third review round needs --founder-decision bound to the round-2 head")
+        _bound_founder_decision(lane_dir, founder_decision)
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     if not isinstance(spec, dict):
         raise TypeError("review spec must be a JSON object")
@@ -106,10 +134,12 @@ def main(argv=None):
     record.add_argument("--cwd", type=Path, required=True)
     record.add_argument("argv", nargs=argparse.REMAINDER)
     gate.add_argument("--spec", type=Path, required=True)
+    gate.add_argument("--founder-decision", type=Path, default=None,
+                      help="carrythrough.founder-decision.v1 record admitting exactly one third round")
     args = parser.parse_args(argv)
     try:
         if args.command == "check":
-            check(args.lane_dir, args.round, args.head, args.spec)
+            check(args.lane_dir, args.round, args.head, args.spec, args.founder_decision)
             return 0
         command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
         if not command:
