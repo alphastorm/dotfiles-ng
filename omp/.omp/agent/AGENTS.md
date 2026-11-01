@@ -19,7 +19,7 @@
 
 ## RepoPrompt
 
-- Preparation is top-level-lead only, at most one successful preparation per work package: before the first mutation of design work or technically complex, cross-cutting, multi-repository, predecessor-state-sensitive, or qualification-consequential implementation; skip it for NO_CLOUD material, frozen candidates, diagnostic-red discovery, narrow reproduced fixes, mechanical work, and a work package that already has one. When it applies, read skill://repoprompt-preparation first and follow it exactly; it is context for the accountable lead and never authorizes, reviews, or accepts.
+- Before the first mutation of design work or of complex, cross-cutting, multi-repository, or predecessor-state-sensitive implementation, read skill://repoprompt-preparation and follow it exactly. It owns whether a work package needs the one lead-run preparation, the exceptions, and the submission contract; its output is context for the accountable lead and never authorizes, reviews, or accepts.
 
 ## Cloud processing
 
