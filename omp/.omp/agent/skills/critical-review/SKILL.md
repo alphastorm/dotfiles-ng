@@ -159,7 +159,7 @@ artifacts, or proof receipts into the runtime diagnosis harness.
 5. Close classes, not instances. When a finding names one instance of a mechanical class — an invocation pattern, a predicate shape, a fixture convention — sweep the whole subject for the class in the same remediation and encode the class as an executable invariant (a meta-test that fails the suite). Policy prose alone never closes a class.
 6. Stop-rule: if the fix-only round confirms the same defect class again, halt the loop and record why it did not converge; then reduce scope, bring an escalation trigger to the founder or ADR route, use a recorded founder decision's one additional council, or continue in the repository's one successor PR under its own budget. Never re-dispatch the subject any other way.
 7. Freeze the reviewed subject. Never edit the reviewed tree — including its policy and context files — while any reviewer is reading; queue such edits for the disposition commit. A verdict rendered over a moving target is discarded and the round is wasted.
-8. Remediation-scoped verification uses only the budget's remaining fix-only round. Preserve the sequence's complete bound history and run the review-budget check before every dispatch; the sequence gate cannot grant a fresh general pass or override the review budget's round cap.
+8. Remediation-scoped verification uses only the budget's remaining fix-only round. Preserve the sequence's complete bound history and run the review budget check before every dispatch; the sequence gate cannot grant a fresh general pass or override the review budget's round cap.
 9. Exit is by disposition, not zero findings: no in-scope residual P0/P1 and clean credential paths close the sequence, and the accountable lead records a disposition for every remaining P2/P3 item without a user prompt — `accept` or `defer`, or the repository's own disposition vocabulary. A supplemental seat's credential-path claim blocks only after lead verification against the committed bytes.
 
 ### Pragmatic full-council composition
@@ -168,7 +168,7 @@ Full-council composition lives in the on-demand live protocol, reached through [
 
 ## Full council at a glance
 
-Every change admitted to the full council has one `review_sequence_id`. Every frozen epoch has one machine-readable `review-record.json`. `lrhe/review_sequence.py` remains the dispatch-action selector for admitted epochs; packet prose cannot override its result, and its legacy mode support cannot override the review-budget check.
+Every change admitted to the full council has one `review_sequence_id`. Every frozen epoch has one machine-readable `review-record.json`. `lrhe/review_sequence.py` remains the dispatch-action selector for admitted epochs; packet prose cannot override its result, and its legacy mode support cannot override the review budget check.
 
 Preserve the full bound history: never relabel an epoch or reset a sequence. `material-redesign` and `founder-requested` obtain a general pass only where the governing round budget grants one: a repository round rule, or a recorded founder decision's one additional council. A correction that meets an escalation trigger ends the loop with a founder or ADR question, not another council. Any design-stage review also consumes a round; it is not an additional allowance.
 
