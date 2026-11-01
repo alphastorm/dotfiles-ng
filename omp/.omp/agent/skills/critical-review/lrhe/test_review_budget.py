@@ -272,6 +272,21 @@ def test_third_round_requires_the_round_two_receipt(tmp_path, spec):
     assert b"missing e2e receipt" in result.stderr and b"e2e-r2.json" in result.stderr
 
 
+@pytest.mark.parametrize("round_two", ["empty", "failed"])
+def test_third_round_requires_a_complete_passing_round_two(tmp_path, spec, round_two):
+    lane = tmp_path / "lane"
+    if round_two == "empty":
+        lane.mkdir()
+        (lane / "e2e-r2.json").write_text(json.dumps({"head": R2_HEAD, "runs": []}), encoding="utf-8")
+    else:
+        assert run(lane, tmp_path, "raise SystemExit(3)", round_number=2, head=R2_HEAD).returncode == 3
+    assert run(lane, tmp_path, round_number=3, head=R3_HEAD).returncode == 0
+    result = invoke(lane, "check", "--spec", spec, "--founder-decision", decision(tmp_path),
+                    round_number=3, head=R3_HEAD)
+    assert result.returncode == 1
+    assert (b"has no runs" if round_two == "empty" else b"nonzero") in result.stderr
+
+
 def test_third_round_still_requires_its_own_passing_receipt(tmp_path, spec):
     lane = tmp_path / "lane"
     assert run(lane, tmp_path, round_number=2, head=R2_HEAD).returncode == 0

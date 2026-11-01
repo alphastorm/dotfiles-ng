@@ -73,8 +73,21 @@ def e2e(lane_dir, round_number, head, name, cwd, argv):
     return result.returncode
 
 
+def _passing_receipt(lane_dir, round_number, head):
+    """The round's exact-head receipt with at least one run and no failed run."""
+    path = lane_dir / f"e2e-r{round_number}.json"
+    if not path.is_file():
+        raise ValueError(f"missing e2e receipt: {path}")
+    receipt = _receipt(path, head)
+    if not receipt["runs"]:
+        raise ValueError(f"e2e receipt {path} has no runs")
+    if any(type(run.get("rc")) is not int or run["rc"] != 0 for run in receipt["runs"]):
+        raise ValueError(f"e2e receipt {path} has a nonzero or missing rc")
+    return receipt
+
+
 def _bound_founder_decision(lane_dir, path):
-    """Verify the recorded founder decision against this lane's round-2 head; never a new approval."""
+    """Verify the recorded founder decision against this lane's completed round 2; never a new approval."""
     decision = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(decision, dict) or decision.get("schema") != FOUNDER_DECISION_SCHEMA:
         raise ValueError(f"founder decision {path} is not a {FOUNDER_DECISION_SCHEMA} record")
@@ -86,10 +99,8 @@ def _bound_founder_decision(lane_dir, path):
     after_head = decision.get("after_head")
     if not isinstance(after_head, str) or not after_head:
         raise ValueError(f"founder decision {path} names no after_head")
-    receipt = lane_dir / "e2e-r2.json"
-    if not receipt.is_file():
-        raise ValueError(f"missing e2e receipt: {receipt}")
-    _receipt(receipt, after_head)
+    # Round 2 must have been a complete, admitted round at that head, not merely a receipt file.
+    _passing_receipt(lane_dir, 2, after_head)
 
 
 def check(lane_dir, round_number, head, spec_path, founder_decision=None):
@@ -104,14 +115,7 @@ def check(lane_dir, round_number, head, spec_path, founder_decision=None):
         raise TypeError("review spec must be a JSON object")
     if round_number == 2 and not spec.get("affected_invariants"):
         raise ValueError("fix-only round 2 requires non-empty affected_invariants in the spec")
-    path = lane_dir / f"e2e-r{round_number}.json"
-    if not path.is_file():
-        raise ValueError(f"missing e2e receipt: {path}")
-    receipt = _receipt(path, head)
-    if not receipt["runs"]:
-        raise ValueError(f"e2e receipt {path} has no runs")
-    if any(type(run.get("rc")) is not int or run["rc"] != 0 for run in receipt["runs"]):
-        raise ValueError(f"e2e receipt {path} has a nonzero or missing rc")
+    _passing_receipt(lane_dir, round_number, head)
 
 
 def _round(value):
