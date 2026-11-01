@@ -13,7 +13,7 @@ This document is the whole admission decision. Most invocations end inside it wi
 
 Use this skill automatically when independent cross-family evidence is worth its cost because the change is production/customer/public-facing, materially unbounded, shared across operators or consumers, persistent or irreversible, supply-chain or public-compatibility sensitive, or has weak or costly rollback. Typical cases include broad authorization boundaries, production data or state, asset movement without a tight credible-loss cap, persistent migrations or deletion, public protocol compatibility, distributed coordination, releases, route promotion, and hard-to-reverse cross-system boundaries.
 
-Do not select a full council merely because work is P0, mentions security, uses a credential, makes provider calls, spends a bounded amount, crosses a reversible internal boundary, or is a one-off experiment. Bounded experiments receive lead verification. Ordinary reusable internal paths receive lead verification plus one deterministic focused review of changed boundaries. An explicit user request for a full council selects the full-council path when hosted review is permitted.
+Do not select a full council merely because work is P0, mentions security, uses a credential, makes provider calls, spends a bounded amount, crosses a reversible internal boundary, or is a one-off experiment. Bounded experiments receive lead verification. Ordinary reusable internal paths receive lead verification plus one deterministic focused review of changed boundaries, except where a repository `REVIEW.md` floor classifies the changed paths as lead verification and no concrete residual consequence survives existing controls. An explicit user request for a full council selects the full-council path when hosted review is permitted.
 
 ### Automatic assurance selection — before ceremony
 
@@ -28,6 +28,12 @@ Carrythrough's path rules. Use changed paths, not the supporting-context list.
 every task, and `verify-task` reconstructs them before dispatch. Packet-only
 review carries applicable repository policy inside its immutable packet.
 This policy supplements repository authority; it never authorizes an effect.
+A repository's `REVIEW.md` or `AGENTS.md` round, successor, severity, and
+disposition rules govern that repository and override this skill's review budget
+and decision rules; this skill governs only what the repository leaves unstated.
+`prepare` embeds only `REVIEW.md`, so a packet's `requirements` carry any
+`AGENTS.md` rule a reviewer needs. Precedence never relaxes `NO_CLOUD`, the
+hosted material policy, a required strong critic, or exact-head proof.
 
 State concisely:
 
@@ -41,12 +47,12 @@ State concisely:
 
 Apply the first matching class without asking the user to choose:
 
-1. explicit `NO_CLOUD` material: direct lead verification only; never dispatch hosted review;
+1. explicit `NO_CLOUD` material: direct lead verification only; never dispatch hosted review, and record any unmet repository floor as unmet, never as independent review;
 2. `production/hard-to-reverse`: one full council;
 3. `reusable internal path`: one focused review;
 4. `bounded experiment`: direct lead verification only.
 
-Use the lowest class consistent with the credible residual consequence. Priority, credentials, provider calls, security vocabulary, or invoking this skill do not independently raise it. A reviewer may challenge the class only with a concrete omitted consequence that survives current controls. An explicit full-council request overrides steps 2–4 but never overrides `NO_CLOUD`. Never invoke Ask to choose an assurance class, provider, reviewer, roster, or review depth.
+Use the lowest class that both the repository floor and the credible residual consequence after existing controls permit; the `reusable internal path` label alone never raises a path that floor classifies as lead verification. Priority, credentials, provider calls, security vocabulary, or invoking this skill do not independently raise it. A reviewer may challenge the class only with a concrete omitted consequence that survives current controls. An explicit full-council request overrides steps 2–4 but never overrides `NO_CLOUD`. Never invoke Ask to choose an assurance class, provider, reviewer, roster, or review depth.
 
 When the deterministic result is not a full council, stop before review ceremony. Perform the selected lead-only or focused path. Do not mint a review sequence, frozen epoch, receipt set, panel manifest, or ledger solely to justify not running a council.
 
@@ -93,21 +99,26 @@ These bind every dispatch, focused or full council. Reviewers render verdicts; t
 
 ### Review budget and pre-review checks
 
-- Use one focused review (or the policy-required initial full council), then at most one round that examines only the fixes. Its spec carries non-empty `affected_invariants`. Never run a third round, including a separate refutation; a new review ID, epoch, or day does not reset the budget.
-- P2 and P3 findings get a recorded `accept` or `defer`, never code.
-- If a fix needs a new mechanism — a new concept, module, lock, schema field, or lifecycle artifact — stop the loop and bring it to the founder as a design question.
+- Run one independent pass only when the selected class requires it — one focused review or the policy-required initial full council — then one batched remediation, then at most one round that examines only the fixes, and only when the batch mitigated a confirmed P0/P1 or the repository requires a closing round. Its spec carries non-empty `affected_invariants`. A clean first pass gets no second round. Never run a third round, including a separate refutation, unless a repository's recorded founder decision admits exactly one additional council in mode `founder-requested`; never a fourth. A new review ID, epoch, or day does not reset the budget.
+- P2 and P3 findings do not block by default and get a recorded disposition; a small, obvious correction may join the existing remediation batch, but a P2/P3 never starts a round, an architecture review, or a general review.
+- Escalation triggers: if a fix changes authority, acceptance criteria, spend or provider limits, irreversible effects, persistent schema or state semantics, or a locked architecture boundary, stop the loop and bring it to the founder as a design question, or to the repository's ADR route where one exists. A local helper, module, lock, regression test, or meta-test that changes none of these is ordinary remediation, not a founder decision.
+- A fix-only round's packet carries the reviewer's meaning in existing fields: `goal` states that the round examines only the batched remediation, and `requirements` lists the `affected_invariants`, each prior finding's ID, anchors, and disposition, and that outside the remediation only a P0/P1 or a credential-path finding in the reviewed bytes is in scope. The generated assignment reproduces those fields; the reviewer template does not change.
 - Before any review, run every real path the change touches once end to end with fake providers: failure (crash or timeout), then recovery (reconcile or resume), then completion (export or publish). Bind the passing receipt to the exact head being reviewed; a unit suite or a receipt for another head is not this proof.
 - Split changes over about 800 changed lines into smaller PRs before review.
 
-The `lrhe/review_budget.py` CLI, run through the review venv, records each path with `e2e --lane-dir L --round N --head SHA --name NAME --cwd DIR -- argv...`; before dispatch, its `check --lane-dir L --round N --head SHA --spec PATH` enforces the budget. The JSON spec names `affected_invariants` for round 2. The gate requires `L/e2e-rN.json` at that head, at least one run, and no failed runs. These admission limits also constrain the older epoch mechanics in the on-demand protocol; those mechanics never authorize an extra round.
+The `lrhe/review_budget.py` CLI, run through the review venv, records each path with `e2e --lane-dir L --round N --head SHA --name NAME --cwd DIR -- argv...`; before dispatch, its `check --lane-dir L --round N --head SHA --spec PATH` enforces the budget. The JSON spec names `affected_invariants` for round 2. Round 3 additionally requires `--founder-decision PATH`: a `carrythrough.founder-decision.v1` record with `additional_full_councils` at least 1, `after_round` 2, and `after_head` equal to the head bound by `L/e2e-r2.json`; round 4 always refuses. The gate requires `L/e2e-rN.json` at that head, at least one run, and no failed runs. These admission limits also constrain the older epoch mechanics in the on-demand protocol; those mechanics never authorize an extra round.
 
 ### RepoPrompt context preparation
 
-Before every design review and every full-council subject freeze, run exactly one
-lead-only RepoPrompt Context Builder preparation for the current work package.
-For focused review and implementation work, default to the same preparation when
-the subject is technically complex, cross-cutting, multi-repository,
-predecessor-state-sensitive, dynamically dispatched, or expensive to qualify.
+Each work package gets exactly one lead-only RepoPrompt Context Builder
+preparation, run before its first worker commit — and, at the latest, before
+every design review and every full-council subject freeze. For focused review
+and implementation work, default to it when the work package is technically
+complex, cross-cutting, multi-repository, predecessor-state-sensitive,
+dynamically dispatched, or expensive or consequential to qualify. A parent
+package's preparation serves its split children and successors while their
+sources, boundaries, and deltas stay identified; materially changed assumptions
+invalidate it.
 Skip only for explicit `NO_CLOUD` material, an already-frozen subject,
 diagnostic-red discovery, a narrow reproduced fix, mechanical work, or when the
 same work package already has a successful preparation. This is context
@@ -141,15 +152,15 @@ remediation rules after focused proof, without exceeding the review budget.
 Never turn council rounds, freeze
 artifacts, or proof receipts into the runtime diagnosis harness.
 
-1. Council is the last step, not the loop. Dispatch only when the head is frozen, every known defect class is already closed with an executable invariant, and the rehearsal or smoke the live operation needs has already passed. Batch the first round's confirmed, in-scope P0/P1 mitigations into one remediation, rerun the lead's checks, then use at most the single fix-only follow-up; never fix one finding and re-dispatch.
+1. Council is the last step, not the loop. Dispatch only when the head is frozen, every known defect class is already closed with an executable invariant, and the rehearsal or smoke the live operation needs has already passed. Batch the first round's confirmed, in-scope P0/P1 mitigations and any small, obvious P2/P3 corrections into one remediation, rerun the lead's checks, then use at most the single fix-only follow-up; never fix one finding and re-dispatch.
 2. Admissibility before dispatch. Before any round, run the repository's gate consumer on the changed paths' floor (Carrythrough: `scripts/review-verdict.py --repo . --base … --head …`) and name the receipt class it admits for the active row. A round whose receipt cannot admit is spend without payoff: for a focused-floor subject only a `focused`/`initial` receipt at the exact head admits, so `replay` rounds there are lead evidence, never the admitting row.
 3. Rehearse before review. For an operator, migration, or restore path, the disposable-runtime rehearsal (real database, real schema, real binaries) precedes round 1; hermetic tests cannot see what the schema enforces (2026-10-19: four rounds missed stock immutability triggers that a nine-minute rehearsal found).
 4. Self-execute the review's scrutiny checklist against the diff before any dispatch and close what it finds. Any instruction you would hand a reviewer is one you must already have run against your own change.
 5. Close classes, not instances. When a finding names one instance of a mechanical class — an invocation pattern, a predicate shape, a fixture convention — sweep the whole subject for the class in the same remediation and encode the class as an executable invariant (a meta-test that fails the suite). Policy prose alone never closes a class.
-6. Stop-rule: if the fix-only round confirms the same defect class again, halt the loop and bring the unresolved issue to the founder; never re-dispatch.
+6. Stop-rule: if the fix-only round confirms the same defect class again, halt the loop and record why it did not converge; then reduce scope, bring an escalation trigger to the founder or ADR route, use a recorded founder decision's one additional council, or continue in the repository's one successor PR under its own budget. Never re-dispatch the subject any other way.
 7. Freeze the reviewed subject. Never edit the reviewed tree — including its policy and context files — while any reviewer is reading; queue such edits for the disposition commit. A verdict rendered over a moving target is discarded and the round is wasted.
-8. Remediation-scoped verification uses only the budget's remaining fix-only round. Preserve the sequence's complete bound history and run the review-budget check before every dispatch; the sequence gate cannot grant a fresh general pass or override the two-round cap.
-9. Exit is by disposition, not zero findings: no in-scope residual P0/P1 and clean credential paths close the sequence, and the accountable lead records `accept` or `defer` for every remaining P2/P3 item without a user prompt. A supplemental seat's credential-path claim blocks only after lead verification against the committed bytes.
+8. Remediation-scoped verification uses only the budget's remaining fix-only round. Preserve the sequence's complete bound history and run the review-budget check before every dispatch; the sequence gate cannot grant a fresh general pass or override the review budget's round cap.
+9. Exit is by disposition, not zero findings: no in-scope residual P0/P1 and clean credential paths close the sequence, and the accountable lead records a disposition for every remaining P2/P3 item without a user prompt — `accept` or `defer`, or the repository's own disposition vocabulary. A supplemental seat's credential-path claim blocks only after lead verification against the committed bytes.
 
 ### Pragmatic full-council composition
 
@@ -159,7 +170,7 @@ Full-council composition lives in the on-demand live protocol, reached through [
 
 Every change admitted to the full council has one `review_sequence_id`. Every frozen epoch has one machine-readable `review-record.json`. `lrhe/review_sequence.py` remains the dispatch-action selector for admitted epochs; packet prose cannot override its result, and its legacy mode support cannot override the review-budget check.
 
-Preserve the full bound history: never relabel an epoch, reset a sequence, or use `material-redesign` or `founder-requested` to obtain another general pass. A correction requiring a new mechanism ends the loop with a founder design question, not another council. Any design-stage review also consumes a round; it is not an additional allowance.
+Preserve the full bound history: never relabel an epoch or reset a sequence. `material-redesign` and `founder-requested` obtain a general pass only where the governing round budget grants one: a repository round rule, or a recorded founder decision's one additional council. A correction that meets an escalation trigger ends the loop with a founder or ADR question, not another council. Any design-stage review also consumes a round; it is not an additional allowance.
 
 An admitted epoch runs in one order: triage the draft record, freeze the complete change, mint subject-bound proof receipts, pass the full gate on the frozen record, then invoke one `review_dispatch.py prepare` command. That command resolves the roster and panel manifest, rejects incompatible evidence delivery, freezes the manifest-bound subject, resolves standing, builds the envelope, and runs `verify-task` before returning the exact Task payload. Submit it verbatim in one gated wave, normalize every returned item into the ledger, then close on the lead's dispositions. Triage may instead close the epoch on direct lead verification and mint nothing. No triage result authorizes a provider call, and reviewers never see one another's first-round output.
 
@@ -167,7 +178,7 @@ For repository subjects, `full_council.py prepare` automates preparation without
 
 Any selected reviewer with `evidence_delivery=repository` requires a clean repository subject bound to one full commit and every reviewed regular file. A packet-only subject is admissible only when every selected reviewer uses `inline` delivery and `design_or_diff` embeds a `critical-review-complete-inline-evidence-v1` bundle with every evidence artifact's complete UTF-8 content and matching SHA-256. A path, handle, summary, or excerpt supplied instead of that bundle never counts as inline evidence. Inside the bundle, `content` is the accountable producer's complete-byte declaration and the verifier treats it as opaque. The Task gate repeats this invariant from freshly read bytes.
 
-Read `./lrhe/LIVE-PROTOCOL.md` only after admission selects a full council, and read it before any scaffold, record, freeze, receipt, manifest, or dispatch. It owns roster and provider authorization, the frozen record schema and subject binding, atomic preparation and internal Task verification, ledger scaffolding and outcome capture, targeted refutation, and close/report. Load it on demand; never expand it into a session that has not admitted a council. Its executable tools and schemas own those mechanical contracts; the review budget above controls admission and takes precedence over older round allowances.
+Read `./lrhe/LIVE-PROTOCOL.md` only after admission selects a full council, and read it before any scaffold, record, freeze, receipt, manifest, or dispatch. It owns roster and provider authorization, the frozen record schema and subject binding, atomic preparation and internal Task verification, ledger scaffolding and outcome capture, targeted refutation, and close/report. Load it on demand; never expand it into a session that has not admitted a council. Its executable tools and schemas own those mechanical contracts; the governing round budget — a repository round rule, else the review budget above — controls admission and takes precedence over older round allowances.
 
 ## Design-stage council
 
@@ -236,7 +247,7 @@ Reviewer qualification canary mechanics live in the on-demand live protocol, rea
 
 ## Lead verification and dispositions
 
-After the first review, the lead directly verifies and dispositions every finding. Implement only confirmed, in-scope P0/P1 rows whose final disposition is `mitigate`, using existing mechanisms; P2/P3 rows get `accept` or `defer`, never code. `accept`, `defer`, and `reject` rows create no remediation implementation. Batch the complete selected mitigation set into one remediation epoch; never create one epoch per comment or fix iteration. A targeted refutation consumes the remaining fix-only round rather than adding one. If in-scope residual P0/P1 remains after that round, stop and bring it to the founder; otherwise record dispositions and close without a user prompt.
+After the first review, the lead directly verifies and dispositions every finding. Implement confirmed, in-scope P0/P1 rows whose final disposition is `mitigate`, using existing mechanisms where they suffice, plus the small, obvious P2/P3 corrections the lead adds to the same batch; other P2/P3 rows get `accept` or `defer`. `accept`, `defer`, and `reject` rows create no remediation implementation. Batch the complete selected mitigation set into one remediation epoch; never create one epoch per comment or fix iteration. A targeted refutation consumes the remaining fix-only round rather than adding one, unless the repository round rule budgets it separately. If in-scope residual P0/P1 remains after that round, apply the stop-rule; otherwise record dispositions and close without a user prompt.
 
 There is no majority verdict. The accountable main-session lead owns the final evidence-based decision and coherent revision.
 
@@ -244,14 +255,14 @@ Merge duplicates only when they share a root cause. Preserve every source ID on 
 
 Decision rules:
 
-- A confirmed P0 or P1 blocks closure only when it is **in-scope residual** severity. Assign severity after declared caps, containment, rollback, reconciliation, recovery, and credible-actor constraints—not before.
+- A confirmed P0 or P1 blocks closure only when it is **in-scope residual** severity. Assign severity after declared caps, containment, rollback, reconciliation, recovery, and credible-actor constraints—not before. Severity follows the finding's trigger and its consequence after those controls. Keep the reviewer's finding and severity unchanged in its ledger row and record the lead's evidence-backed re-rating separately in that row's `Rationale`, before the next round or any founder decision request. "The lead reads it" mitigates a truth defect only when the lead checks the claim against its source before handover.
 - A stated invariant violation blocks only when the invariant is explicit, current, and within the declared scope; otherwise record a design decision or human tradeoff.
 - An unresolved P0/P1 blocks only when the evidence supports a credible in-scope path to authorization, secret, money, irreversible-state, data-loss, or release-integrity impact after current controls.
 - Findings are proposals, not implementation orders. `mitigate` means implement the smallest sufficient change; `accept`, `defer`, and `reject` are normal final dispositions.
 - The lead records mitigation complexity, delivery delay, persistent state, maintenance, and newly introduced failure modes in `Rationale`. If mitigation cost is disproportionate to bounded residual impact, simplify, accept, defer, or reject it unless an explicit requirement mandates it.
 - One empirical falsification outweighs repeated unsupported concern.
 - One reproducible exploit outweighs repeated approval.
-- P2/P3 findings receive a recorded `accept` or `defer`, never code.
+- P2/P3 findings do not block by default and receive a recorded `accept` or `defer`, except a small, obvious correction that joins the existing remediation batch as `mitigate`. A P2/P3 that defeats a mandatory acceptance requirement is an inconsistency to resolve under that requirement; its label never waives it.
 - Every returned item receives a ledger row and final disposition. Not every item receives code.
 - A finding whose adversary, protected asset, or consequence falls outside the packet's declared adversary, assets, and non-goals gets the default disposition `reject: outside declared adversary` — one ledger row, no implementation. Widening the declared scope is an owner decision made before the review, never a review output.
-- A confirmed in-scope P0/P1 gets the smallest sufficient change using existing mechanisms. Any fix needing a new concept, module, lock, schema field, or lifecycle artifact stops the loop for a founder design question.
+- A confirmed in-scope P0/P1 gets the smallest sufficient change, using existing mechanisms where they suffice. A fix that meets an escalation trigger stops the loop for a founder or ADR design question; a local helper or regression test does not.
