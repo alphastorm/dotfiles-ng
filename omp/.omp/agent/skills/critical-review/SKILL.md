@@ -100,71 +100,49 @@ These bind every dispatch, focused or full council. Reviewers render verdicts; t
 ### Review budget and pre-review checks
 
 - Run one independent pass only when the selected class requires it — one focused review or the policy-required initial full council — then one batched remediation, then at most one round that examines only the fixes, and only when the batch mitigated a confirmed P0/P1 or the repository requires a closing round. Its spec carries non-empty `affected_invariants`. A clean first pass gets no second round. Never run a third round, including a separate refutation, unless a repository's recorded founder decision admits exactly one additional council in mode `founder-requested`; never a fourth. A new review ID, epoch, or day does not reset the budget.
-- P2 and P3 findings do not block by default and get a recorded disposition; a small, obvious correction may join the existing remediation batch, but a P2/P3 never starts a round, an architecture review, or a general review.
+- A P2/P3 finding never starts a round, an architecture review, or a general review; its dispositions follow the decision rules below.
 - Escalation triggers: if a fix changes authority, acceptance criteria, spend or provider limits, irreversible effects, persistent schema or state semantics, or a locked architecture boundary, stop the loop and bring it to the founder as a design question, or to the repository's ADR route where one exists. A local helper, module, lock, regression test, or meta-test that changes none of these is ordinary remediation, not a founder decision.
 - A fix-only round's packet carries the reviewer's meaning in existing fields: `goal` states that the round examines only the batched remediation, and `requirements` lists the `affected_invariants`, each prior finding's ID, anchors, and disposition, and that outside the remediation only a P0/P1 or a credential-path finding in the reviewed bytes is in scope. The generated assignment reproduces those fields; the reviewer template does not change.
-- Before any review, run every real path the change touches once end to end with fake providers: failure (crash or timeout), then recovery (reconcile or resume), then completion (export or publish). Bind the passing receipt to the exact head being reviewed; a unit suite or a receipt for another head is not this proof.
-- Split changes over about 800 changed lines into smaller PRs before review.
+- Before any review, run the smallest behavioral proof that exercises the changed contract; for stateful execution, retries, recovery, or publication, include the relevant failure and recovery transition, and name the boundaries left unproven. Bind the passing receipt to the exact head being reviewed; a unit suite or a receipt for another head is not this proof.
+- About 800 changed lines is a scope warning, not a split order: split a change that spans unrelated responsibilities; a coherent change with generated output may be reviewed together.
 
-The `lrhe/review_budget.py` CLI, run through the review venv, records each path with `e2e --lane-dir L --round N --head SHA --name NAME --cwd DIR -- argv...`; before dispatch, its `check --lane-dir L --round N --head SHA --spec PATH` enforces the budget. The JSON spec names `affected_invariants` for round 2. Round 3 additionally requires `--founder-decision PATH`: a `carrythrough.founder-decision.v1` record with `additional_full_councils` at least 1, `after_round` 2, and `after_head` equal to the head bound by `L/e2e-r2.json`; round 4 always refuses. The gate requires `L/e2e-rN.json` at that head, at least one run, and no failed runs. These admission limits also constrain the older epoch mechanics in the on-demand protocol; those mechanics never authorize an extra round.
+The `lrhe/review_budget.py` CLI, run through the review venv, records each proof run with `e2e --lane-dir L --round N --head SHA --name NAME --cwd DIR -- argv...`; before dispatch, its `check --lane-dir L --round N --head SHA --spec PATH` enforces the budget. The JSON spec names `affected_invariants` for round 2. Round 3 additionally requires `--founder-decision PATH`: a `carrythrough.founder-decision.v1` record with `additional_full_councils` at least 1, `after_round` 2, and `after_head` equal to the head bound by `L/e2e-r2.json`; round 4 always refuses. The gate requires `L/e2e-rN.json` at that head, at least one run, and no failed runs. These admission limits also constrain the older epoch mechanics in the on-demand protocol; those mechanics never authorize an extra round.
 
 ### RepoPrompt context preparation
 
-Each work package gets exactly one lead-only RepoPrompt Context Builder
-preparation, run before its first worker commit — and, at the latest, before
-every design review and every full-council subject freeze. For focused review
-and implementation work, default to it when the work package is technically
-complex, cross-cutting, multi-repository, predecessor-state-sensitive,
-dynamically dispatched, or expensive or consequential to qualify. A parent
-package's preparation serves its split children and successors while their
-sources, boundaries, and deltas stay identified; materially changed assumptions
-invalidate it.
-Skip only for explicit `NO_CLOUD` material, an already-frozen subject,
-diagnostic-red discovery, a narrow reproduced fix, mechanical work, or when the
-same work package already has a successful preparation. This is context
-discovery, not another review seat.
-
-Run it with the native recipe in `skill://repoprompt-preparation` — owned tab, one
-eval submission that may background, native wait, validated plan, guarded
-cleanup — and never restate or vary it here. Cite the plan's `chat_id` and its
-`oracle_export_path` before mutation, packet construction, or freeze. Treat its
-selection and plan as a preservation baseline for the accountable lead to check
-against current evidence. RepoPrompt prose is never a reviewer verdict, standing,
-authorization, frozen evidence, or acceptance proof, and reviewers do not receive
-it as an independent finding. A preparation that failed, proved unusable, or
-stayed unresolved after it may have dispatched work is never rerun to unblock a
-review; continue without it. Only a failure proven to have dispatched nothing
-may take the recipe's one recovery retry; a timeout, cancellation notice, lost
-connection, or `bg_*` acknowledgement is not that proof.
+`skill://repoprompt-preparation` owns whether a work package gets the one
+lead-run Context Builder preparation, its exceptions, and the submission and
+recovery contract; never restate or vary it here. Review adds one deadline: a
+preparation that applies has succeeded before every design review and every
+full-council subject freeze. Its review evidence is the plan's `chat_id` and
+`oracle_export_path`, cited before packet construction or freeze; treat the plan
+as a preservation baseline for the accountable lead to check against current
+evidence. RepoPrompt prose is never a reviewer verdict, standing, authorization,
+frozen evidence, or acceptance proof, and reviewers do not receive it as an
+independent finding. A failed, unusable, or unresolved preparation is never
+rerun to unblock a review; continue without it.
 
 ### Runtime discovery boundary
 
 A council never owns the iterations that make a qualification, golden/E2E, or
 managed lifecycle path green. Before freeze or dispatch, apply the global
-**Runtime discovery before final acceptance** rule: exercise the smallest
-state-faithful direct path, use a repository's bounded probe exception when it
-exists, and close the first failing boundary with focused red → green evidence.
-Only then freeze and review the complete candidate. Unless an explicit
-repository contract orders otherwise, disposition the frozen review before one
-final acceptance run. If that run fails, return to mutable diagnostic-red work;
-if the nearest fix changes reviewed bytes or boundaries, use the normal
-remediation rules after focused proof, without exceeding the review budget.
-Never turn council rounds, freeze
-artifacts, or proof receipts into the runtime diagnosis harness.
+**Acceptance is never discovery** rule: exercise the smallest state-faithful
+direct path, use a repository's bounded probe exception when it exists, and
+close the first failing boundary with focused red → green evidence. Only then
+freeze and review the complete candidate. Unless an explicit repository contract
+orders otherwise, disposition the frozen review before one final acceptance run.
+If that run fails, return to mutable diagnostic-red work; if the nearest fix
+changes reviewed bytes or boundaries, use the normal remediation rules after
+focused proof, without exceeding the review budget. Never turn council rounds,
+freeze artifacts, or proof receipts into the runtime diagnosis harness.
 
-1. Council is the last step, not the loop. Dispatch only when the head is frozen, every known defect class is already closed with an executable invariant, and the rehearsal or smoke the live operation needs has already passed. Batch the first round's confirmed, in-scope P0/P1 mitigations and any small, obvious P2/P3 corrections into one remediation, rerun the lead's checks, then use at most the single fix-only follow-up; never fix one finding and re-dispatch.
+1. Council is the last step, not the loop: dispatch only when the head is frozen, the known defects are fixed, and the rehearsal or smoke the live operation needs has passed.
 2. Admissibility before dispatch. Before any round, run the repository's gate consumer on the changed paths' floor (Carrythrough: `scripts/review-verdict.py --repo . --base … --head …`) and name the receipt class it admits for the active row. A round whose receipt cannot admit is spend without payoff: for a focused-floor subject only a `focused`/`initial` receipt at the exact head admits, so `replay` rounds there are lead evidence, never the admitting row.
 3. Rehearse before review. For an operator, migration, or restore path, the disposable-runtime rehearsal (real database, real schema, real binaries) precedes round 1; hermetic tests cannot see what the schema enforces (2026-10-19: four rounds missed stock immutability triggers that a nine-minute rehearsal found).
 4. Self-execute the review's scrutiny checklist against the diff before any dispatch and close what it finds. Any instruction you would hand a reviewer is one you must already have run against your own change.
-5. Close classes, not instances. When a finding names one instance of a mechanical class — an invocation pattern, a predicate shape, a fixture convention — sweep the whole subject for the class in the same remediation and encode the class as an executable invariant (a meta-test that fails the suite). Policy prose alone never closes a class.
+5. Close the class, not the instance. When a finding names one instance of a mechanical class — an invocation pattern, a predicate shape, a fixture convention — sweep the subject for the others in the same remediation and keep a regression for the reproduced one; add a class-wide invariant only when the class's recurrence or consequence justifies its maintenance.
 6. Stop-rule: if the fix-only round confirms the same defect class again, halt the loop and record why it did not converge; then reduce scope, bring an escalation trigger to the founder or ADR route, use a recorded founder decision's one additional council, or continue in the repository's one successor PR under its own budget. Never re-dispatch the subject any other way.
 7. Freeze the reviewed subject. Never edit the reviewed tree — including its policy and context files — while any reviewer is reading; queue such edits for the disposition commit. A verdict rendered over a moving target is discarded and the round is wasted.
-8. Remediation-scoped verification uses only the budget's remaining fix-only round. Preserve the sequence's complete bound history and run the review budget check before every dispatch; the sequence gate cannot grant a fresh general pass or override the review budget's round cap.
-9. Exit is by disposition, not zero findings: no in-scope residual P0/P1 and clean credential paths close the sequence, and the accountable lead records a disposition for every remaining P2/P3 item without a user prompt — `accept` or `defer`, or the repository's own disposition vocabulary. A supplemental seat's credential-path claim blocks only after lead verification against the committed bytes.
-
-### Pragmatic full-council composition
-
-Full-council composition lives in the on-demand live protocol, reached through [Full council at a glance](#full-council-at-a-glance).
 
 ## Full council at a glance
 
@@ -241,10 +219,6 @@ Return one schema-valid summary/evidence/unresolved object, at most 12 evidence 
 Every evidence item must identify the protected asset or invariant and the residual consequence after declared controls. Do not report general hardening or speculative future-proofing as a defect.
 ```
 
-## Reviewer qualification canary
-
-Reviewer qualification canary mechanics live in the on-demand live protocol, reached through [Full council at a glance](#full-council-at-a-glance).
-
 ## Lead verification and dispositions
 
 After the first review, the lead directly verifies and dispositions every finding. Implement confirmed, in-scope P0/P1 rows whose final disposition is `mitigate`, using existing mechanisms where they suffice, plus the small, obvious P2/P3 corrections the lead adds to the same batch; other P2/P3 rows get `accept` or `defer`. `accept`, `defer`, and `reject` rows create no remediation implementation. Batch the complete selected mitigation set into one remediation epoch; never create one epoch per comment or fix iteration. A targeted refutation consumes the remaining fix-only round rather than adding one, unless the repository round rule budgets it separately. If in-scope residual P0/P1 remains after that round, apply the stop-rule; otherwise record dispositions and close without a user prompt.
@@ -265,4 +239,3 @@ Decision rules:
 - P2/P3 findings do not block by default and receive a recorded `accept` or `defer`, except a small, obvious correction that joins the existing remediation batch as `mitigate`. A P2/P3 that defeats a mandatory acceptance requirement is an inconsistency to resolve under that requirement; its label never waives it.
 - Every returned item receives a ledger row and final disposition. Not every item receives code.
 - A finding whose adversary, protected asset, or consequence falls outside the packet's declared adversary, assets, and non-goals gets the default disposition `reject: outside declared adversary` — one ledger row, no implementation. Widening the declared scope is an owner decision made before the review, never a review output.
-- A confirmed in-scope P0/P1 gets the smallest sufficient change, using existing mechanisms where they suffice. A fix that meets an escalation trigger stops the loop for a founder or ADR design question; a local helper or regression test does not.

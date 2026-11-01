@@ -26,7 +26,9 @@ Qualification, golden/E2E, managed install/start/rollback, promotion, release ga
 
 ## Class closure
 
-A finding names an instance; the fix closes the class. For a confirmed mechanical defect — invocation pattern, error-masking construct, fixture convention, predicate shape, binding convention — sweep the subject and land an executable invariant (test, lint rule, config, tool) that fails before and passes after. Prose is never closure, and the sweep is part of the fix, not extra scope. The second occurrence of a defect or founder steer means mechanize before fixing more instances; the second manual run of an operational sequence means script it as a repository script, skill, or runbook.
+A finding names an instance; the fix handles its class within the subject. For a confirmed mechanical defect — invocation pattern, error-masking construct, fixture convention, predicate shape, binding convention — sweep the subject for the other instances in the same fix and keep a regression for the reproduced one; the sweep is part of the fix, not extra scope. A class-wide invariant (lint rule, meta-test, verifier) is a separate decision: add one when the class's expected recurrence or consequence justifies its maintenance cost, not because a second instance appeared. Prose alone never closes a class.
+
+Automate a repeated sequence when expected reuse, error risk, or recovery complexity justifies it; prefer an existing command, then a small script. A second execution alone is not a reason for persistent machinery.
 
 ## Evidence and assurance
 
