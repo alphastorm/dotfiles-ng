@@ -28,3 +28,6 @@ jobs:
 
       - name: Typecheck
         run: bun run typecheck
+
+      - name: Behaviour tests
+        run: bun test ./tests/stow-health-extension.test.ts ./omp/.omp/agent/skills/critical-review/lrhe/critical-review-policy.test.ts
