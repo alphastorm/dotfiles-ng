@@ -9,7 +9,7 @@ git clone https://github.com/alphastorm/dotfiles-ng.git ~/.dotfiles
 ~/.dotfiles/setup.sh
 ```
 
-Run `./setup.sh --check` to simulate every Stow restow (when `stow` is installed) and check key directories without modifying `$HOME`. Run `./update.sh` to fast-forward the checkout and re-run `setup.sh`.
+Run `./setup.sh --check` to report the public/private Git roots, commits, and branches checked, simulate package restows, and check key directories and LFS requirements without modifying `$HOME` or the checkouts. It reports a missing private checkout as skipped, rejects an existing non-root path, and fails if `stow` is not on `PATH`. Run `./update.sh` to fast-forward the checkouts and re-run `setup.sh`.
 
 A separate private companion repository supplies host-specific configuration through the same setup script (`~/.dotfiles-private` by default, or `DOTFILES_PRIVATE_DIR`).
 
@@ -29,10 +29,12 @@ Each Stow package is a top-level directory stowed into `$HOME`:
 ```bash
 ./setup.sh --check
 bun install --frozen-lockfile && bun run typecheck
-bun test ./tests/stow-health-extension.test.ts ./omp/.omp/agent/skills/critical-review/lrhe/critical-review-policy.test.ts
+bun test ./tests ./omp/.omp/agent/skills/critical-review/lrhe/critical-review-policy.test.ts
 ./omp/.omp/agent/skills/critical-review/lrhe/review_checks.py quick
 ./omp/.omp/agent/skills/critical-review/lrhe/review_checks.py full
 ./benchmark.sh
 ```
+
+`./setup.sh --check` requires Git and Stow on `PATH`; it installs nothing, changes no Git configuration, and neither restows nor synchronizes runtime worktrees. Both normal clones and linked worktrees are supported, including a private candidate selected with `DOTFILES_PRIVATE_DIR=/path/to/candidate ./setup.sh --check`. The final success line counts the package restows actually simulated; unavailable Stow is a failed validation, not a successful check. `tests/setup-check.test.ts` exercises isolated private fixtures and checks that validation leaves HOME and runtime worktrees unchanged.
 
 `review_checks.py quick|full` requires `omp/.omp/agent/skills/critical-review/lrhe/.venv`, which `setup.sh` builds with `uv`. `./benchmark.sh` checks warmed shell startup median (`--runs 20 --budget-ms 500` by default).
