@@ -5,9 +5,15 @@ name: typecheck
 
 on:
   push:
-    paths: ['**/*.ts', 'package.json', 'bun.lock', 'tsconfig.json', '.github/workflows/typecheck.yml']
+    branches: [master]
+    paths: ['**/*.ts', 'package.json', 'bun.lock', 'tsconfig.json', 'setup.sh', 'update.sh', 'tests/**', '.github/workflows/typecheck.yml']
   pull_request:
-    paths: ['**/*.ts', 'package.json', 'bun.lock', 'tsconfig.json', '.github/workflows/typecheck.yml']
+    paths: ['**/*.ts', 'package.json', 'bun.lock', 'tsconfig.json', 'setup.sh', 'update.sh', 'tests/**', '.github/workflows/typecheck.yml']
+
+# Only superseded PR runs cancel; pushes and dispatches use unique run groups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -29,5 +35,9 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # The setup-check tests simulate restow.
+      - name: Install Stow
+        run: sudo apt-get install -y --no-install-recommends stow
+
       - name: Behaviour tests
-        run: bun test ./tests/stow-health-extension.test.ts ./omp/.omp/agent/skills/critical-review/lrhe/critical-review-policy.test.ts
+        run: bun test ./tests ./omp/.omp/agent/skills/critical-review/lrhe/critical-review-policy.test.ts
