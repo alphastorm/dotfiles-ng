@@ -46,7 +46,14 @@ def full_commands() -> tuple[tuple[str, ...], ...]:
     return (
         (str(VENV_RUFF), "check", ".", "--exclude", ".venv"),
         (str(VENV_PYTHON), "-m", "pytest", "test_consistency.py", "-q"),
-        (str(VENV_PYTHON), "-m", "pytest", "-q", "--durations=10"),
+        (
+            str(VENV_PYTHON),
+            "-m",
+            "pytest",
+            "-q",
+            "--durations=10",
+            "--ignore=test_consistency.py",
+        ),
         (str(VENV_PYTHON), "-c", _TRANSPORT_ASSERTION),
     )
 

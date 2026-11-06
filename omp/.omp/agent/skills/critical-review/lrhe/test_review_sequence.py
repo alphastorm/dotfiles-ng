@@ -1044,7 +1044,9 @@ def test_stable_quick_and_full_check_tiers() -> None:
     commands = review_checks.full_commands()
     assert commands[0][1:] == ("check", ".", "--exclude", ".venv")
     assert commands[1][-2:] == ("test_consistency.py", "-q")
-    assert commands[2][-3:] == ("pytest", "-q", "--durations=10")
+    assert commands[2][-4:] == (
+        "pytest", "-q", "--durations=10", "--ignore=test_consistency.py"
+    )
     assert "TRANSPORTS" in commands[3][-1]
     with pytest.raises(ValueError, match="unknown review check tier"):
         review_checks.command_for("other")
