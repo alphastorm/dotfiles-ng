@@ -15,4 +15,4 @@ uses:
 
 others packages define environment variables or functions by writing shell files into `~/.zsh`.
 
-`~/.zsshenv` sources all **.zshenv* files present in `~/.zsh` subfolders at zsh startup, and `~/.zshrc` does the same with **.zsh* files.
+`~/.zshenv` sources `~/.zsh/**/*.zshenv(N)` at zsh startup; `~/.zshrc` sources `~/.zsh/**/*.zsh(N)` for interactive shells. Both globs recurse through `~/.zsh`, and the `(N)` qualifier allows no matching files.

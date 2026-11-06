@@ -1,7 +1,3 @@
-# The following lines were added by Docker Desktop to add commands to your PATH.
-export PATH="$PATH:/Users/srs/.docker/bin"
-# End of Docker Desktop section.
-
 # Docker Desktop command-line tools.
 [[ ! -d "$HOME/.docker/bin" ]] || path+=("$HOME/.docker/bin")
 

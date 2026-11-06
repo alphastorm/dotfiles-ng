@@ -86,7 +86,6 @@ function install_brew_packages() {
     cmake \
     coreutils \
     csshx \
-    eza \
     git-lfs \
     gpg \
     htop \
