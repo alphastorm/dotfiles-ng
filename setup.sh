@@ -1,4 +1,18 @@
 #!/bin/bash
+
+# Git resolves both a clone's .git directory and a linked worktree's .git file.
+# Reject nested directories: rev-parse alone would accept their parent repo.
+function is_git_root() {
+  local directory=$1 root
+  root=$(git -C "$directory" rev-parse --show-toplevel 2>/dev/null) || return 1
+  [ "$root" = "$(cd "$directory" && pwd -P)" ]
+}
+
+# update.sh sources this helper without running any setup or changing its shell.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  return 0
+fi
+
 set -euo pipefail
 
 SCRIPTDIR=$(dirname "$0")
@@ -43,8 +57,9 @@ if [ "$OS" == "Darwin" ]; then
     export HOMEBREW_PREFIX
   }
 
-  # A check installs nothing, Homebrew included.
-  if ! load_brew && [ -z "$CHECK_ONLY" ]; then
+  # A check installs nothing and validates the supplied PATH, without shellenv
+  # silently adding Stow from a Homebrew installation outside that PATH.
+  if [ -z "$CHECK_ONLY" ] && ! load_brew; then
     HOMEBREW_INSTALLER=$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh) || {
       echo "error: failed to download the Homebrew installer." >&2
       exit 1
@@ -257,14 +272,16 @@ KEY_DIRS=(.gnupg .ssh)
 function check_key_dirs() {
   local checkout real dir stray failed=0
   for checkout in "$PWD" "$PRIVATE_DIR"; do
-    [ -d "$checkout/.git" ] || continue
+    is_git_root "$checkout" || continue
     real=$(cd "$checkout" && pwd -P)
     for dir in "${KEY_DIRS[@]}"; do
       if [ -L "$HOME/$dir" ] && [[ "$(cd "$HOME/$dir" && pwd -P)/" == "$real/"* ]]; then
         echo "error: ~/$dir links into $checkout, so the keys it gains are stored there" >&2
         failed=1
       fi
-      stray=$(git -C "$checkout" ls-files --others -- "*/$dir/*")
+      # Even a read-only ls-files can write fsmonitor daemon cookies or invoke
+      # a configured hook. Walk the checkout directly during this inspection.
+      stray=$(git -c core.fsmonitor=false -C "$checkout" ls-files --others -- "*/$dir/*")
       if [ -n "$stray" ]; then
         printf 'error: untracked files in a key directory of %s:\n%s\n' "$checkout" "$stray" >&2
         failed=1
@@ -442,7 +459,7 @@ function _migrate_vim_plugin_remote() {
   directory=$1
   expected_url=$2
 
-  if ! [ -d "$directory/.git" ]; then
+  if ! is_git_root "$directory"; then
     return 0
   fi
   if ! current_url=$(git -C "$directory" remote get-url origin); then
@@ -603,7 +620,9 @@ function runtime_worktrees() {
 
 function is_runtime_worktree() {
   local branch=$1 target=$2
-  [ "$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$target" 2>/dev/null && pwd -P)" ] &&
+  is_git_root "$target" &&
+    [ "$(git -C "$target" rev-parse --path-format=absolute --git-common-dir)" = \
+      "$(git -C "$PRIVATE_DIR" rev-parse --path-format=absolute --git-common-dir)" ] &&
     [ "$(git -C "$target" branch --show-current 2>/dev/null)" = "$branch" ]
 }
 
@@ -637,7 +656,7 @@ function stow_packages() {
   local platform_package=@mac
   [ "$PLATFORM" = osx ] || platform_package=@linux
   printf '%s %s\n' stow "$PWD" "$platform_package" "$PWD" git "$PWD" vim "$PWD" zsh "$PWD" omp "$PWD"
-  if [ -d "$PRIVATE_DIR/.git" ]; then
+  if is_git_root "$PRIVATE_DIR"; then
     printf '%s %s\n' omp-private "$PRIVATE_DIR"
     if [ "$OS" == "Darwin" ]; then
       printf '%s %s\n' zsh-private "$PRIVATE_DIR"
@@ -652,11 +671,17 @@ function stow_packages() {
 # it skipped. Now it stops up front and names every conflict at once.
 function preflight_stow() {
   local failed=0 package dir output branch target
+  STOW_SIMULATED=0
   if ! command -v stow >/dev/null; then
+    if [ -n "$CHECK_ONLY" ]; then
+      echo "error: stow is not installed; package restow was not simulated" >&2
+      return 1
+    fi
     return 0 # first run: stow arrives with the packages, and nothing is stowed yet
   fi
   while read -r package dir; do
     [ -d "$dir/$package" ] || continue
+    STOW_SIMULATED=$((STOW_SIMULATED + 1))
     if ! output=$(stow --simulate --restow --dir "$dir" --target "$HOME" "$package" 2>&1); then
       printf 'conflict: %s\n%s\n' "$package" "$output" >&2
       failed=1
@@ -664,7 +689,7 @@ function preflight_stow() {
   done <<EOF
 $(stow_packages)
 EOF
-  if [ -d "$PRIVATE_DIR/.git" ]; then
+  if is_git_root "$PRIVATE_DIR"; then
     while read -r branch target; do
       if [ -e "$target" ] && [ ! -L "$target" ] && ! is_runtime_worktree "$branch" "$target"; then
         echo "conflict: $target must be a git worktree of $PRIVATE_DIR on branch $branch" >&2
@@ -684,8 +709,8 @@ function stow_private_dotfiles() {
   local private_dir=$PRIVATE_DIR branch target
 
   if [ -e "$private_dir" ] || [ -L "$private_dir" ]; then
-    if ! [ -d "$private_dir/.git" ]; then
-      echo "error: private dotfiles path is not a Git checkout: $private_dir" >&2
+    if ! is_git_root "$private_dir"; then
+      echo "error: private dotfiles path is not a Git repository root: $private_dir" >&2
       return 1
     fi
   elif ! git clone git@github.com:alphastorm/dotfiles-private.git "$private_dir"; then
@@ -739,7 +764,7 @@ function install_typecheck_tooling() {
   fi
   echo "installing dotfiles typecheck tooling..."
   bun install --frozen-lockfile
-  if [ -d "$PRIVATE_DIR/.git" ] && [ -f "$PRIVATE_DIR/package.json" ]; then
+  if is_git_root "$PRIVATE_DIR" && [ -f "$PRIVATE_DIR/package.json" ]; then
     (cd "$PRIVATE_DIR" && bun install --frozen-lockfile)
   fi
 }
@@ -797,20 +822,40 @@ function install_omp_python_env() {
 # run main installation
 echo "dotfiles path: $SCRIPTDIR"
 
-# Before anything changes: an install that cannot be restowed stops here with
-# every conflict listed, instead of partway through.
-preflight_stow
+function report_check_root() {
+  local label=$1 directory=$2 root commit branch
+  if ! is_git_root "$directory"; then
+    if [ "$label" = private ] && [ ! -e "$directory" ] && [ ! -L "$directory" ]; then
+      echo "private: skipped (path does not exist: $directory)"
+      return 0
+    fi
+    echo "$label: skipped (not a Git repository root: $directory)"
+    echo "error: $label dotfiles path is not a Git repository root: $directory" >&2
+    return 1
+  fi
+  root=$(git -C "$directory" rev-parse --show-toplevel)
+  commit=$(git -C "$directory" rev-parse --short HEAD) || return 1
+  branch=$(git -C "$directory" branch --show-current)
+  printf '%s: %s @ %s (%s)\n' "$label" "$root" "$commit" "${branch:-detached}"
+}
+
 if [ -n "$CHECK_ONLY" ]; then
   check_failed=0
+  report_check_root public "$PWD" || check_failed=1
+  report_check_root private "$PRIVATE_DIR" || check_failed=1
+  preflight_stow || check_failed=1
   check_key_dirs || check_failed=1
   check_git_lfs || check_failed=1
   if [ "$check_failed" -ne 0 ]; then
     exit 1
   fi
-  echo "check passed: every package would restow without a conflict, no key directory is in a checkout, and LFS requirements are met"
+  echo "check passed: $STOW_SIMULATED package restows simulated without conflicts; key directories and LFS requirements checked"
   exit 0
 fi
 
+# Before anything changes: an install that cannot be restowed stops here with
+# every conflict listed, instead of partway through.
+preflight_stow
 "install_${PACKAGE_MANAGER}_packages"
 if ! command -v git-lfs >/dev/null 2>&1; then
   echo "error: git-lfs is required by the LFS filter declared in git/.gitconfig" >&2
