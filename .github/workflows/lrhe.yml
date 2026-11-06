@@ -17,6 +17,7 @@ run-name: lrhe / ${{ github.event_name == 'workflow_dispatch' && inputs.executio
 
 on:
   push:
+    branches: [master]
     paths:
       - 'omp/.omp/agent/skills/critical-review/**'
       - 'omp/.omp/agent/extensions/critical-review-policy.ts'
@@ -57,6 +58,11 @@ on:
         options:
           - nyc-pc
           - sf-pc
+
+# Only superseded PR runs cancel; pushes and dispatches use unique run groups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
