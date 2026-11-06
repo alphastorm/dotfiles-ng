@@ -87,6 +87,7 @@ function install_brew_packages() {
     coreutils \
     csshx \
     eza \
+    git-lfs \
     gpg \
     htop \
     httpie \
@@ -160,6 +161,7 @@ function install_apt_packages() {
     curl \
     gawk \
     git \
+    git-lfs \
     gnupg \
     jq \
     lsd \
@@ -274,6 +276,19 @@ function check_key_dirs() {
     echo "./setup.sh moves GnuPG's state into a real ~/.gnupg; move anything else by hand" >&2
     return 1
   fi
+}
+
+# Report the required global LFS filter without changing Git configuration.
+function check_git_lfs() {
+  if command -v git-lfs >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ "$(git config --global --type=bool --get filter.lfs.required)" = true ]; then
+    echo "error: git-lfs is not on PATH but the global filter.lfs.required is true" >&2
+    return 1
+  fi
+  echo "note: git-lfs is not on PATH; no required global LFS filter is configured" >&2
+  return 0
 }
 
 # Turns a ~/.gnupg folded into @mac back into a real directory. It runs before
@@ -677,6 +692,10 @@ function stow_private_dotfiles() {
   elif ! git clone git@github.com:alphastorm/dotfiles-private.git "$private_dir"; then
     echo "warning: private dotfiles unavailable; continuing with public configuration." >&2
     return 0
+  else
+    if [ ! -e "$(git -C "$private_dir" rev-parse --path-format=absolute --git-path hooks)/pre-push" ]; then
+      git -C "$private_dir" lfs install --local
+    fi
   fi
 
   # Before stow, not after: the global ignore keeps stow off these paths either
@@ -783,12 +802,21 @@ echo "dotfiles path: $SCRIPTDIR"
 # every conflict listed, instead of partway through.
 preflight_stow
 if [ -n "$CHECK_ONLY" ]; then
-  check_key_dirs
-  echo "check passed: every package would restow without a conflict, and no key directory is in a checkout"
+  check_failed=0
+  check_key_dirs || check_failed=1
+  check_git_lfs || check_failed=1
+  if [ "$check_failed" -ne 0 ]; then
+    exit 1
+  fi
+  echo "check passed: every package would restow without a conflict, no key directory is in a checkout, and LFS requirements are met"
   exit 0
 fi
 
 "install_${PACKAGE_MANAGER}_packages"
+if ! command -v git-lfs >/dev/null 2>&1; then
+  echo "error: git-lfs is required by the LFS filter declared in git/.gitconfig" >&2
+  exit 1
+fi
 
 install_login_shell
 
