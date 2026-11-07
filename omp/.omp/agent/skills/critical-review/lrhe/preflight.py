@@ -493,33 +493,39 @@ def check_reviewer_evidence_contracts() -> Result:
     for family, value in sorted(qualified.items()):
         if not isinstance(value, dict):
             continue
-        bound_pin = None
+        bound_pins: list[str] = []
         provider = value.get("provider_route")
-        account = value.get("oauthAccount")
-        if isinstance(account, dict):
+        accounts = value.get("oauthAccount")
+        if isinstance(accounts, list):
             # qualification admits oauthAccount only on an OAUTH_ACCOUNT_ROUTES
             # route, which is also OMP's pin domain and account-pool key.
-            bound_pin = hashlib.sha256(
-                "\0".join(
-                    (provider, account["accountId"], account["email"], account["orgId"], "")
-                ).encode("utf-8")
-            ).hexdigest()
-            identity = f"email:{account['email']}|org:{account['orgId']}"
+            bound_pins = [
+                hashlib.sha256(
+                    "\0".join(
+                        (provider, account["accountId"], account["email"], account["orgId"], "")
+                    ).encode("utf-8")
+                ).hexdigest()
+                for account in accounts
+            ]
+            identities = [f"email:{account['email']}|org:{account['orgId']}" for account in accounts]
             pools = ((config or {}).get("task") or {}).get("agentAccountPools")
             pool = pools.get(value.get("agent")) if isinstance(pools, dict) else None
             provider_pool = pool.get(provider) if isinstance(pool, dict) else None
-            if provider_pool != [identity]:
+            # OMP treats a pool as a set: any order, but no repeat and no other account.
+            if not isinstance(provider_pool, list) or sorted(map(str, provider_pool)) != sorted(
+                identities
+            ):
                 problems.append(
                     f"{family}: task.agentAccountPools[{value.get('agent')!r}].{provider} "
-                    f"must contain exactly the bound OAuth identity (pin {bound_pin[:12]}); "
-                    "pool is missing or mismatched"
+                    "must contain exactly the bound OAuth identities "
+                    f"(pins {[pin[:12] for pin in bound_pins]}); pool is missing or mismatched"
                 )
             if "canaryReceipt" not in value:
                 problems.append(
                     f"{family}: oauthAccount requires a {canary.TRACE_RECEIPT_SCHEMA} canaryReceipt"
                 )
             if "charterAmendment" in value:
-                # An amendment's current trace is never held to the bound pin,
+                # An amendment's current trace is never held to the bound pins,
                 # so a bound lane binds each charter's trace as canaryReceipt.
                 problems.append(
                     f"{family}: oauthAccount binds each charter's {canary.TRACE_RECEIPT_SCHEMA} "
@@ -624,18 +630,21 @@ def check_reviewer_evidence_contracts() -> Result:
         except canary.TraceCanaryError as exc:
             problems.append(f"{family}: {exc}")
             continue
-        if bound_pin is not None:
+        if bound_pins:
             if receipt["schema"] != canary.TRACE_RECEIPT_SCHEMA:
                 problems.append(
                     f"{family}: oauthAccount requires a {canary.TRACE_RECEIPT_SCHEMA} "
                     f"canaryReceipt, got {receipt['schema']}"
                 )
             else:
+                # Rotation among bound accounts is native OMP behaviour; any other
+                # account, or no pin at all, is not the bound lane.
                 served_pins = receipt["served_oauth_pins"].get(provider, [])
-                if served_pins != [bound_pin]:
+                if not served_pins or any(pin not in bound_pins for pin in served_pins):
                     problems.append(
                         f"{family}: served {provider} OAuth pins "
-                        f"{[pin[:12] for pin in served_pins]} != bound [{bound_pin[:12]}]"
+                        f"{[pin[:12] for pin in served_pins]} must be non-empty and each one of "
+                        f"the bound {[pin[:12] for pin in bound_pins]}"
                     )
         measured = value.get("canary")
         expected_summary = {

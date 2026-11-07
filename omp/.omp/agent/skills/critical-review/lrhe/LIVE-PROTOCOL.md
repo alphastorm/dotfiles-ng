@@ -639,16 +639,17 @@ output schema, and the generated payload carries no schema of its own, so the
 agent's configured schema stays authoritative. OMP owns credential selection
 inside the provider route, including sibling-account rotation on account-scoped
 TAC denials for unbound lanes; dispatch implements no second retry policy. A lane
-with `oauthAccount: {accountId, email, orgId}` is the exception: it must use the
-`anthropic` or `openai-codex` provider route with a model selector on that route,
-and is served only by that account through
-`task.agentAccountPools[<lane agent>][<provider_route>]`, whose exact singleton
-value is `["email:<email>|org:<orgId>"]`. Preflight requires a
-`lrhe-live-review-trace-v3` canary whose ordered served pins for that route equal
-only that account's credential-pin hash: SHA-256 of
+with `oauthAccount`, a non-empty list of distinct `{accountId, email, orgId}`
+accounts, is the exception: it must use the `anthropic` or `openai-codex` provider
+route with a model selector on that route, and is served only by those accounts
+through `task.agentAccountPools[<lane agent>][<provider_route>]`, which lists
+exactly their `"email:<email>|org:<orgId>"` identities in any order. OMP rotates
+credentials only inside that pool. Preflight requires a
+`lrhe-live-review-trace-v3` canary whose ordered served pins for that route are
+non-empty and each one of the bound accounts' credential-pin hashes: SHA-256 of
 `provider_route + "\0" + accountId + "\0" + email + "\0" + orgId + "\0"`. A bound lane
 binds each charter's v3 trace directly as `canaryReceipt` and never carries a
-`charterAmendment`, whose current trace is not held to that pin.
+`charterAmendment`, whose current trace is not held to those pins.
 Unbound lanes retain native credential rotation and may keep their v2 receipts.
 A served model that differs from the manifest's exact selector is still invalid.
 Every live reviewer selector, plus a held lane being qualified, must also have an
@@ -844,7 +845,7 @@ A charter change then lands as a `lrhe-charter-standing-amendment-v1` document b
 
 A model or effort change is the same boundary: repin the lane everywhere it is bound, take one fresh canary trace of the new definition on a neutral probe, and bind that trace directly as its `canaryReceipt`, retiring any `charterAmendment` chain. A cohort-qualified lane instead crosses only an allowlisted point release through the model-upgrade standing amendment. The live protocol lists the bind points and selector rules.
 
-A lane bound to one OAuth account by `oauthAccount` never takes a `charterAmendment`: every charter or model change binds its fresh `lrhe-live-review-trace-v3` trace directly as `canaryReceipt`, because only that receipt is held to the bound account's credential pin.
+A lane bound to OAuth accounts by `oauthAccount` never takes a `charterAmendment`: every charter or model change binds its fresh `lrhe-live-review-trace-v3` trace directly as `canaryReceipt`, because only that receipt is held to the bound accounts' credential pins.
 
 ### Trace preparation and standing amendments
 
@@ -874,10 +875,10 @@ New receipts use `lrhe-live-review-trace-v3`: every v2 field plus
 `served_oauth_pins`, a provider-to-ordered-hash-list mapping extracted from the
 child transcript's `credential_pin` entries, including the lane's provider
 (an empty list when none were observed). Pins are never deduplicated. A lane
-with `oauthAccount` requires exactly its account's one credential pin on its
-provider route and the singleton `task.agentAccountPools` binding above; a
-missing pin, another account, or any rotation fails preflight. Existing v2
-receipts remain valid only for unbound lanes.
+with `oauthAccount` requires at least one credential pin on its provider route,
+each from a bound account, and the `task.agentAccountPools` binding above; a
+missing pin or any other account fails preflight, while rotation among bound
+accounts does not. Existing v2 receipts remain valid only for unbound lanes.
 
 ```bash
 ./lrhe/canary.py trace-receipt --trace <session.jsonl> \

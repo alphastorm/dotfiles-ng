@@ -102,7 +102,7 @@ REVIEWER_IDENTITY_FIELDS = (
 
 # Provider routes whose OMP OAuth identity is `email:<email>|org:<orgId>` and
 # whose credential pin hashes `provider\0accountId\0email\0orgId\0`; an
-# `oauthAccount` binding is only verifiable on these.
+# `oauthAccount` binding, a list of such accounts, is only verifiable on these.
 OAUTH_ACCOUNT_ROUTES = ("anthropic", "openai-codex")
 
 EXECUTION_MODES = ("task_agent",)
@@ -522,15 +522,26 @@ def _identity(
         identity[field] = value.strip()
     if "oauthAccount" in entry:
         field = f"reviewers.{reviewer_id}.oauthAccount"
-        account = _mapping(entry["oauthAccount"], field)
-        if set(account) != {"accountId", "email", "orgId"}:
-            raise QualificationError(
-                f"{field} must contain exactly accountId, email, and orgId"
-            )
-        for key in ("accountId", "email", "orgId"):
-            value = account[key]
-            if not isinstance(value, str) or not value.strip():
-                raise QualificationError(f"{field}.{key} must be a non-empty string")
+        accounts = entry["oauthAccount"]
+        if not isinstance(accounts, list) or not accounts:
+            raise QualificationError(f"{field} must be a non-empty list of accounts")
+        identities: set[tuple[object, object]] = set()
+        for index, item in enumerate(accounts):
+            account = _mapping(item, f"{field}[{index}]")
+            if set(account) != {"accountId", "email", "orgId"}:
+                raise QualificationError(
+                    f"{field}[{index}] must contain exactly accountId, email, and orgId"
+                )
+            for key in ("accountId", "email", "orgId"):
+                value = account[key]
+                if not isinstance(value, str) or not value.strip():
+                    raise QualificationError(f"{field}[{index}].{key} must be a non-empty string")
+            # OMP pools an account by `email:<email>|org:<orgId>`; a repeat would
+            # bind one account twice.
+            identity_key = (account["email"], account["orgId"])
+            if identity_key in identities:
+                raise QualificationError(f"{field}[{index}] repeats an earlier account")
+            identities.add(identity_key)
         route = entry.get("provider_route")
         model = entry.get("model")
         if route not in OAUTH_ACCOUNT_ROUTES or not (
