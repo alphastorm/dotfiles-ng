@@ -69,8 +69,8 @@ console.log(`servers: ${Object.keys(config.servers).join(", ") || "none"}`);
 // A cold server may still be loading its project: give every case a minute rather than the
 // 10-second default an agent retries past.
 const TIMEOUT_SECONDS = 60;
-// OMP's diagnostics answer names files no server covers, or servers that never reported, in text.
-const UNANSWERED = ["No language server found", "no diagnostics report yet", "servers failed"];
+// OMP answers in text when no server covers a file, a server never reported, or hover found nothing.
+const UNANSWERED = ["No language server found", "no diagnostics report yet", "servers failed", "No hover information"];
 
 let failed = 0;
 for (const spec of cases) {
