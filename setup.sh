@@ -156,6 +156,7 @@ function install_brew_packages() {
     bash-language-server \
     cmake-language-server \
     dockerfile-language-server \
+    gopls \
     helm-ls \
     luau \
     marksman \

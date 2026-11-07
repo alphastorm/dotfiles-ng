@@ -2,20 +2,41 @@
   "servers": {
     "typescript-native": {
       "fileTypes": [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
-      "rootMarkers": [".git", "package.json", "tsconfig.json", "jsconfig.json"]
+      "rootMarkers": [".git", "package.json", "tsconfig.json", "jsconfig.json", "ClaimFinder/package.json", "cdk/package.json"]
     },
     "typescript-language-server": {
       "fileTypes": [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
-      "rootMarkers": [".git", "package.json", "tsconfig.json", "jsconfig.json"],
+      "rootMarkers": [".git", "package.json", "tsconfig.json", "jsconfig.json", "ClaimFinder/package.json", "cdk/package.json"],
       "settings": {
         "diagnostics": { "ignoredCodes": [7044, 7047] }
+      }
+    },
+    "gopls": {
+      "rootMarkers": ["go.mod", "go.work", "go.sum", "api/go.mod", "proto/go.mod"]
+    },
+    "eslint": {
+      "settings": {
+        "": {
+          "validate": "on",
+          "run": "onType",
+          "packageManager": "npm",
+          "nodePath": null,
+          "experimental": { "useFlatConfig": false },
+          "problems": { "shortenToSingleLine": false },
+          "rulesCustomizations": [],
+          "codeActionOnSave": { "mode": "all" },
+          "codeAction": {
+            "disableRuleComment": { "enable": true, "location": "separateLine" },
+            "showDocumentation": { "enable": true }
+          }
+        }
       }
     },
     "pyright": {
       "command": "/opt/homebrew/bin/pyright-langserver",
       "args": ["--stdio"],
       "fileTypes": [".py", ".pyi"],
-      "rootMarkers": [".git", "pyproject.toml", "pyrightconfig.json", "setup.py", "setup.cfg", "requirements.txt"],
+      "rootMarkers": [".git", "pyproject.toml", "pyrightconfig.json", "setup.py", "setup.cfg", "requirements.txt", "claim-data-pipeline/pyproject.toml"],
       "disabled": false,
       "settings": {
         "python": {
