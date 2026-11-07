@@ -125,6 +125,9 @@ TRACE_RECEIPT_KEYS = {
     "observed_at",
 }
 TRACE_RECEIPT_V2_KEYS = TRACE_RECEIPT_KEYS - {"served_oauth_pins"}
+# Custom transcript entry the critical-review policy extension appends after narrowing a reviewer
+# seat's tools (`REVIEWER_TOOL_SURFACE_ENTRY` in extensions/critical-review-policy.ts).
+REVIEWER_TOOL_SURFACE_ENTRY = "critical-review-tool-surface"
 
 
 class OutputRefusal(RuntimeError):
@@ -1026,20 +1029,38 @@ def capture_trace_receipt(
         )
 
     sessions = [row for row in rows if row.get("type") == "session_init"]
-    if len(sessions) != 1:
-        raise TraceCanaryError(f"trace must contain one session_init, got {len(sessions)}")
-    # OMP 17.2 Task traces omit `allowedTools` and include global Hub/MCP
-    # declarations. Preserve that full observed surface in the receipt, but judge
-    # actual calls against the reviewer contract; using any extra tool still fails.
-    runtime_declared_tools = sessions[0].get("tools")
-    if (
-        not isinstance(runtime_declared_tools, list)
-        or any(not isinstance(tool, str) or not tool for tool in runtime_declared_tools)
-        or len(runtime_declared_tools) != len(set(runtime_declared_tools))
+    if not sessions:
+        raise TraceCanaryError("trace must contain a session_init")
+    # OMP appends a newer session_init when a model call's base prompt changes, as it does once the
+    # critical-review policy narrows a seat's tools; each later one keeps the first one's contract.
+    if any(
+        row.get("tools") != sessions[0].get("tools") or row.get("agent") != sessions[0].get("agent")
+        for row in sessions[1:]
     ):
-        raise TraceCanaryError(
-            f"declared tools must be a unique string list, got {runtime_declared_tools!r}"
-        )
+        raise TraceCanaryError("a later session_init changes the tools or agent of the first")
+    # OMP Task traces omit `allowedTools` and declare every MCP server and plugin tool the
+    # dispatching session mounted. The critical-review policy narrows a seat to its allowed tools
+    # before its first request and records them; the receipt keeps the surface the reviewer was
+    # offered, and actual calls are judged against the reviewer contract either way.
+    initial_tools = sessions[0].get("tools")
+    surfaces = [
+        row.get("data")
+        for row in rows
+        if row.get("type") == "custom" and row.get("customType") == REVIEWER_TOOL_SURFACE_ENTRY
+    ]
+    runtime_declared_tools = (
+        surfaces[-1].get("tools") if surfaces and isinstance(surfaces[-1], dict) else initial_tools
+    )
+    for label, tools in (("declared", initial_tools), ("narrowed", runtime_declared_tools)):
+        if (
+            not isinstance(tools, list)
+            or any(not isinstance(tool, str) or not tool for tool in tools)
+            or len(tools) != len(set(tools))
+        ):
+            raise TraceCanaryError(f"{label} tools must be a unique string list, got {tools!r}")
+    undeclared = [tool for tool in runtime_declared_tools if tool not in initial_tools]
+    if undeclared:
+        raise TraceCanaryError(f"the narrowed tool surface adds undeclared tools {undeclared!r}")
     missing_contract_tools = [
         tool for tool in contract_declared_tools if tool not in runtime_declared_tools
     ]

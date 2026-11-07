@@ -880,6 +880,15 @@ each from a bound account, and the `task.agentAccountPools` binding above; a
 missing pin or any other account fails preflight, while rotation among bound
 accounts does not. Existing v2 receipts remain valid only for unbound lanes.
 
+OMP mounts the dispatching session's MCP servers and plugin tools into every
+subagent as `xd://` devices, whatever its `tools:` list says. The
+critical-review policy extension narrows each reviewer seat to the tools it
+may run before its first request and records that set as a
+`critical-review-tool-surface` transcript entry; `declared_tools` is that set
+when the entry exists, and otherwise the first `session_init`'s tools. The
+same extension decodes a reviewer `yield` whose `data` is a JSON-encoded
+object, so OMP validates the object itself.
+
 ```bash
 ./lrhe/canary.py trace-receipt --trace <session.jsonl> \
   --agent-definition ~/.omp/agent/agents/review-gemini-argon.md --agent review-gemini-argon \

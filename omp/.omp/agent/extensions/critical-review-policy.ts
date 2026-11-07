@@ -22,6 +22,36 @@ const READ_ONLY_TOOLS: Record<string, true> = {
 	yield: true,
 };
 
+/** Custom entry recording a reviewer seat's tools after this policy narrowed them; canary receipts read it. */
+export const REVIEWER_TOOL_SURFACE_ENTRY = "critical-review-tool-surface";
+
+/** The tools a reviewer seat may run, or undefined when the prompt is not a reviewer seat's. */
+export function reviewerAllowedTools(prompt: readonly string[]): Record<string, true> | undefined {
+	if (prompt.some((part) => part.includes(INLINE_ISOLATED_MARKER))) return ISOLATED_TOOLS;
+	return prompt.some((part) => part.includes(REVIEWER_MARKER) || part.includes(FABLE_REVIEWER_MARKER))
+		? READ_ONLY_TOOLS
+		: undefined;
+}
+
+/**
+ * A reviewer's terminal `yield` whose `data` is JSON-encoded as a string, decoded to the object it
+ * encodes. OMP adopts such a string only when the decoded object validates; otherwise it reports the
+ * string ("expected object, received string") instead of what the object violates, so a model that
+ * encodes `data` this way resubmits it unchanged until the schema check is dropped. Every reviewer
+ * charter's output is an object, so decoding loses nothing. Incremental sections and strings that do
+ * not encode an object are left alone.
+ */
+export function decodedReviewerYield(input: unknown): Record<string, unknown> | undefined {
+	if (!isJsonObject(input) || typeof input.data !== "string" || Array.isArray(input.type)) return undefined;
+	let data: unknown;
+	try {
+		data = JSON.parse(input.data);
+	} catch {
+		return undefined;
+	}
+	return isJsonObject(data) ? { ...input, data } : undefined;
+}
+
 const TASK_TOOL = "task";
 const BLOCK_PREFIX = "critical-review dispatch";
 
@@ -377,24 +407,16 @@ export default function criticalReviewPolicy(
 	>();
 
 	pi.on("tool_call", async (event, ctx) => {
-		const prompt = ctx.getSystemPrompt();
-		const isolated = prompt.some((part) =>
-			part.includes(INLINE_ISOLATED_MARKER),
-		);
-		const isCriticalReviewer =
-			isolated ||
-			prompt.some(
-				(part) =>
-					part.includes(REVIEWER_MARKER) ||
-					part.includes(FABLE_REVIEWER_MARKER),
-			);
-		if (isCriticalReviewer) {
-			const allowedTools = isolated ? ISOLATED_TOOLS : READ_ONLY_TOOLS;
-			if (allowedTools[event.toolName]) return;
-			return {
-				block: true,
-				reason: `Critical reviewers are read-only and isolated; ${event.toolName} is not permitted.`,
-			};
+		const allowedTools = reviewerAllowedTools(ctx.getSystemPrompt());
+		if (allowedTools) {
+			if (!allowedTools[event.toolName]) {
+				return {
+					block: true,
+					reason: `Critical reviewers are read-only and isolated; ${event.toolName} is not permitted.`,
+				};
+			}
+			const input = event.toolName === "yield" ? decodedReviewerYield(event.input) : undefined;
+			return input ? { input } : undefined;
 		}
 
 		if (event.toolName !== TASK_TOOL) return;
@@ -446,6 +468,20 @@ export default function criticalReviewPolicy(
 			seats: decision.seats,
 		});
 		return { input: decision.input };
+	});
+
+	// OMP mounts the parent's MCP servers and plugin tools into every subagent as xd:// devices,
+	// whatever its `tools:` list says, and adds a `write` transport to reach them, which also turns on
+	// the prompt's `xd://report_issue` advice. The gate above refuses every one of them, so a reviewer
+	// seat is narrowed to the tools it may run before its first request, and the outcome is recorded
+	// for the canary receipt.
+	pi.on("before_agent_start", async (event) => {
+		const allowedTools = reviewerAllowedTools(event.systemPrompt);
+		if (!allowedTools) return;
+		const active = pi.getActiveTools();
+		if (active.every((name) => allowedTools[name])) return;
+		await pi.setActiveTools(active.filter((name) => allowedTools[name]));
+		pi.appendEntry(REVIEWER_TOOL_SURFACE_ENTRY, { tools: pi.getActiveTools() });
 	});
 
 	pi.on("tool_result", async (event) => {

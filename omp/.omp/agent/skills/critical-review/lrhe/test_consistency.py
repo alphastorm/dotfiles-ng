@@ -2996,6 +2996,8 @@ def _write_trace(
     emit_allowed_tools: bool = True,
     selector: str = "xai-oauth/grok-4.5:xhigh",
     credential_pins: tuple[tuple[str, str], ...] = (),
+    tool_surface: tuple[str, ...] | None = None,
+    later_session_init_tools: tuple[str, ...] | None = None,
 ) -> None:
     requested_model, effort = canary._selector_parts(selector)
     provider, model = requested_model.split("/", 1)
@@ -3020,6 +3022,29 @@ def _write_trace(
             **({"allowedTools": [*agent_tools, "yield"]} if emit_allowed_tools else {}),
             "timestamp": "2026-07-30T00:00:02Z",
         },
+        *(
+            [
+                {
+                    "type": "custom",
+                    "customType": canary.REVIEWER_TOOL_SURFACE_ENTRY,
+                    "timestamp": "2026-07-30T00:00:02Z",
+                    "data": {"tools": list(tool_surface)},
+                }
+            ]
+            if tool_surface is not None
+            else []
+        ),
+        *(
+            [
+                {
+                    "type": "session_init",
+                    "tools": list(later_session_init_tools),
+                    "timestamp": "2026-07-30T00:00:02Z",
+                }
+            ]
+            if later_session_init_tools is not None
+            else []
+        ),
         *[
             {
                 "type": "credential_pin",
@@ -3604,6 +3629,54 @@ def test_repository_trace_receipt_records_current_task_runtime_tools(tmp_path):
         "mcp__node_repl_js",
     ]
     assert validated["forbidden_tool_attempts"] == 0
+
+
+def test_repository_trace_receipt_records_the_policy_narrowed_surface(tmp_path):
+    selector = "xai-oauth/grok-4.5:xhigh"
+    agent = tmp_path / "review-grok.md"
+    trace = tmp_path / "trace.jsonl"
+    _write_trace_agent(agent, selector, "repository")
+    mounted = (*canary._declared_contract_tools("repository"), "hub", "mcp__node_repl_js")
+    _write_trace(
+        trace,
+        evidence_delivery="repository",
+        attempted=("read", "yield"),
+        executed=("read", "yield"),
+        runtime_extra_tools=("hub", "mcp__node_repl_js"),
+        emit_allowed_tools=False,
+        tool_surface=("read", "grep", "glob", "yield"),
+        # OMP's newer session_init for the rebuilt prompt keeps the first one's contract.
+        later_session_init_tools=mounted,
+    )
+    receipt = canary.capture_trace_receipt(trace, agent, "review-grok", selector, "repository")
+    assert receipt["declared_tools"] == ["read", "grep", "glob", "yield"]
+
+
+@pytest.mark.parametrize(
+    ("surface", "later", "failure"),
+    (
+        (("read", "grep", "glob", "yield", "bash"), None, "adds undeclared tools"),
+        (None, ("read", "grep", "glob", "yield", "bash"), "later session_init changes"),
+    ),
+)
+def test_repository_trace_receipt_refuses_a_surface_the_session_never_declared(
+    tmp_path, surface, later, failure
+):
+    selector = "xai-oauth/grok-4.5:xhigh"
+    agent = tmp_path / "review-grok.md"
+    trace = tmp_path / "trace.jsonl"
+    _write_trace_agent(agent, selector, "repository")
+    _write_trace(
+        trace,
+        evidence_delivery="repository",
+        attempted=("read", "yield"),
+        executed=("read", "yield"),
+        emit_allowed_tools=False,
+        tool_surface=surface,
+        later_session_init_tools=later,
+    )
+    with pytest.raises(canary.TraceCanaryError, match=failure):
+        canary.capture_trace_receipt(trace, agent, "review-grok", selector, "repository")
 
 
 def test_repository_trace_receipt_rejects_runtime_extra_tool_use(tmp_path):

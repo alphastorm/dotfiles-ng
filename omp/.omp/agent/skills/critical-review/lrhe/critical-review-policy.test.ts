@@ -14,6 +14,7 @@ import criticalReviewPolicy, {
 	parseDispatchMarker,
 	parseVerifierOutput,
 	RESOLVER_RECEIPT_HEADER,
+	REVIEWER_TOOL_SURFACE_ENTRY,
 	VERIFIER_PYTHON,
 	VERIFIER_SCRIPT,
 	type VerifyTask,
@@ -212,6 +213,98 @@ describe("reviewer child boundary", () => {
 				"Critical reviewers are read-only and isolated; task is not permitted.",
 		});
 		expect(verify.calls).toEqual([]);
+	});
+});
+
+/** A seat's agent start: the tools OMP made active, and what the policy did to them. */
+function seatStart(promptParts: string[], tools: string[]) {
+	let active = [...tools];
+	const entries: { customType: string; data: unknown }[] = [];
+	let startHandler: ((event: unknown, ctx: unknown) => unknown) | undefined;
+	const pi = {
+		on: (event: string, registered: (event: unknown, ctx: unknown) => unknown) => {
+			if (event === "before_agent_start") startHandler = registered;
+		},
+		getActiveTools: () => [...active],
+		setActiveTools: async (names: string[]) => {
+			active = [...names];
+		},
+		appendEntry: (customType: string, data: unknown) => {
+			entries.push({ customType, data });
+		},
+	};
+	criticalReviewPolicy(pi as unknown as ExtensionAPI, approvingVerifier());
+	return {
+		run: async () => {
+			await startHandler?.(
+				{ type: "before_agent_start", reason: "prompt", prompt: "review", systemPrompt: promptParts },
+				{},
+			);
+			return { active, entries };
+		},
+	};
+}
+
+// What OMP 18.18 makes active in a reviewer child of a lead session with RepoPrompt and omp-oracle.
+const MOUNTED_SEAT_TOOLS = [
+	"read",
+	"grep",
+	"glob",
+	"lsp",
+	"yield",
+	"write",
+	"mcp__repopromptce_apply_edits",
+	"mcp__repopromptce_agent_run",
+	"oracle_submit",
+	"exa_code",
+];
+
+describe("reviewer seat tools", () => {
+	test("leaves a reviewer seat only the tools the gate lets it run", async () => {
+		expect(await seatStart(READ_ONLY_PROMPT, MOUNTED_SEAT_TOOLS).run()).toEqual({
+			active: ["read", "grep", "glob", "lsp", "yield"],
+			entries: [
+				{
+					customType: REVIEWER_TOOL_SURFACE_ENTRY,
+					data: { tools: ["read", "grep", "glob", "lsp", "yield"] },
+				},
+			],
+		});
+		expect((await seatStart(INLINE_ISOLATED_PROMPT, MOUNTED_SEAT_TOOLS).run()).active).toEqual(["yield"]);
+	});
+
+	test("leaves a lead session and an already narrow seat untouched", async () => {
+		expect(await seatStart(LEAD_PROMPT, MOUNTED_SEAT_TOOLS).run()).toEqual({
+			active: MOUNTED_SEAT_TOOLS,
+			entries: [],
+		});
+		expect(await seatStart(READ_ONLY_PROMPT, ["read", "grep", "yield"]).run()).toEqual({
+			active: ["read", "grep", "yield"],
+			entries: [],
+		});
+	});
+});
+
+describe("reviewer yield payload", () => {
+	const result = { summary: "ok", evidence: [], unresolved: [] };
+
+	test("hands the yield tool the object a JSON-encoded payload encodes", async () => {
+		const call = gate(READ_ONLY_PROMPT);
+
+		expect(await call("yield", { data: JSON.stringify(result) })).toEqual({ input: { data: result } });
+		expect(await call("yield", { type: "final", data: JSON.stringify(result) })).toEqual({
+			input: { type: "final", data: result },
+		});
+	});
+
+	test("leaves objects, incremental sections, non-object JSON, prose, and lead sessions alone", async () => {
+		const call = gate(READ_ONLY_PROMPT);
+
+		expect(await call("yield", { data: result })).toBeUndefined();
+		expect(await call("yield", { type: ["evidence"], data: JSON.stringify(result) })).toBeUndefined();
+		expect(await call("yield", { data: "[1, 2]" })).toBeUndefined();
+		expect(await call("yield", { data: "not json" })).toBeUndefined();
+		expect(await gate(LEAD_PROMPT)("yield", { data: JSON.stringify(result) })).toBeUndefined();
 	});
 });
 
