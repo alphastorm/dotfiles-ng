@@ -6,7 +6,10 @@
     },
     "typescript-language-server": {
       "fileTypes": [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
-      "rootMarkers": [".git", "package.json", "tsconfig.json", "jsconfig.json"]
+      "rootMarkers": [".git", "package.json", "tsconfig.json", "jsconfig.json"],
+      "settings": {
+        "diagnostics": { "ignoredCodes": [7044, 7047] }
+      }
     },
     "pyright": {
       "command": "/opt/homebrew/bin/pyright-langserver",
