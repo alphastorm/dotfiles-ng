@@ -149,16 +149,21 @@ function install_brew_packages() {
   fi
 
   # Language servers omp/.omp/agent/lsp.json launches, several by their
-  # /opt/homebrew/bin path.
+  # /opt/homebrew/bin path. OMP runs typescript-language-server for projects
+  # pinned below TypeScript 7 and `tsc --lsp` for the rest; luau runs
+  # tern-sidepulse's headless checks beside install_luau_lsp's server.
   brew install \
     bash-language-server \
     cmake-language-server \
     dockerfile-language-server \
     helm-ls \
+    luau \
     marksman \
     pyright \
     ruby-lsp \
+    ruff \
     typescript \
+    typescript-language-server \
     vscode-langservers-extracted \
     yaml-language-server
 }
@@ -410,6 +415,34 @@ function install_language_tooling() {
   fi
 }
 
+# luau-lsp has no Homebrew formula; this is the release tern-sidepulse pins.
+LUAU_LSP_VERSION=1.70.1
+LUAU_LSP_MACOS_SHA256=7d3936e8dec6dc77547abd061d2e950da392562a5f94858b880f23dba50d84cd
+
+function install_luau_lsp() {
+  if [ "$("$HOME/.local/bin/luau-lsp" --version 2>/dev/null)" = "$LUAU_LSP_VERSION" ]; then
+    return 0
+  fi
+  echo "installing pinned luau-lsp $LUAU_LSP_VERSION..."
+  mkdir -p "$HOME/.local/bin"
+  (
+    local cleanup_command workdir
+    workdir=$(mktemp -d)
+    printf -v cleanup_command 'rm -rf %q' "$workdir"
+    # shellcheck disable=SC2064
+    trap "$cleanup_command" EXIT
+    curl -fsSL --proto '=https' --proto-redir '=https' \
+      "https://github.com/JohnnyMorganz/luau-lsp/releases/download/$LUAU_LSP_VERSION/luau-lsp-macos.zip" \
+      -o "$workdir/luau-lsp.zip"
+    if ! _verify_sha256 "$LUAU_LSP_MACOS_SHA256" "$workdir/luau-lsp.zip"; then
+      echo "error: luau-lsp checksum verification failed." >&2
+      exit 1
+    fi
+    unzip -q "$workdir/luau-lsp.zip" luau-lsp -d "$workdir"
+    install -m 0755 "$workdir/luau-lsp" "$HOME/.local/bin/luau-lsp"
+  )
+}
+
 # The agent is linked only once the binary exists: launchd loads every plist in
 # LaunchAgents at login and would restart a missing server every ten seconds.
 function install_lspmux_agent() {
@@ -449,7 +482,7 @@ function _verify_sha256() {
     printf '%s  %s\n' "$expected" "$file" |
       sha256sum -c >/dev/null 2>&1
   else
-    echo "error: sha256sum or shasum is required to verify vim-plug." >&2
+    echo "error: sha256sum or shasum is required to verify downloads." >&2
     return 1
   fi
 }
@@ -869,6 +902,7 @@ install_common_settings
 "install_${PLATFORM}_settings"
 if [ "$PLATFORM" = osx ]; then
   install_rustup
+  install_luau_lsp
 fi
 install_language_tooling
 stow_dotfiles

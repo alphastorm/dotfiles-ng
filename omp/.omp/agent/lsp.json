@@ -1,13 +1,12 @@
 {
   "servers": {
-    "tsgo": {
-      "command": "/opt/homebrew/bin/tsc",
-      "args": ["--lsp", "--stdio"],
-      "fileTypes": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+    "typescript-native": {
+      "fileTypes": [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
       "rootMarkers": [".git", "package.json", "tsconfig.json", "jsconfig.json"]
     },
     "typescript-language-server": {
-      "disabled": true
+      "fileTypes": [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
+      "rootMarkers": [".git", "package.json", "tsconfig.json", "jsconfig.json"]
     },
     "pyright": {
       "command": "/opt/homebrew/bin/pyright-langserver",
