@@ -46,7 +46,7 @@
     "ruby-lsp": {
       "command": "/opt/homebrew/bin/ruby-lsp",
       "args": [],
-      "fileTypes": [".rb", ".rake", ".gemspec", ".erb"],
+      "fileTypes": [".rb", ".rake", ".gemspec"],
       "rootMarkers": [".git", "Gemfile", ".ruby-version", ".ruby-gemset"]
     },
     "vscode-json-language-server": {
