@@ -10,5 +10,5 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true
   },
-  "include": ["omp/.omp/**/*.ts", "tests/**/*.ts"]
+  "include": ["omp/.omp/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
 }
