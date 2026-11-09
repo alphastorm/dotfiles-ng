@@ -58,7 +58,7 @@ reviewer prose:
   empty: Fable is paused in `liveDispatch.disabled`, with dispatch and
   evaluation disabled. Its charter and qualification history remain on disk;
 - leadFamilySecurity explicitly selects qualified Daybreak Blue on every GPT
-  full council and CVP-bound Mythos 5.1 on every Claude full council, with
+  full council and CVP-bound Mythos 5.2 on every Claude full council, with
   same_lineage_blind_sample and supplemental_evidence standing. Each lane keeps
   its own security qualification and exact model/access profile; it never
   substitutes for a strong critic or becomes a same-family ordinary supplement.
@@ -82,19 +82,19 @@ The resolver uses four explicit profile groups, not one role per model:
 |---|---|---|---|
 | strongCritic | Opus 5.5 through the CVP-approved route + Gemini 4 Argon | Daybreak Blue + Gemini 4 Argon | required cross-family independent evidence |
 | supplements | none | GPT-6 Astra | always-on cross-family supplemental evidence |
-| leadFamilySecurity | qualified Daybreak Blue | Mythos 5.1 through the CVP-approved route | always-on same-lineage blind sample; supplemental evidence only |
+| leadFamilySecurity | qualified Daybreak Blue | Mythos 5.2 through the CVP-approved route | always-on same-lineage blind sample; supplemental evidence only |
 | architectureSpecialists | none | none | no live architecture specialist while Fable is paused |
 
 No model appears twice among the strong critics and supplements, and each group
 keeps distinct model families; a supplement may share a strong critic's family
 (Astra beside Daybreak) because it never counts toward the independent floor.
-Fable 5.1 is paused in `liveDispatch.disabled`, with dispatch and evaluation
+Fable 5.2 is paused in `liveDispatch.disabled`, with dispatch and evaluation
 disabled. Its charter and qualification history remain on disk, but it is not
 selected for full councils or focused reviews.
 
 GPT full councils include Daybreak through the explicit leadFamilySecurity group,
 reusing its qualified security scope and exact model/access contract. Claude full
-councils include Mythos 5.1 through the same group, bound to the CVP account like
+councils include Mythos 5.2 through the same group, bound to the CVP accounts like
 Opus. That same_lineage_blind_sample and supplemental_evidence standing never
 supplies independent assurance, replaces the strong critic, or relaxes the
 cross-family rules for ordinary supplements. Focused reviews include every
