@@ -39,7 +39,7 @@ reviewer prose:
   and claude profiles exist; Gemini and Grok cannot drive a council;
 - strongCritic selects one or more required cross-family independent reviewers:
   the reciprocal critic first — Opus CVP for a GPT lead or Daybreak Blue for a
-  Claude lead — then Gemini 4 Argon for both leads. Every member sits on every
+  Claude lead — then Gemini 4 Carbon for both leads. Every member sits on every
   focused review and full council;
 - supplements selects always-on cross-family supplemental evidence for every
   full council: useful for cheap decorrelation, but unable to rescue the
@@ -80,7 +80,7 @@ The resolver uses four explicit profile groups, not one role per model:
 
 | Group | GPT lead | Claude lead | Standing |
 |---|---|---|---|
-| strongCritic | Opus 5.5 through the CVP-approved route + Gemini 4 Argon | Daybreak Blue + Gemini 4 Argon | required cross-family independent evidence |
+| strongCritic | Opus 5.5 through the CVP-approved route + Gemini 4 Carbon | Daybreak Blue + Gemini 4 Carbon | required cross-family independent evidence |
 | supplements | none | GPT-6 Astra | always-on cross-family supplemental evidence |
 | leadFamilySecurity | qualified Daybreak Blue | Mythos 5.2 through the CVP-approved route | always-on same-lineage blind sample; supplemental evidence only |
 | architectureSpecialists | none | none | no live architecture specialist while Fable is paused |
@@ -542,7 +542,7 @@ Evidence compatibility is executable policy:
   must carry the same complete bundle for that member, while every repository
   member still requires the bound commit and files.
 
-A focused preparation uses the same command with `--review-class focused`; the resolver infers every strong critic in profile order (the reciprocal critic, then Gemini 4 Argon), followed by its `focusedSupplements` (Astra for a Claude lead), and rejects any caller-supplied reviewer choice. It has no panel manifest. A targeted-refuter
+A focused preparation uses the same command with `--review-class focused`; the resolver infers every strong critic in profile order (the reciprocal critic, then Gemini 4 Carbon), followed by its `focusedSupplements` (Astra for a Claude lead), and rejects any caller-supplied reviewer choice. It has no panel manifest. A targeted-refuter
 preparation uses `--review-class targeted-refuter`, requires the remediation
 record, and infers the complete fixed pool; callers do not name or filter it.
 Packet, scope, repository, subject, receipt, and envelope arguments retain the
@@ -892,7 +892,7 @@ object, so OMP validates the object itself.
 ```bash
 ./lrhe/canary.py trace-receipt --trace <session.jsonl> \
   --agent-definition ~/.omp/agent/agents/review-gemini-argon.md --agent review-gemini-argon \
-  --selector google-antigravity/gemini-4-argon:high \
+  --selector google-antigravity/gemini-4-carbon-medium:medium \
   --evidence-delivery repository \
   --out lrhe-data/standing-amendment-vN/<amendment-id>.trace-receipt.json
 ```

@@ -6,7 +6,7 @@ families: GPT/ChatGPT or Claude. Each profile declares strongCritic, always-on
 supplements (possibly none), focusedSupplements, explicit leadFamilySecurity, and
 record-selected architectureSpecialists. Every strong critic is required
 cross-family independent evidence: the reciprocal critic first, then Gemini 4
-Argon under either lead. Supplements are cross-family supplemental evidence;
+Carbon under either lead. Supplements are cross-family supplemental evidence;
 focusedSupplements names which supplements also sit on every focused review,
 with the same standing. Qualified lead-family security is a same-lineage blind
 sample, never an independent anchor.
