@@ -892,7 +892,7 @@ object, so OMP validates the object itself.
 ```bash
 ./lrhe/canary.py trace-receipt --trace <session.jsonl> \
   --agent-definition ~/.omp/agent/agents/review-gemini-argon.md --agent review-gemini-argon \
-  --selector google-antigravity/gemini-4-carbon-medium:medium \
+  --selector google-antigravity/gemini-4-carbon:medium \
   --evidence-delivery repository \
   --out lrhe-data/standing-amendment-vN/<amendment-id>.trace-receipt.json
 ```
