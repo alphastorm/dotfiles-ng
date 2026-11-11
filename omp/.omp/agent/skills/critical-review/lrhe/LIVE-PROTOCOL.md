@@ -730,7 +730,7 @@ Scaffold the table mechanically; keep only the judgment manual:
 
 ```bash
 ./lrhe/epoch.py ledger --manifest panel-selection.json \
-  --member claude-opus=claude-opus.json --member gemini-argon=gemini-argon.json \
+  --member claude-opus=claude-opus.json --member gemini-carbon=gemini-carbon.json \
   --review-id <review-id> --out ledger.md
 ```
 
@@ -859,9 +859,9 @@ and disclosed to the reviewer — never by spawning a reviewer beside the dispat
 gate:
 
 ```bash
-./lrhe/canary.py trace-dispatch --reviewer gemini-argon --lead-family gpt \
+./lrhe/canary.py trace-dispatch --reviewer gemini-carbon --lead-family gpt \
   --probe live-repository-v6 --fixture lrhe-data/repository-canary-parse.py \
-  --workdir /tmp/critical-review-canary-gemini-argon
+  --workdir /tmp/critical-review-canary-gemini-carbon
 ```
 
 That commits the declared fixture into a throwaway repository, writes the probe
@@ -891,7 +891,7 @@ object, so OMP validates the object itself.
 
 ```bash
 ./lrhe/canary.py trace-receipt --trace <session.jsonl> \
-  --agent-definition ~/.omp/agent/agents/review-gemini-argon.md --agent review-gemini-argon \
+  --agent-definition ~/.omp/agent/agents/review-gemini-carbon.md --agent review-gemini-carbon \
   --selector google-antigravity/gemini-4-carbon:medium \
   --evidence-delivery repository \
   --out lrhe-data/standing-amendment-vN/<amendment-id>.trace-receipt.json

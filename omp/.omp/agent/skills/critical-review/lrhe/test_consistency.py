@@ -2078,14 +2078,14 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
     assert live["panelId"] == qualification.LIVE_PANEL_ID
     assert profiles == {
         "gpt": {
-            "strongCritic": ["claude-opus", "gemini-argon"],
+            "strongCritic": ["claude-opus", "gemini-carbon"],
             "supplements": [],
             "focusedSupplements": [],
             "leadFamilySecurity": ["daybreak-blue"],
             "architectureSpecialists": [],
         },
         "claude": {
-            "strongCritic": ["daybreak-blue", "gemini-argon"],
+            "strongCritic": ["daybreak-blue", "gemini-carbon"],
             "supplements": ["gpt-astra"],
             "focusedSupplements": ["gpt-astra"],
             "leadFamilySecurity": ["claude-mythos"],
@@ -2099,8 +2099,8 @@ def test_the_private_qualification_activates_only_qualified_lead_families():
         )
 
     assert live["targetedRefuters"] == ["glm"]
-    assert document["reviewers"]["gemini-argon"]["evaluationEnabled"] is False
-    for reviewer_id in ("daybreak-blue", "claude-opus", "claude-mythos", "gemini-argon", "gpt-astra"):
+    assert document["reviewers"]["gemini-carbon"]["evaluationEnabled"] is False
+    for reviewer_id in ("daybreak-blue", "claude-opus", "claude-mythos", "gemini-carbon", "gpt-astra"):
         entry = document["reviewers"][reviewer_id]
         assert entry["dispatchEnabled"] is True
         assert entry["execution_mode"] == "task_agent"
@@ -3735,10 +3735,10 @@ def test_probe_subject_grants_only_the_probed_lane(tmp_path):
     send the reviewer at a mutable tree.
     """
 
-    entry = qualification.reviewers(_live_document())["gemini-argon"]
+    entry = qualification.reviewers(_live_document())["gemini-carbon"]
     subject = canary.materialize_probe_subject(
         tmp_path / "probe",
-        reviewer_id="gemini-argon",
+        reviewer_id="gemini-carbon",
         lead_family="gpt",
         version="live-repository-v6",
         fixture=canary.DATA / "repository-canary-parse.py",
@@ -3768,7 +3768,7 @@ def test_probe_refuses_a_fixture_its_instructions_never_name(tmp_path):
     with pytest.raises(canary.TraceCanaryError, match="never names"):
         canary.materialize_probe_subject(
             tmp_path / "mismatched",
-            reviewer_id="gemini-argon",
+            reviewer_id="gemini-carbon",
             lead_family="gpt",
             version="live-repository-v6",
             fixture=canary.DATA / "repository-canary-auth.py",
