@@ -11,9 +11,16 @@ README.*
 # already in $HOME, and aborts the WHOLE package rather than that one path. A
 # `bun install` inside a folded .omp/plugins put 89MB of node_modules in
 # dotfiles-private and wedged `stow -R omp-private` on 244 conflicts.
+# It collides just as surely with the other repository's link to the same
+# path: RepoPrompt writes plan exports into whatever directory its workspace is
+# rooted at, and one rooted in this checkout's critical-review skill wedged
+# `stow -R omp` on the private package's prompt-exports link.
 node_modules
 __pycache__
 .venv
+.pytest_cache
+.ruff_cache
+prompt-exports
 
 # Directories an OMP runtime writer owns. setup.sh keeps each one a git worktree,
 # because the writers refuse stow's links (manage_skill) or rename files over
