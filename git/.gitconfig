@@ -4,7 +4,9 @@
   signingKey = 235DE76E36B33C14
 [core]
   pager = diff-so-fancy | less --tabs=4 -RFX
-  fsmonitor = true
+  # No fsmonitor here. It keeps one daemon per worktree, and with a few hundred
+  # worktrees FSEvents fell behind until git waited on a daemon without end.
+  # Where status is slow without it: git config core.fsmonitor true, in that repository.
   untrackedCache = true
 	excludesfile = /Users/srs/.gitignore_global
 [alias]
@@ -25,10 +27,6 @@
   enabled = true
 [include]
   path = ~/.config/.gitconfig.local
-[includeIf "gitdir:/private/var/folders/"]
-  path = ~/.gitconfig-temp-repos
-[includeIf "gitdir:/private/tmp/"]
-  path = ~/.gitconfig-temp-repos
 [commit]
   gpgSign = true
 [credential "https://github.com"]
