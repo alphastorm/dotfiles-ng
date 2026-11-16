@@ -444,6 +444,43 @@ function install_luau_lsp() {
   )
 }
 
+# PowerShell Editor Services has no Homebrew formula either. omp/.omp/agent/lsp.json
+# starts it under pwsh for PowerShell scripts. This script installs no pwsh, so
+# a host without one skips the server, and OMP finds none to start there.
+PSES_VERSION=4.7.0
+PSES_SHA256=5084f0326cc88539e9d880b08f6c52ce5be4672bb8ecee8921e35f8895a6b9d7
+PSES_DIR="$HOME/.local/share/powershell-editor-services"
+
+function install_powershell_editor_services() {
+  if ! command -v pwsh >/dev/null 2>&1; then
+    echo "note: pwsh not found; skipping PowerShell Editor Services" >&2
+    return 0
+  fi
+  if grep -qs "^ModuleVersion = '$PSES_VERSION'" "$PSES_DIR/PowerShellEditorServices/PowerShellEditorServices.psd1"; then
+    return 0
+  fi
+  echo "installing pinned PowerShell Editor Services $PSES_VERSION..."
+  mkdir -p "$(dirname "$PSES_DIR")"
+  (
+    local cleanup_command workdir
+    workdir=$(mktemp -d)
+    printf -v cleanup_command 'rm -rf %q' "$workdir"
+    # shellcheck disable=SC2064
+    trap "$cleanup_command" EXIT
+    curl -fsSL --proto '=https' --proto-redir '=https' \
+      "https://github.com/PowerShell/PowerShellEditorServices/releases/download/v$PSES_VERSION/PowerShellEditorServices.zip" \
+      -o "$workdir/PowerShellEditorServices.zip"
+    if ! _verify_sha256 "$PSES_SHA256" "$workdir/PowerShellEditorServices.zip"; then
+      echo "error: PowerShell Editor Services checksum verification failed." >&2
+      exit 1
+    fi
+    unzip -q "$workdir/PowerShellEditorServices.zip" -d "$workdir/bundle"
+    # The bundle replaces an older one whole: its modules are loaded by path.
+    rm -rf "$PSES_DIR"
+    mv "$workdir/bundle" "$PSES_DIR"
+  )
+}
+
 # The agent is linked only once the binary exists: launchd loads every plist in
 # LaunchAgents at login and would restart a missing server every ten seconds.
 function install_lspmux_agent() {
@@ -906,6 +943,7 @@ if [ "$PLATFORM" = osx ]; then
   install_luau_lsp
 fi
 install_language_tooling
+install_powershell_editor_services
 stow_dotfiles
 stow_private_dotfiles
 install_typecheck_tooling

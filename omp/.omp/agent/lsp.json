@@ -96,6 +96,20 @@
       "args": ["--stdio"],
       "fileTypes": [".dockerfile", "Dockerfile"],
       "rootMarkers": [".git", "Dockerfile", "docker-compose.yml", "docker-compose.yaml", ".dockerignore"]
+    },
+    "powershell-editor-services": {
+      "command": "pwsh",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "& \"$HOME/.local/share/powershell-editor-services/PowerShellEditorServices/Start-EditorServices.ps1\" -Stdio -SessionDetailsPath \"$([IO.Path]::GetTempPath())powershell-editor-services.json\""
+      ],
+      "fileTypes": [".ps1", ".psm1", ".psd1"],
+      "languageId": "powershell",
+      "rootMarkers": [".git"],
+      "warmupTimeoutMs": 20000
     }
   }
 }
