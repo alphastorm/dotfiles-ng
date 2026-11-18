@@ -44,7 +44,7 @@ reviewer prose:
   focused review and full council;
 - supplements selects always-on cross-family supplemental evidence for every
   full council: useful for cheap decorrelation, but unable to rescue the
-  independent floor or break a dispute. Claude leads seat GPT-6 Astra
+  independent floor or break a dispute. Claude leads seat GPT-6.2 Astra
   (`gpt-astra`, access profile `openai-codex-default`); GPT leads seat none.
   No model appears twice among the strong critics and
   supplements and each group keeps distinct model families, but a supplement
@@ -82,7 +82,7 @@ The resolver uses four explicit profile groups, not one role per model:
 | Group | GPT lead | Claude lead | Standing |
 |---|---|---|---|
 | strongCritic | Opus 5.5 through the CVP-approved route + the gemini-carbon lane (Grok 4.7 for now) | Daybreak Blue + the gemini-carbon lane (Grok 4.7 for now) | required cross-family independent evidence |
-| supplements | none | GPT-6 Astra | always-on cross-family supplemental evidence |
+| supplements | none | GPT-6.2 Astra | always-on cross-family supplemental evidence |
 | leadFamilySecurity | qualified Daybreak Blue | Mythos 5.2 through the CVP-approved route | always-on same-lineage blind sample; supplemental evidence only |
 | architectureSpecialists | none | none | no live architecture specialist while Fable is paused |
 
