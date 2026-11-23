@@ -470,11 +470,12 @@ export default function criticalReviewPolicy(
 		return { input: decision.input };
 	});
 
-	// OMP mounts the parent's MCP servers and plugin tools into every subagent as xd:// devices,
-	// whatever its `tools:` list says, and adds a `write` transport to reach them, which also turns on
-	// the prompt's `xd://report_issue` advice. The gate above refuses every one of them, so a reviewer
-	// seat is narrowed to the tools it may run before its first request, and the outcome is recorded
-	// for the canary receipt.
+	// OMP gives every subagent the parent's MCP servers and plugin tools whatever its `tools:` list
+	// says: from 19.1.0 as direct tools with their full schemas, through 19.0.0 as xd:// devices behind
+	// a `write` transport. The gate above refuses every one of them, so a reviewer seat is narrowed to
+	// the tools it may run before its first request, and the outcome is recorded for the canary
+	// receipt. OMP re-adds report_issue to any session without bash, so the recorded surface can keep
+	// it; the gate still refuses its calls.
 	pi.on("before_agent_start", async (event) => {
 		const allowedTools = reviewerAllowedTools(event.systemPrompt);
 		if (!allowedTools) return;
