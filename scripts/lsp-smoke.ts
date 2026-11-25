@@ -20,7 +20,7 @@ import { shutdownAll } from "@oh-my-pi/pi-coding-agent/lsp/client";
 import { getConfig } from "@oh-my-pi/pi-coding-agent/lsp/config";
 import { LspTool } from "@oh-my-pi/pi-coding-agent/lsp/tool";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
-import { ensureTheme } from "@oh-my-pi/pi-tui/theme";
+import { ensureTheme } from "@oh-my-pi/pi-coding-agent/ui/theme/service";
 
 const [cwdArg, ...cases] = process.argv.slice(2);
 if (!cwdArg || cases.length === 0) {
@@ -57,7 +57,7 @@ function executableVersion(command: string): string {
 	return (run.stdout.toString() || run.stderr.toString()).trim().split("\n")[0] || "unknown";
 }
 // Diagnostics results carry the TUI's status glyphs.
-await ensureTheme();
+ensureTheme();
 const settings = await Settings.loadReadOnly({ cwd });
 const config = getConfig(cwd);
 const tool = new LspTool({ cwd, settings, lspReadOnly: true } as ToolSession);
